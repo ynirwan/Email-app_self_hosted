@@ -1,3 +1,4 @@
+# backend/database.py
 import os
 from motor.motor_asyncio import AsyncIOMotorClient
 import logging
@@ -31,13 +32,13 @@ def get_audit_collection():
     return database.audit
 
 def get_settings_collection():
-    return database.settings  # ✅ Fixed: was 'setting'
+    return database.settings
 
 def get_usage_collection():
-    return db.usage
-  
+    return database.usage  # Fixed: was db.usage
+
 def get_smtp_configs_collection():
-    return db.smtp_configs
+    return database.smtp_configs  # Fixed: was db.smtp_configs
 
 def get_email_logs_collection():
     return database.email_logs
@@ -45,16 +46,50 @@ def get_email_logs_collection():
 def get_templates_collection():
     return database.templates
 
-# ✅ Missing collections that your analytics route needs
+# Analytics collections
 def get_analytics_collection():
     return database.analytics
 
 def get_email_events_collection():
     return database.email_events
 
-# ✅ Additional collections for domain management
+# Domain management collections
 def get_domains_collection():
     return database.domains
+
+def get_suppressions_collection():
+    return database.suppressions
+
+def get_suppression_logs_collection():
+    return database.suppression_logs
+
+# Add to your database.py file
+def get_segments_collection():
+    return database.segment
+
+def get_ab_tests_collection():
+    return database.ab_tests
+
+def get_ab_test_results_collection():
+    return database.ab_test_results
+
+# Automation collections
+def get_automation_rules_collection():
+    return database.automation_rules
+
+def get_automation_steps_collection():
+    return database.automation_steps
+
+def get_automation_executions_collection():
+    return database.automation_executions
+
+# Jobs collection for tracking background upload jobs
+def get_jobs_collection():
+    try:
+        return database.upload_jobs
+    except Exception as e:
+        logger.error(f"Failed to get jobs collection: {e}")
+        raise
 
 # Database connection test function
 async def ping_database():
@@ -68,5 +103,3 @@ async def ping_database():
 
 # Legacy compatibility
 db = database
-
-

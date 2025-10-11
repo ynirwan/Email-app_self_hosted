@@ -35,5 +35,4 @@ USER fastapi
 EXPOSE 8000
 
 # Run FastAPI with Uvicorn
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
-
+CMD ["bash", "-c", "uvicorn main:app --host 0.0.0.0 --port 8000 --workers $(nproc)"]

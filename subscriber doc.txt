@@ -1,0 +1,804 @@
+📘 File Overview
+File: routes/subscribers.py
+
+This module defines subscriber management routes in a FastAPI application, focused on background uploads, job tracking, and audit logging.
+It enables scalable, parallel processing of large subscriber datasets with detailed audit trails and performance tracking.
+
+1. Imports and Configuration
+Core Purpose:
+
+Brings in FastAPI tools, MongoDB helpers, and utility libraries used across the system.
+
+Key Imports:
+
+fastapi: API routing, file upload, background task management.
+
+database: Provides MongoDB collection getters (get_subscribers_collection, get_audit_collection, get_jobs_collection).
+
+schemas.subscriber_schema: Defines Pydantic models (SubscriberIn, SubscriberOut, BulkPayload) for validation.
+
+pymongo.UpdateOne: Enables bulk atomic upsert operations.
+
+logging: For structured logging of jobs and errors.
+
+asyncio, threading: Used for parallel chunk processing of large uploads.
+
+2. Production Feature Flags
+PRODUCTION_FEATURES = {
+    'config': False,
+    'subscriber_recovery': False,
+    'file_first_recovery': False,
+    'performance_logging': False
+}
+
+Purpose:
+
+Toggle optional production-only capabilities such as configuration loading, recovery routines, or performance metrics.
+
+3. Audit Logging Function
+async def log_activity(action, entity_type, entity_id, user_action, before_data=None, after_data=None, metadata=None)
+
+Purpose:
+
+Record every CRUD or background operation to an audit collection.
+This data powers the frontend Audit Trail Dashboard.
+
+Parameters:
+Name	Type	Description
+action	str	Performed action (create, update, delete, etc.)
+entity_type	str	Entity kind (subscriber, list, etc.)
+entity_id	str	ID of the affected entity
+user_action	str	Human-readable action description
+before_data	dict	Snapshot before modification
+after_data	dict	Snapshot after modification
+metadata	dict	Context (e.g., IP address, list name)
+Output:
+
+Inserts structured JSON into audit_collection asynchronously.
+
+4. Safe Imports & Settings Loading
+
+Dynamically loads advanced production modules if available:
+
+core.subscriber_config.settings → Provides tuning parameters.
+
+tasks.subscriber_recovery_manager → Enables subscriber recovery system.
+
+tasks.simple_file_recovery → Adds file-first recovery path.
+
+Logs results using contextual emojis for clarity (✅, ℹ️, ❌).
+
+5. API Router Definition
+router = APIRouter()
+
+
+Creates the FastAPI route handler group for all subscriber operations.
+
+6. Pydantic Models
+JobStatus
+
+Tracks background upload or recovery job state in MongoDB.
+
+Field	Type	Description
+job_id	str	UUID for the job
+list_name	str	Target subscriber list
+status	str	pending, processing, completed, failed
+total, processed	int	Total and completed records
+progress	float	Completion percentage
+created_at, updated_at	datetime	Audit timestamps
+error_message	Optional[str]	Failure context
+BackgroundUploadPayload
+
+Used in /background-upload API.
+
+Field	Type	Description
+list_name	str	Target mailing list
+subscribers	List[Dict]	Subscriber records array
+processing_mode	str	Default = "background"
+7. Utility Classes
+PerformanceTracker
+
+Provides optional operation timing and throughput logs when enabled.
+
+await PerformanceTracker.record_operation(operation, duration, record_count)
+
+SafeBatchProcessor
+
+Dynamically adjusts batch size for MongoDB bulk writes.
+
+SafeBatchProcessor.get_optimal_batch_size(total_records, operation)
+
+8. Job Management
+ProductionJobManager
+
+Handles creation, progress tracking, and cleanup of background jobs.
+
+Methods:
+
+create_job(job_type, list_name, total_records) → Inserts job record in jobs_collection with initial metadata.
+
+update_job_progress(job_id, processed, failed, error_message) → Incrementally updates job statistics and completion state.
+
+A singleton instance job_manager is created globally.
+
+9. Background Upload Endpoint
+@router.post("/background-upload")
+async def background_upload_enhanced(payload: BackgroundUploadPayload)
+
+Workflow:
+
+Creates a job entry (job_id).
+
+Updates job state to processing.
+
+Saves subscribers into chunked JSON files.
+
+Processes chunks asynchronously.
+
+Updates job progress incrementally.
+
+Returns success or raises HTTPException on failure.
+
+10. Chunk File Management
+save_upload_in_chunks(job_id, payload)
+
+Splits incoming subscriber data into disk-based chunks for memory-safe parallel processing.
+
+Step	Description
+1	Creates directory upload_queue/chunks/{job_id}
+2	Writes chunk_0001.json, chunk_0002.json, etc.
+3	Stores metadata (list name, number of chunks, etc.)
+4	Returns a list of generated file paths
+
+Chunk size default: 15,000 records.
+
+11. Chunk Processing Engine
+process_upload_chunks(job_id, list_name, chunk_files, total_records)
+
+Main orchestrator for parallel, duplicate-aware processing of uploaded subscriber data.
+
+Features:
+
+Uses asyncio.Semaphore to limit concurrency.
+
+Detects and skips duplicate emails within each chunk.
+
+Executes MongoDB UpdateOne upserts for performance.
+
+Tracks counts for new_records, updated_records, and duplicates.
+
+Updates job status and progress after each chunk.
+
+Removes processed chunk files.
+
+Performs a final summary update with speed, success rate, and error stats.
+
+Concurrency Model:
+
+Up to 4 chunks are processed simultaneously.
+
+Each chunk executes batched writes of 15,000 records.
+
+Final Job States:
+Status	Meaning
+completed	All chunks succeeded
+partially_completed	Some chunks failed
+failed	All chunks failed
+Performance Metrics Stored:
+
+Total and per-chunk processing time
+
+Records per second
+
+Duplicate and success rates
+
+Counts of successful vs. failed chunks
+
+12. Cleanup
+
+After completion:
+
+Removes temporary chunk directories.
+
+Updates final job_collection document with performance metadata.
+
+13. End-to-End Flow Summary
+⬇ POST /background-upload
+    ⮑ Create job in DB
+    ⮑ Split into JSON chunks
+    ⮑ Process chunks concurrently (asyncio)
+        ⮑ Deduplicate emails
+        ⮑ Bulk upsert subscribers
+        ⮑ Update progress in DB
+    ⮑ Finalize job status
+    ⮑ Log audit trail entry
+⬆ Return JSON { job_id, message }
+
+14. Frontend Integration
+
+This backend supports the React Audit Trail UI by:
+
+Exposing /subscribers/audit/logs (not shown here but expected in same router)
+
+Writing entries via log_activity()
+
+Maintaining job progress used in dashboard charts and tables
+
+15. Logging Example
+
+Sample log flow during background upload:
+
+✅ Job created: a58b8d1c-... (file-first: False)
+📤 Background upload started: 80,000 subscribers
+🗂 Created 6 chunk files for job a58b8d1c
+🚀 Starting parallel processing of 6 chunks (max 4 concurrent)
+✅ Completed chunk 1: 15,000 processed, 2 duplicates
+📊 Progress: 3/6 chunks, 45,000 processed
+✅ Final job update: completed - 80,000 processed at 3,200 rec/sec
+
+
+/lists — List Subscriber Lists
+
+Purpose:
+Retrieve all subscriber lists from the database. Supports a simplified mode for lightweight aggregation.
+
+Method:
+GET /lists
+
+Parameters:
+
+simple (bool, query, default=False):
+If True, returns only list names with subscriber counts.
+If False, returns sorted list objects with full aggregation results.
+
+Process:
+
+Connect to the subscribers collection.
+
+Use MongoDB aggregation pipeline to group by list name and count subscribers.
+
+If simple=False, sort by count in descending order.
+
+Record operation performance metrics with PerformanceTracker.
+
+Return aggregated list data.
+
+Response Example:
+
+[
+  {"name": "Newsletter", "count": 1200},
+  {"name": "BetaUsers", "count": 450}
+]
+
+
+Error Handling:
+
+Returns 500 if aggregation fails.
+
+Logs both success and failure durations.
+
+/search — Search Subscribers
+
+Purpose:
+Perform advanced search queries over subscriber data with pagination, filters, and sorting.
+
+Method:
+GET /search
+
+Parameters:
+
+search (str, optional): Search term for email, name, or list.
+
+list_name (str, optional): Restrict results to a specific list.
+
+status (str, optional): Filter by subscriber status (e.g., "active").
+
+page (int, default=1): Current page number.
+
+limit (int, default=50): Number of records per page (1–200).
+
+sort_by (str, default="created_at"): Field to sort results by.
+
+sort_order (str, default="desc"): Sort direction ("asc" or "desc").
+
+search_mode (str, default="smart"): Search behavior indicator for frontend analytics.
+
+Process:
+
+Build a dynamic MongoDB query.
+
+Detects whether the search term is an email or generic text.
+
+Supports $regex matching across multiple fields.
+
+Apply optional filters (list_name, status).
+
+Count total results and paginate.
+
+Sort results based on sort_by and sort_order.
+
+Return structured results with pagination metadata and performance info.
+
+Response Example:
+
+{
+  "subscribers": [...],
+  "pagination": {
+    "current_page": 1,
+    "total_pages": 3,
+    "total": 120,
+    "limit": 50,
+    "has_next": true,
+    "has_prev": false
+  },
+  "performance": {
+    "query_time": "0.142s",
+    "strategy": "smart",
+    "results_count": 50
+  }
+}
+
+
+Error Handling:
+
+Returns 500 on query or database error.
+
+Logs timing and record count.
+
+/jobs/status — Job Status Overview
+
+Purpose:
+Provide real-time status, performance, and duplicate tracking for background subscriber upload jobs.
+
+Method:
+GET /jobs/status
+
+Process:
+
+Retrieve the latest 50 jobs, sorted by creation time.
+
+For each job, call determine_job_status() to assess progress, stuck conditions, or completion.
+
+Combine job statistics (processed, duplicates, failures) and derived efficiency metrics.
+
+Return enhanced metadata with performance display fields.
+
+Response Example:
+
+{
+  "jobs": [
+    {
+      "job_id": "abcd123",
+      "list_name": "Newsletter",
+      "status": "completed",
+      "statistics": {
+        "total_input": 2000,
+        "successfully_processed": 1950,
+        "duplicate_percentage": 2.5
+      },
+      "performance_display": {
+        "method_text": "Parallel Processing",
+        "speed_text": "1,500 records/sec (final)",
+        "duration_text": "2.1m",
+        "efficiency_text": "98.0% processed"
+      }
+    }
+  ]
+}
+
+Helper Functions
+format_processing_method(method: str) -> str
+
+Maps internal method identifiers to human-readable display names.
+Example: "parallel_chunks_with_duplicate_tracking" → "Parallel Processing".
+
+format_speed_display(job: dict) -> str
+
+Returns a text summary of current or final processing speed.
+
+Shows "records/sec" for active jobs.
+
+Shows "Completed" for finished jobs.
+
+format_duration_display(job: dict) -> str
+
+Converts total processing time (seconds) to a formatted string.
+Displays "s", "m", or "h" depending on magnitude.
+
+format_efficiency_display(job: dict, job_status: dict) -> str
+
+Calculates and formats efficiency as a percentage of total input handled, including duplicates.
+
+determine_job_status(job: dict, subscribers_collection, now: datetime) -> dict
+
+Purpose:
+Compute and classify job status using record counts, timing, and duplicate analysis.
+
+Steps:
+
+Count actual subscriber entries for the job and its list.
+
+Compute metrics: handled records, efficiency, heartbeat age, and job age.
+
+Determine status based on:
+
+Data completeness.
+
+Heartbeat recency.
+
+Progress thresholds.
+
+Return a status dict with reasoning and efficiency data.
+
+Possible Status Values:
+completed, processing, stuck, failed, pending, partially_completed.
+
+/jobs/cleanup-stuck — Stuck Job Cleanup
+
+Purpose:
+Detect and mark old or inactive jobs as failed to recover processing pipeline health.
+
+Method:
+POST /jobs/cleanup-stuck
+
+Process:
+
+Find jobs in pending or processing states older than one hour.
+
+Include additional stale conditions (no heartbeat, old timestamps).
+
+Mark each as "failed" with metadata describing automatic cleanup.
+
+Return summary of cleaned jobs.
+
+Response Example:
+
+{
+  "message": "Cleaned 3 stuck jobs",
+  "cleaned": 3,
+  "timestamp": "2025-10-07T17:20:00Z",
+  "stuck_jobs": [
+    {"job_id": "abc", "list_name": "TestList", "status_was": "processing"}
+  ]
+}
+
+/bulk — Bulk Upload Subscribers
+
+Purpose:
+Insert or update multiple subscribers efficiently using MongoDB bulk_write with upserts.
+
+Method:
+POST /bulk
+
+Process:
+
+Parse payload (BulkPayload) and convert to dictionary form (Pydantic v1/v2).
+
+Determine optimal batch size.
+
+Iterate through batches:
+
+Validate presence of email.
+
+Normalize data and prepare UpdateOne upserts.
+
+Execute bulk write.
+
+Track processed and failed counts.
+
+Return summarized results.
+
+Response Example:
+
+{
+  "message": "Bulk upload completed",
+  "processed": 1800,
+  "failed": 12,
+  "errors": ["Missing email address"]
+}
+
+
+Error Handling:
+
+Logs batch-level failures individually.
+
+Returns HTTP 500 on global failure.
+
+
+GET /list/{list_name}
+Description
+
+Retrieve subscribers belonging to a specific list with pagination and search functionality.
+
+Parameters
+Name	Type	Location	Description
+list_name	str	Path	Name of the subscriber list
+page	int	Query	Page number (default: 1)
+limit	int	Query	Results per page (default: 50, max: 100)
+search	str	Query	Optional search string for email, name, or custom fields
+Behavior
+
+Supports case-insensitive partial search across multiple fields.
+
+Returns full subscriber details including standard_fields and custom_fields.
+
+Provides pagination metadata: total count, total pages, and has_more flag.
+
+Response Example
+{
+  "success": true,
+  "subscribers": [
+    {
+      "_id": "6549d1f2...",
+      "email": "user@example.com",
+      "status": "active",
+      "list": "Newsletter",
+      "created_at": "2025-10-07T15:00:00Z",
+      "standard_fields": {"first_name": "John"},
+      "custom_fields": {"plan": "premium"}
+    }
+  ],
+  "pagination": {
+    "current_page": 1,
+    "total_pages": 2,
+    "total": 120,
+    "page_size": 50,
+    "has_more": true
+  }
+}
+
+2. DELETE /lists/{list_name}
+Description
+
+Enhanced list deletion endpoint with safety checks, cancellation of active jobs, and audit logging.
+
+Parameters
+Name	Type	Location	Description
+list_name	str	Path	Target list name to delete
+force	bool	Query	Force deletion without confirmation (default: false)
+reason	str	Query	Optional reason for deletion
+Behavior
+
+Checks for:
+
+List existence and size.
+
+Active or pending jobs (prevents deletion unless force=true).
+
+Large list confirmation (>100K subscribers).
+
+Cancels related jobs and removes associated chunk files.
+
+Performs audit logging with log_activity.
+
+Deletes related job records after list deletion.
+
+Response Example
+{
+  "success": true,
+  "message": "List 'Newsletter' deleted successfully",
+  "deletion_summary": {
+    "list_name": "Newsletter",
+    "subscribers_deleted": 20456,
+    "deletion_time_seconds": 12.43,
+    "reason": "cleanup"
+  },
+  "cleanup_actions": {
+    "jobs_cancelled": 2,
+    "chunk_files_cleaned": 2,
+    "job_records_cleaned": 4,
+    "audit_logged": true
+  },
+  "performance": {
+    "records_per_second": 1600,
+    "was_large_operation": true
+  }
+}
+
+3. POST /
+Description
+
+Add a single subscriber to a specific list.
+
+Request Body
+{
+  "list": "Newsletter",
+  "email": "newuser@example.com",
+  "status": "active",
+  "standard_fields": {"first_name": "Alice"},
+  "custom_fields": {"plan": "pro"}
+}
+
+Behavior
+
+Validates if subscriber already exists in the same list.
+
+Creates a new subscriber record with timestamps.
+
+Logs the action in the audit collection.
+
+Response Example
+{
+  "_id": "6531ad1f...",
+  "email": "newuser@example.com",
+  "list": "Newsletter",
+  "status": "active",
+  "created_at": "2025-10-07T15:20:00Z"
+}
+
+4. PUT /{subscriber_id}
+Description
+
+Update an existing subscriber’s details.
+
+Behavior
+
+Validates ObjectId and existence of the subscriber.
+
+Updates email, list, status, and fields.
+
+Logs both before_data and after_data for audit.
+
+Response Example
+{"message": "Subscriber updated successfully"}
+
+5. DELETE /{subscriber_id}
+Description
+
+Delete a subscriber from a list.
+
+Behavior
+
+Validates subscriber existence.
+
+Deletes the record and logs the operation for audit tracking.
+
+Response Example
+{"message": "Subscriber deleted successfully"}
+
+6. PATCH /{subscriber_id}/status
+Description
+
+Update a subscriber’s status (active, inactive, bounced, etc.).
+
+Parameters
+Name	Type	Location	Description
+status	str	Query	New subscriber status
+Response Example
+{"message": "Subscriber status updated to inactive"}
+
+7. GET /lists/{list_name}/export
+Description
+
+Export all subscribers from a list as a downloadable CSV file.
+
+Behavior
+
+Collects all standard_fields and custom_fields dynamically.
+
+Generates CSV headers automatically.
+
+Logs export event for audit.
+
+Response
+
+Returns a StreamingResponse with the CSV file.
+
+Content-Disposition header includes filename.
+
+8. POST /jobs/{job_id}/force-retry
+Description
+
+Retry a failed job by resetting its status to pending.
+
+Behavior
+
+Validates job existence and ensures current status is failed.
+
+Increments retry count.
+
+Response Example
+{"message": "Job retry initiated"}
+
+9. GET /upload-queue/status
+Description
+
+Retrieve current upload queue processing status.
+
+Behavior
+
+Returns summary only if file-first recovery feature is enabled.
+
+Includes counts for queued, processing, and completed uploads.
+
+Response Example
+{"queued": 2, "processing": 1, "completed": 5}
+
+10. POST /upload-queue/retry
+Description
+
+Manually trigger retry for stuck or failed uploads.
+
+Behavior
+
+Calls internal recovery module if enabled.
+
+Returns retry summary or an error message.
+
+11. POST /recovery/manual-retry
+Description
+
+Manual system-level recovery trigger (lightweight).
+
+Response Example
+{
+  "success": true,
+  "message": "Manual retry completed",
+  "timestamp": "2025-10-07T15:40:00Z"
+}
+
+12. DELETE /jobs/clear-all
+Description
+
+Clear completed or failed job records from the database.
+
+Response Example
+{
+  "message": "Cleared 42 old jobs",
+  "deleted_count": 42
+}
+
+13. GET /audit/logs
+Description
+
+Retrieve paginated audit trail entries with optional filters.
+
+Parameters
+Name	Type	Description
+limit	int	Max records to return (default: 50)
+skip	int	Records to skip for pagination
+entity_type	str	Filter by entity type (e.g., subscriber, list)
+action	str	Filter by action (create, delete, update, etc.)
+start_date / end_date	str	Filter by ISO date range
+Response Example
+{
+  "logs": [{"action": "delete", "entity_type": "subscriber"}],
+  "total_count": 100,
+  "has_more": true
+}
+
+14. POST /analyze-fields
+Description
+
+Analyze selected lists to determine available standard and custom fields.
+
+Request Body Example
+{"listIds": ["Newsletter", "Promotions"]}
+
+Response Example
+{
+  "universal": ["email"],
+  "standard": ["first_name", "last_name"],
+  "custom": ["city", "plan"]
+}
+
+15. Utility Functions
+log_activity(...)
+
+Logs user and system actions to an audit collection for full traceability.
+
+convert_objectids_to_strings(obj)
+
+Recursively converts all MongoDB ObjectId instances into strings for serialization.
+
+get_estimated_count(collection, query, max_limit)
+
+Performs optimized document counting with sampling for large datasets.
+
+analyze_search_specificity(term)
+
+Classifies a search term as exact, specific, general, or broad.
+
+build_optimized_search_query(term, specificity)
+
+Builds an optimized MongoDB query and sort order based on search type.

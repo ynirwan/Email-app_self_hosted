@@ -93,6 +93,24 @@ class BulkUploadRequest(BaseModel):
     field_mapping: Dict[str, FieldMappingInfo]
     overwrite_existing: bool = False
 
+# Models
+class ChunkMetadata(BaseModel):
+    job_id: str
+    list_name: str
+    total_subscribers: int
+    chunk_size: int
+    total_chunks: int
+    field_mapping: Dict[str, Any]
+    created_at: datetime
+    original_filename: Optional[str] = None
+
+class BackgroundUploadPayload(BaseModel):
+    list_name: str
+    subscribers: List[Dict]
+    processing_mode: str = "background"
+    field_mapping: Dict[str, Any]
+    original_filename: Optional[str] = None
+
 # Campaign Models
 class CampaignModel(BaseModel):
     """Enhanced campaign model with three-tier field support"""

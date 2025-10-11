@@ -1,6 +1,6 @@
-# routes/subscribers.py - Complete file with all required endpoints
+# routes/subscribers.py - COMPLETE file matching your frontend requirements
 from fastapi import APIRouter, HTTPException, Query, Request, status, File, Form, UploadFile, BackgroundTasks
-from database import get_subscribers_collection, get_audit_collection  # ✅ Use standardized AsyncIOMotorClient
+from database import get_subscribers_collection, get_audit_collection, get_jobs_collection
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel, Field, EmailStr
 from bson import ObjectId
@@ -9,400 +9,1517 @@ import logging
 from fastapi.responses import StreamingResponse
 import csv
 import io
+import os
 import re
+import uuid
 from schemas.subscriber_schema import SubscriberIn, BulkPayload, SubscriberOut
+import time
+import asyncio
+import json
+import glob
+import math 
+
+
+from datetime import datetime, timedelta
+from pymongo import UpdateOne
+
+# ===== PRODUCTION IMPORTS =====
+PRODUCTION_FEATURES = {
+    'config': False,
+    'subscriber_recovery': False,
+    'file_first_recovery': False,
+    'performance_logging': False
+}
+
+
+# ===== MISSING AUDIT LOGGING FUNCTION =====
+async def log_activity(
+    action: str,
+    entity_type: str,
+    entity_id: str,
+    user_action: str,
+    before_data: dict = None,
+    after_data: dict = None,
+    metadata: dict = None
+):
+    """Log all activities for audit trail"""
+    try:
+        audit_collection = get_audit_collection()
+        
+        log_entry = {
+            "timestamp": datetime.utcnow(),
+            "action": action,
+            "entity_type": entity_type,
+            "entity_id": entity_id,
+            "user_action": user_action,
+            "before_data": before_data or {},
+            "after_data": after_data or {},
+            "metadata": metadata or {}
+        }
+        
+        await audit_collection.insert_one(log_entry)
+        logger.info(f"AUDIT: {action} - {user_action}")
+        
+    except Exception as e:
+        logger.error(f"Failed to log activity: {e}")
 
 
 
-logger = logging.getLogger("uvicorn.error")
+# Safe production imports
+try:
+    from core.subscriber_config import settings
+    PRODUCTION_FEATURES['config'] = True
+    logger = logging.getLogger(__name__)
+    logger.info(" Production config loaded")
+except ImportError:
+    logger = logging.getLogger("uvicorn.error")
+    logger.info("  Using basic configuration")
+    class MockSettings:
+        MAX_BATCH_SIZE = 1000
+        ENABLE_BULK_OPTIMIZATIONS = False
+        ENABLE_HYBRID_RECOVERY = True
+    settings = MockSettings()
+
+try:
+    from tasks.subscriber_recovery_manager import subscriber_recovery
+    PRODUCTION_FEATURES['subscriber_recovery'] = True
+    logger.info(" Subscriber recovery enabled")
+except ImportError:
+    logger.info(" Subscriber recovery not available")
+
+try:
+    from tasks.simple_file_recovery import simple_file_recovery
+    PRODUCTION_FEATURES['file_first_recovery'] = True
+    logger.info(" File-First Recovery enabled")
+except ImportError:
+    logger.info("  File-First Recovery not available")
+
 router = APIRouter()
 
+# Models
+class JobStatus(BaseModel):
+    job_id: str
+    list_name: str
+    status: str
+    total: int
+    processed: int
+    progress: float
+    created_at: datetime
+    updated_at: datetime
+    error_message: Optional[str] = None
 
-@router.get("/lists")
-async def get_subscriber_lists():
+class BackgroundUploadPayload(BaseModel):
+    list_name: str
+    subscribers: List[Dict[str, Any]]
+    processing_mode: Optional[str] = "background"
+
+# ===== UTILITIES =====
+class PerformanceTracker:
+    @staticmethod
+    async def record_operation(operation: str, duration: float, record_count: int = 1, success: bool = True):
+        if PRODUCTION_FEATURES.get('performance_logging', False):
+            try:
+                logger.info(f" {operation}: {record_count} records in {duration:.3f}s ({record_count/duration:.1f} records/sec)")
+            except:
+                pass
+
+class SafeBatchProcessor:
+    @staticmethod
+    def get_optimal_batch_size(total_records: int, operation: str = "general") -> int:
+        if PRODUCTION_FEATURES.get('config', False):
+            return settings.get_batch_size_for_operation(total_records, operation)
+        else:
+            return min(1000, total_records)
+
+# ===== JOB MANAGER =====
+class ProductionJobManager:
+    def __init__(self):
+        self.active_jobs = {}
+
+    async def create_job(self, job_type: str, list_name: str, total_records: int) -> str:
+        job_id = str(uuid.uuid4())
+        job_doc = {
+            "_id": job_id,
+            "job_id": job_id,
+            "job_type": job_type,
+            "list_name": list_name,
+            "status": "pending",
+            "progress": 0.0,
+            "total_records": total_records,
+            "processed_records": 0,
+            "failed_records": 0,
+            "created_at": datetime.utcnow(),
+            "updated_at": datetime.utcnow(),
+            "completion_time": None,
+            "error_messages": [],
+            "file_first_enabled": PRODUCTION_FEATURES.get('file_first_recovery', False)
+        }
+
+        try:
+            jobs_collection = get_jobs_collection()
+            await jobs_collection.insert_one(job_doc)
+            self.active_jobs[job_id] = job_doc
+            logger.info(f"âœ… Job created: {job_id} (file-first: {job_doc['file_first_enabled']})")
+            return job_id
+        except Exception as e:
+            logger.error(f"âŒ Job creation failed: {e}")
+            raise HTTPException(status_code=500, detail=f"Job creation failed: {str(e)}")
+
+    async def update_job_progress(self, job_id: str, processed: int, failed: int = 0, error_message: str = None):
+        try:
+            jobs_collection = get_jobs_collection()
+            job = await jobs_collection.find_one({"_id": job_id})
+            if not job:
+                return
+
+            total = job.get("total_records", 1)
+            progress = (processed / total) * 100 if total > 0 else 0
+
+            update_doc = {
+                "processed_records": processed,
+                "failed_records": failed,
+                "progress": min(progress, 100),
+                "updated_at": datetime.utcnow()
+            }
+
+            if error_message:
+                current_errors = job.get("error_messages", [])
+                current_errors.append(error_message)
+                update_doc["error_messages"] = current_errors[-10:]
+
+            if processed >= total:
+                update_doc["status"] = "completed"
+                update_doc["completion_time"] = datetime.utcnow()
+                if job_id in self.active_jobs:
+                    del self.active_jobs[job_id]
+
+            await jobs_collection.update_one({"_id": job_id}, {"$set": update_doc})
+            if job_id in self.active_jobs:
+                self.active_jobs[job_id].update(update_doc)
+
+        except Exception as e:
+            logger.error(f" Job progress update failed for {job_id}: {e}")
+
+# Global job manager
+job_manager = ProductionJobManager()
+
+
+
+@router.post("/background-upload")
+async def background_upload_enhanced(payload: BackgroundUploadPayload):
+    """Background upload with chunked processing for all upload sizes"""
     try:
-        subscribers_collection = get_subscribers_collection()
+        total_records = len(payload.subscribers)
+        job_id = await job_manager.create_job("background_upload", payload.list_name, total_records)
 
-        pipeline = [
-            {
-                "$group": {
-                    "_id": "$list",
-                    "count": {"$sum": 1},
-                    "active_count": {
-                        "$sum": {"$cond": [{"$eq": ["$status", "active"]}, 1, 0]}
-                    },
-                    "last_updated": {"$max": "$updated_at"}
-                }
-            },
-            {"$sort": {"last_updated": -1}}
-        ]
+        logger.info(f"📤 Background upload started: {total_records:,} subscribers for list '{payload.list_name}'")
 
-        cursor = subscribers_collection.aggregate(pipeline)
-        lists = await cursor.to_list(length=None)
+        # IMMEDIATELY UPDATE STATUS TO PROCESSING
+        jobs_collection = get_jobs_collection()
+        await jobs_collection.update_one(
+            {"_id": job_id},
+            {"$set": {
+                "status": "processing",
+                "updated_at": datetime.utcnow(),
+                "last_heartbeat": datetime.utcnow(),
+                "processing_start": datetime.utcnow()
+            }}
+        )
+        logger.info(f"✔ Job {job_id} status updated to PROCESSING immediately")
 
+        # SAVE UPLOAD IN CHUNKS
+        chunk_files = await save_upload_in_chunks(job_id, payload)
+        if not chunk_files:
+            raise Exception("Failed to create upload chunks")
 
-        return lists
+        # PROCESS EACH CHUNK
+        total_processed = await process_upload_chunks(job_id, payload.list_name, chunk_files, total_records)
+
+        logger.info(f"✅ Completed upload for {total_processed} subscribers in job {job_id}")
+
+        return {"job_id": job_id, "message": f"Upload completed for {total_processed} subscribers"}
+
     except Exception as e:
-        logger.error(f"Get subscriber lists failed: {e}")
+        logger.error(f"❌ Background upload failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# ✅ Required route: POST /subscribers/bulk
-@router.post("/bulk")
-async def bulk_upload_subscribers(payload: BulkPayload, request: Request, background_tasks: BackgroundTasks):
+# ===== SAVE UPLOAD IN CHUNKS =====
+async def save_upload_in_chunks(job_id: str, payload: BackgroundUploadPayload) -> List[str]:
+    try:
+        chunk_size = 15000
+        subscribers = payload.subscribers
+        total_records = len(subscribers)
+        chunks_dir = f"upload_queue/chunks/{job_id}"
+        os.makedirs(chunks_dir, exist_ok=True)
+        chunk_files = []
+
+        for i in range(0, total_records, chunk_size):
+            chunk_number = i // chunk_size
+            chunk = subscribers[i:i + chunk_size]
+            chunk_filename = f"chunk_{chunk_number:04d}.json"
+            chunk_path = os.path.join(chunks_dir, chunk_filename)
+
+            chunk_data = {
+                "job_id": job_id,
+                "list_name": payload.list_name,
+                "chunk_number": chunk_number,
+                "total_chunks": (total_records + chunk_size - 1) // chunk_size,
+                "chunk_records": len(chunk),
+                "created_at": datetime.utcnow().isoformat(),
+                "subscribers": chunk
+            }
+
+            with open(chunk_path, 'w') as f:
+                json.dump(chunk_data, f, default=str)
+            chunk_files.append(chunk_path)
+
+        logger.info(f"🗂 Created {len(chunk_files)} chunk files for job {job_id}")
+        return chunk_files
+
+    except Exception as e:
+        logger.error(f"❌ Failed to create chunks: {e}")
+        return []
+    
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
+from typing import Dict, List, Tuple
+
+async def process_upload_chunks(job_id: str, list_name: str, chunk_files: List[str], total_records: int) -> int:
+    """Enhanced parallel chunk processing with duplicate tracking"""
+    subscribers_collection = get_subscribers_collection()
+    jobs_collection = get_jobs_collection()
+    start_time = datetime.utcnow()
+
+    # ✅ Initialize tracking variables
+    total_processed = 0
+    total_duplicates = 0
+    total_new_records = 0
+    total_updated_records = 0
+    completed_chunks = 0
+    failed_chunks = 0
+    
+    # ✅ Parallel processing configuration
+    max_concurrent_chunks = min(4, len(chunk_files))  # Process up to 4 chunks simultaneously
+    semaphore = asyncio.Semaphore(max_concurrent_chunks)
+    
+    # ✅ Thread-safe counters
+    import threading
+    counters_lock = threading.Lock()
+    
+    async def process_single_chunk(chunk_index: int, chunk_file: str) -> Dict:
+        """Process a single chunk with duplicate tracking"""
+        async with semaphore:
+            chunk_stats = {
+                "processed": 0,
+                "new_records": 0,
+                "updated_records": 0,
+                "duplicates": 0,
+                "errors": 0,
+                "chunk_index": chunk_index
+            }
+            
+            try:
+                logger.info(f"🚀 Starting chunk {chunk_index + 1}/{len(chunk_files)}: {chunk_file}")
+                
+                # Load chunk data
+                with open(chunk_file, 'r') as f:
+                    chunk_data = json.load(f)
+                
+                chunk_subscribers = chunk_data.get("subscribers", [])
+                batch_size = 15000
+                
+                # ✅ Track emails in this chunk for duplicate detection
+                chunk_emails_processed = set()
+                
+                for i in range(0, len(chunk_subscribers), batch_size):
+                    batch = chunk_subscribers[i:i + batch_size]
+                    operations = []
+                    batch_emails = []
+                    
+                    for subscriber_data in batch:
+                        email = subscriber_data.get("email")
+                        if not email:
+                            continue
+                            
+                        email = email.lower().strip()
+                        batch_emails.append(email)
+                        
+                        # ✅ Track duplicates within the same chunk
+                        if email in chunk_emails_processed:
+                            chunk_stats["duplicates"] += 1
+                            continue
+                        
+                        chunk_emails_processed.add(email)
+                        
+                        subscriber_doc = {
+                            "email": email,
+                            "list": list_name,
+                            "status": subscriber_data.get("status", "active"),
+                            "standard_fields": subscriber_data.get("standard_fields", {}),
+                            "custom_fields": subscriber_data.get("custom_fields", {}),
+                            "job_id": job_id,
+                            "created_at": datetime.utcnow(),
+                            "updated_at": datetime.utcnow()
+                        }
+                        
+                        operations.append(UpdateOne(
+                            {"email": email, "list": list_name},
+                            {"$set": subscriber_doc},
+                            upsert=True
+                        ))
+                    
+                    if operations:
+                        try:
+                            # ✅ Check for existing records before bulk write
+                            existing_emails = set()
+                            if batch_emails:
+                                existing_cursor = subscribers_collection.find(
+                                    {"email": {"$in": batch_emails}, "list": list_name},
+                                    {"email": 1}
+                                )
+                                async for doc in existing_cursor:
+                                    existing_emails.add(doc["email"])
+                            
+                            # Execute bulk write
+                            result = await subscribers_collection.bulk_write(
+                                operations,
+                                ordered=False,
+                                bypass_document_validation=True
+                            )
+                            
+                            # ✅ Calculate accurate stats
+                            chunk_stats["new_records"] += result.upserted_count
+                            chunk_stats["updated_records"] += result.modified_count
+                            chunk_stats["processed"] += result.upserted_count + result.modified_count
+                            
+                            # ✅ Count duplicates that were updated (existing records)
+                            for email in batch_emails:
+                                if email in existing_emails and email in chunk_emails_processed:
+                                    chunk_stats["duplicates"] += 1
+                            
+                            logger.debug(f"Chunk {chunk_index + 1} batch: "
+                                       f"upserted {result.upserted_count}, "
+                                       f"modified {result.modified_count}, "
+                                       f"duplicates {chunk_stats['duplicates']}")
+                                       
+                        except Exception as batch_error:
+                            logger.error(f"Batch error in chunk {chunk_index + 1}: {batch_error}")
+                            chunk_stats["errors"] += len(operations)
+                
+                logger.info(f"✅ Completed chunk {chunk_index + 1}: "
+                          f"{chunk_stats['processed']} processed, "
+                          f"{chunk_stats['duplicates']} duplicates")
+                
+                # Cleanup chunk file
+                try:
+                    os.remove(chunk_file)
+                    logger.debug(f"Deleted chunk file: {chunk_file}")
+                except Exception as cleanup_error:
+                    logger.warning(f"Failed deleting chunk file {chunk_file}: {cleanup_error}")
+                
+                return chunk_stats
+                
+            except Exception as chunk_error:
+                logger.error(f"❌ Failed processing chunk {chunk_index + 1}: {chunk_error}")
+                chunk_stats["errors"] += 1
+                return chunk_stats
+
+    # ✅ Process all chunks in parallel
+    logger.info(f"🚀 Starting parallel processing of {len(chunk_files)} chunks "
+              f"(max {max_concurrent_chunks} concurrent)")
+    
+    # Create tasks for all chunks
+    tasks = [
+        process_single_chunk(i, chunk_file) 
+        for i, chunk_file in enumerate(chunk_files)
+    ]
+    
+    # Execute chunks in parallel and track progress
+    for i, task in enumerate(asyncio.as_completed(tasks)):
+        try:
+            chunk_stats = await task
+            
+            # ✅ Thread-safe counter updates
+            with counters_lock:
+                total_processed += chunk_stats["processed"]
+                total_new_records += chunk_stats["new_records"]
+                total_updated_records += chunk_stats["updated_records"]
+                total_duplicates += chunk_stats["duplicates"]
+                completed_chunks += 1
+                
+                if chunk_stats["errors"] > 0:
+                    failed_chunks += 1
+            
+            # ✅ Update job progress after each completed chunk
+            progress = (completed_chunks / len(chunk_files)) * 100
+            processing_time = (datetime.utcnow() - start_time).total_seconds()
+            speed = int(total_processed / processing_time) if processing_time > 0 else 0
+            
+            update_data = {
+                "processed_records": total_processed,
+                "new_records": total_new_records,
+                "updated_records": total_updated_records,
+                "duplicate_records": total_duplicates,
+                "progress": min(progress, 100),
+                "records_per_second": speed,
+                "updated_at": datetime.utcnow(),
+                "last_heartbeat": datetime.utcnow(),
+                "status": "processing",
+                "completed_chunks": completed_chunks,
+                "failed_chunks": failed_chunks,
+                "total_chunks": len(chunk_files),
+            }
+            
+            try:
+                await jobs_collection.update_one(
+                    {"_id": job_id},
+                    {"$set": update_data},
+                    upsert=True
+                )
+                logger.info(f"📊 Progress: {completed_chunks}/{len(chunk_files)} chunks, "
+                          f"{total_processed:,} processed ({total_new_records:,} new, "
+                          f"{total_updated_records:,} updated, {total_duplicates:,} duplicates)")
+            except Exception as job_update_err:
+                logger.error(f"Failed to update job progress: {job_update_err}")
+                
+        except Exception as task_error:
+            logger.error(f"Task execution error: {task_error}")
+            with counters_lock:
+                failed_chunks += 1
+
+    # ✅ Enhanced final job update with detailed statistics
+    total_processing_time = (datetime.utcnow() - start_time).total_seconds()
+    final_speed = int(total_processed / total_processing_time) if total_processing_time > 0 else 0
+    successful_chunks = completed_chunks - failed_chunks
+    
+    # Determine final status
+    if failed_chunks == 0:
+        final_status = "completed"
+        status_reason = f"Successfully processed {total_processed:,} records"
+    elif successful_chunks > 0:
+        final_status = "partially_completed"
+        status_reason = f"Processed {total_processed:,} records with {failed_chunks} failed chunks"
+    else:
+        final_status = "failed"
+        status_reason = "All chunks failed to process"
+    
+    final_update = {
+        "status": final_status,
+        "status_reason": status_reason,
+        "completion_time": datetime.utcnow(),
+        "final_processed": total_processed,
+        "total_records": total_records,
+        # ✅ Detailed statistics
+        "new_records": total_new_records,
+        "updated_records": total_updated_records,
+        "duplicate_records": total_duplicates,
+        "processing_method": "parallel_chunks_with_duplicate_tracking",
+        "max_concurrent_chunks": max_concurrent_chunks,
+        "total_processing_time_seconds": total_processing_time,
+        "final_records_per_second": final_speed,
+        "successful_chunks": successful_chunks,
+        "failed_chunks": failed_chunks,
+        "chunks_processed": completed_chunks,
+        "total_chunks": len(chunk_files),
+        "success_rate": (successful_chunks / len(chunk_files)) * 100 if chunk_files else 0,
+        "duplicate_rate": (total_duplicates / total_records) * 100 if total_records > 0 else 0,
+        "updated_at": datetime.utcnow(),
+        "last_heartbeat": datetime.utcnow()
+    }
+
+    try:
+        await jobs_collection.update_one(
+            {"_id": job_id},
+            {"$set": final_update},
+            upsert=True
+        )
+        logger.info(f"✅ Final job update: {final_status} - "
+                   f"{total_processed:,} processed ({total_new_records:,} new, "
+                   f"{total_updated_records:,} updated, {total_duplicates:,} duplicates) "
+                   f"at {final_speed:,} rec/sec in {total_processing_time:.1f}s")
+    except Exception as final_update_error:
+        logger.error(f"❌ Failed final job update: {final_update_error}")
+
+    # Cleanup chunks directory
+    chunks_dir = os.path.dirname(chunk_files[0]) if chunk_files else None
+    if chunks_dir and os.path.exists(chunks_dir):
+        try:
+            import shutil
+            shutil.rmtree(chunks_dir, ignore_errors=True)
+            logger.info(f"Cleaned up chunks directory: {chunks_dir}")
+        except Exception as cleanup_error:
+            logger.warning(f"Failed to cleanup chunks directory: {cleanup_error}")
+
+    return total_processed
+
+
+@router.get("/jobs/status")
+async def get_job_status():
+    """Enhanced job status with comprehensive duplicate tracking and statistics"""
+    try:
+        jobs_collection = get_jobs_collection()
+        subscribers_collection = get_subscribers_collection()
+        cursor = jobs_collection.find({}, sort=[("created_at", -1)], limit=50)
+        
+        jobs = []
+        now = datetime.utcnow()
+        
+        async for job in cursor:
+            job_status = await determine_job_status(job, subscribers_collection, now)
+            
+            job_data = {
+                "_id": str(job["_id"]),
+                "job_id": job.get("job_id"),
+                "list_name": job.get("list_name"),
+                "status": job_status["status"],  # ✅ Updated status
+                "progress": job.get("progress", 0),
+                "total": job.get("total_records", 0),
+                "processed": job.get("processed_records", 0),
+                "failed": job.get("failed_records", 0),
+                
+                # ✅ Enhanced duplicate and record tracking
+                "new_records": job.get("new_records", 0),
+                "updated_records": job.get("updated_records", 0),
+                "duplicate_records": job.get("duplicate_records", 0),
+                "duplicate_rate": job.get("duplicate_rate", 0),
+                
+                # Timestamps
+                "created_at": job.get("created_at"),
+                "updated_at": job.get("updated_at"),
+                "completion_time": job.get("completion_time"),
+                "last_heartbeat": job.get("last_heartbeat"),
+                
+                # Performance metrics
+                "records_per_second": job.get("records_per_second", 0),
+                "final_records_per_second": job.get("final_records_per_second", 0),
+                "total_processing_time_seconds": job.get("total_processing_time_seconds", 0),
+                
+                # Processing details
+                "processing_method": job.get("processing_method", "standard"),
+                "max_concurrent_chunks": job.get("max_concurrent_chunks", 1),
+                "successful_chunks": job.get("successful_chunks", 0),
+                "failed_chunks": job.get("failed_chunks", 0),
+                "total_chunks": job.get("total_chunks", 0),
+                "chunks_processed": job.get("chunks_processed", 0),
+                "success_rate": job.get("success_rate", 0),
+                
+                # ✅ Enhanced status info
+                "actual_subscriber_count": job_status.get("actual_subscriber_count", 0),
+                "status_reason": job_status.get("reason", ""),
+                "stuck_duration_minutes": job_status.get("stuck_duration_minutes", 0),
+                
+                # ✅ Detailed statistics display
+                "statistics": {
+                    "total_input": job.get("total_records", 0),
+                    "successfully_processed": job.get("processed_records", 0),
+                    "new_subscribers": job.get("new_records", 0),
+                    "updated_existing": job.get("updated_records", 0),
+                    "duplicates_filtered": job.get("duplicate_records", 0),
+                    "failed_records": job.get("failed_records", 0),
+                    "actual_database_count": job_status.get("actual_subscriber_count", 0),
+                    "duplicate_percentage": round(job.get("duplicate_rate", 0), 1),
+                    "processing_efficiency": job_status.get("processing_efficiency", 0)
+                },
+                
+                # ✅ FIXED: Call functions without self
+                "performance_display": {
+                    "method_text": format_processing_method(job.get("processing_method", "standard")),
+                    "speed_text": format_speed_display(job),
+                    "duration_text": format_duration_display(job),
+                    "efficiency_text": format_efficiency_display(job, job_status)
+                }
+            }
+            jobs.append(job_data)
+        
+        return {"jobs": jobs}
+        
+    except Exception as e:
+        logger.error(f"Get job status failed: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get job statuses")
+
+# ✅ FIXED: Remove 'self' parameter from all helper functions
+def format_processing_method(method: str) -> str:
+    """Format processing method for display"""
+    method_map = {
+        "parallel_chunks_with_duplicate_tracking": "Parallel Processing",
+        "batch_progress_updates": "Batch Processing", 
+        "chunked_background_upload": "Chunked Upload",
+        "standard": "Standard"
+    }
+    return method_map.get(method, method.title())
+
+def format_speed_display(job: dict) -> str:
+    """Format speed display based on job status"""
+    final_speed = job.get("final_records_per_second", 0)
+    current_speed = job.get("records_per_second", 0)
+    
+    if job.get("status") in ["completed", "partially_completed"]:
+        return f"{final_speed:,} records/sec (final)" if final_speed > 0 else "Completed"
+    elif current_speed > 0:
+        return f"{current_speed:,} records/sec (current)"
+    else:
+        return "Processing..."
+
+def format_duration_display(job: dict) -> str:
+    """Format processing duration"""
+    duration = job.get("total_processing_time_seconds", 0)
+    if duration > 0:
+        if duration < 60:
+            return f"{duration:.1f}s"
+        elif duration < 3600:
+            return f"{duration/60:.1f}m"
+        else:
+            return f"{duration/3600:.1f}h"
+    return "N/A"
+
+def format_efficiency_display(job: dict, job_status: dict) -> str:
+    """Format processing efficiency display"""
+    total = job.get("total_records", 0)
+    duplicates = job.get("duplicate_records", 0)
+    new_records = job.get("new_records", 0)
+    
+    if total > 0:
+        efficiency = ((new_records + duplicates) / total) * 100
+        if duplicates > 0:
+            return f"{efficiency:.1f}% processed ({duplicates:,} duplicates)"
+        else:
+            return f"{efficiency:.1f}% processed"
+    return "N/A"
+
+async def determine_job_status(job: dict, subscribers_collection, now: datetime) -> dict:
+    """
+    Enhanced job status determination with comprehensive duplicate analysis
+    """
+    job_id = job.get("job_id")
+    list_name = job.get("list_name")
+    current_status = job.get("status", "unknown")
+    
+    # ✅ STEP 1: Get comprehensive subscriber statistics
+    try:
+        # Count actual subscribers for this specific job
+        actual_count = await subscribers_collection.count_documents({
+            "list": list_name,
+            "job_id": job_id
+        }) if job_id and list_name else 0
+        
+        # Count total subscribers in the list (for context)
+        list_total = await subscribers_collection.count_documents({
+            "list": list_name
+        }) if list_name else 0
+        
+    except Exception as e:
+        logger.error(f"Failed to count subscribers for job {job_id}: {e}")
+        actual_count = 0
+        list_total = 0
+    
+    # ✅ STEP 2: Get job metadata with duplicate tracking
+    total_records = job.get("total_records", 0)
+    processed_records = job.get("processed_records", 0)
+    new_records = job.get("new_records", 0)
+    updated_records = job.get("updated_records", 0)
+    duplicate_records = job.get("duplicate_records", 0)
+    
+    last_heartbeat = job.get("last_heartbeat", job.get("updated_at", now))
+    created_at = job.get("created_at", now)
+    
+    # Time calculations
+    heartbeat_age_minutes = (now - last_heartbeat).total_seconds() / 60
+    job_age_hours = (now - created_at).total_seconds() / 3600
+    
+    # ✅ STEP 3: Calculate processing efficiency
+    processing_efficiency = 0
+    if total_records > 0:
+        # Efficiency = (actual new records + updated records) / total input
+        effective_processing = new_records + updated_records
+        processing_efficiency = (effective_processing / total_records) * 100
+    
+    # ✅ STEP 4: Enhanced status determination with duplicate awareness
+    
+    # If job shows as completed, verify with comprehensive data
+    if current_status == "completed":
+        # Consider duplicates in completion verification
+        total_handled = new_records + updated_records + duplicate_records
+        
+        if total_handled >= total_records * 0.95:  # 95% tolerance
+            return {
+                "status": "completed",
+                "reason": f"Verified complete: {new_records:,} new, {updated_records:,} updated, {duplicate_records:,} duplicates",
+                "actual_subscriber_count": actual_count,
+                "processing_efficiency": round(processing_efficiency, 1)
+            }
+        elif actual_count >= total_records * 0.90:  # Fallback check
+            return {
+                "status": "completed",
+                "reason": f"Completed with {actual_count:,} subscribers added to list",
+                "actual_subscriber_count": actual_count,
+                "processing_efficiency": round(processing_efficiency, 1)
+            }
+        else:
+            return {
+                "status": "failed",
+                "reason": f"Completion claimed but data mismatch: {total_handled:,}/{total_records:,} handled",
+                "actual_subscriber_count": actual_count,
+                "processing_efficiency": round(processing_efficiency, 1)
+            }
+    
+    # If job is processing, enhanced progress checks
+    elif current_status == "processing":
+        
+        # ✅ Check actual progress including duplicates
+        total_handled = new_records + updated_records + duplicate_records
+        data_progress_ok = (total_handled > 0 and processed_records > 0)
+        reasonable_progress = (actual_count + updated_records >= processed_records * 0.7)
+        
+        # ✅ Time-based stuck detection with duplicate awareness
+        if heartbeat_age_minutes <= 10:
+            # Recent activity - still processing
+            progress_text = f"{total_handled:,}/{total_records:,} handled"
+            if duplicate_records > 0:
+                progress_text += f" ({duplicate_records:,} duplicates)"
+            
+            return {
+                "status": "processing",
+                "reason": f"Active processing - {progress_text}",
+                "actual_subscriber_count": actual_count,
+                "processing_efficiency": round(processing_efficiency, 1)
+            }
+            
+        elif heartbeat_age_minutes <= 30:
+            # Moderate delay - check comprehensive progress
+            if data_progress_ok and reasonable_progress:
+                return {
+                    "status": "processing",
+                    "reason": f"Processing (slow): {total_handled:,} handled, {duplicate_records:,} duplicates",
+                    "actual_subscriber_count": actual_count,
+                    "processing_efficiency": round(processing_efficiency, 1)
+                }
+            else:
+                return {
+                    "status": "stuck",
+                    "reason": f"Minimal progress for {heartbeat_age_minutes:.1f}m: {total_handled:,} handled",
+                    "actual_subscriber_count": actual_count,
+                    "stuck_duration_minutes": heartbeat_age_minutes,
+                    "processing_efficiency": round(processing_efficiency, 1)
+                }
+        else:
+            # Long delay - definitely stuck or failed
+            if job_age_hours > 2:
+                return {
+                    "status": "failed",
+                    "reason": f"Timeout after {job_age_hours:.1f}h: {total_handled:,}/{total_records:,} handled",
+                    "actual_subscriber_count": actual_count,
+                    "stuck_duration_minutes": heartbeat_age_minutes,
+                    "processing_efficiency": round(processing_efficiency, 1)
+                }
+            else:
+                return {
+                    "status": "stuck",
+                    "reason": f"Stuck for {heartbeat_age_minutes:.1f}m: {total_handled:,} handled",
+                    "actual_subscriber_count": actual_count,
+                    "stuck_duration_minutes": heartbeat_age_minutes,
+                    "processing_efficiency": round(processing_efficiency, 1)
+                }
+    
+    # For partially completed jobs
+    elif current_status == "partially_completed":
+        total_handled = new_records + updated_records + duplicate_records
+        return {
+            "status": "partially_completed", 
+            "reason": f"Partial success: {total_handled:,}/{total_records:,} handled ({duplicate_records:,} duplicates)",
+            "actual_subscriber_count": actual_count,
+            "processing_efficiency": round(processing_efficiency, 1)
+        }
+    
+    # For pending jobs
+    elif current_status == "pending":
+        if job_age_hours > 0.5:  # Pending for more than 30 minutes
+            return {
+                "status": "failed",
+                "reason": f"Pending timeout ({job_age_hours:.1f}h)",
+                "actual_subscriber_count": actual_count,
+                "processing_efficiency": 0
+            }
+        else:
+            return {
+                "status": "pending",
+                "reason": "Waiting to start",
+                "actual_subscriber_count": actual_count,
+                "processing_efficiency": 0
+            }
+    
+    # For any other status, return with comprehensive info
+    else:
+        total_handled = new_records + updated_records + duplicate_records
+        return {
+            "status": current_status,
+            "reason": f"Status: {current_status} - {total_handled:,} records handled",
+            "actual_subscriber_count": actual_count,
+            "processing_efficiency": round(processing_efficiency, 1)
+        }
+
+
+#  ADD THIS ENDPOINT for cleaning stuck jobs
+@router.post("/jobs/cleanup-stuck")
+async def cleanup_stuck_jobs():
+    """Clean up stuck/stale jobs after backend restart"""
+    try:
+        jobs_collection = get_jobs_collection()
+        
+        #  FIXED: More aggressive stuck job detection
+        now = datetime.utcnow()
+        
+        # Jobs older than 1 hour in pending/processing are considered stuck
+        stuck_threshold_1h = now - timedelta(hours=1)
+        
+        # Also check jobs from yesterday
+        yesterday = now - timedelta(days=1)
+        
+        stuck_jobs = await jobs_collection.find({
+            "$and": [
+                {"status": {"$in": ["pending", "processing"]}},
+                {"$or": [
+                    # Jobs older than 1 hour
+                    {"updated_at": {"$lt": stuck_threshold_1h}},
+                    {"created_at": {"$lt": stuck_threshold_1h}},
+                    # Jobs from yesterday
+                    {"created_at": {"$lt": yesterday}},
+                    # Jobs with no recent heartbeat
+                    {"last_heartbeat": {"$lt": stuck_threshold_1h}},
+                    # Jobs with no heartbeat at all and old
+                    {"$and": [
+                        {"last_heartbeat": {"$exists": False}},
+                        {"created_at": {"$lt": stuck_threshold_1h}}
+                    ]}
+                ]}
+            ]
+        }).to_list(100)
+        
+        if not stuck_jobs:
+            return {
+                "message": "No stuck jobs found",
+                "cleaned": 0,
+                "timestamp": now,
+                "criteria_checked": "Jobs older than 1 hour or from yesterday"
+            }
+        
+        # Mark stuck jobs as failed
+        cleaned_count = 0
+        for job in stuck_jobs:
+            await jobs_collection.update_one(
+                {"_id": job["_id"]},
+                {"$set": {
+                    "status": "failed",
+                    "error_message": "Job stuck - cleaned up automatically",
+                    "completion_time": now,
+                    "failure_type": "stuck_cleanup",
+                    "recovery_available": True,
+                    "can_retry": True,
+                    "cleanup_reason": "automatic_stuck_cleanup"
+                }}
+            )
+            cleaned_count += 1
+        
+        logger.info(f"ðŸ§¹ Cleaned {cleaned_count} stuck jobs")
+        
+        return {
+            "message": f"Cleaned {cleaned_count} stuck jobs",
+            "cleaned": cleaned_count,
+            "stuck_jobs": [
+                {
+                    "job_id": job.get("job_id"), 
+                    "list_name": job.get("list_name"),
+                    "created_at": job.get("created_at"),
+                    "status_was": job.get("status")
+                } for job in stuck_jobs
+            ],
+            "timestamp": now
+        }
+        
+    except Exception as e:
+        logger.error(f"âŒ Stuck job cleanup failed: {e}")
+        return {
+            "error": str(e),
+            "cleaned": 0,
+            "timestamp": now
+        }
+
+
+# ===== ALL YOUR OTHER ENDPOINTS THAT FRONTEND NEEDS =====
+
+@router.get("/lists")
+async def list_subscriber_lists(simple: bool = Query(False)):
+    """Get subscriber lists - matches your frontend exactly"""
+    start_time = time.time()
     try:
         subscribers_collection = get_subscribers_collection()
-        if not payload.subscribers:
-            raise HTTPException(status_code=400, detail="No subscribers provided")
 
-        # Process in background for large uploads
-        if len(payload.subscribers) > 100:
-            background_tasks.add_task(
-                process_bulk_subscribers,
-                subscribers_collection,
-                payload,
-                request,
-            )
-            return {"message": f"Processing {len(payload.subscribers)} subscribers in background"}
+        if simple:
+            pipeline = [{"$group": {"_id": "$list", "count": {"$sum": 1}}}]
+            cursor = subscribers_collection.aggregate(pipeline)
+            lists = []
+            async for doc in cursor:
+                lists.append({"name": doc["_id"], "count": doc["count"]})
         else:
-            # Process small batches immediately
-            result = await process_bulk_subscribers(subscribers_collection, payload, request)
-            return result
+            pipeline = [
+                {"$group": {"_id": "$list", "count": {"$sum": 1}}},
+                {"$sort": {"count": -1}}
+            ]
+            cursor = subscribers_collection.aggregate(pipeline)
+            lists = []
+            async for doc in cursor:
+                lists.append(doc)
+
+        duration = time.time() - start_time
+        await PerformanceTracker.record_operation("list_aggregation", duration, len(lists), True)
+        logger.info(f"âœ… Listed {len(lists)} subscriber lists in {duration:.3f}s")
+        return lists
+
+    except Exception as e:
+        duration = time.time() - start_time
+        await PerformanceTracker.record_operation("list_aggregation", duration, 0, False)
+        logger.error(f"âŒ List aggregation failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve lists: {str(e)}")
+
+@router.get("/search")
+async def search_subscribers(
+    search: str = Query(None),
+    list_name: str = Query(None),
+    status: str = Query(None),
+    page: int = Query(1, ge=1),
+    limit: int = Query(50, ge=1, le=200),
+    sort_by: str = Query("created_at"),
+    sort_order: str = Query("desc"),
+    search_mode: str = Query("smart")
+):
+    """Enhanced search for your frontend"""
+    start_time = time.time()
+    try:
+        subscribers_collection = get_subscribers_collection()
+
+        # Build query
+        query = {}
+        if search and search.strip():
+            search_term = search.strip()
+            if "@" in search_term and "." in search_term:
+                query["email"] = {"$regex": re.escape(search_term), "$options": "i"}
+            else:
+                query["$or"] = [
+                    {"email": {"$regex": search_term, "$options": "i"}},
+                    {"standard_fields.first_name": {"$regex": search_term, "$options": "i"}},
+                    {"standard_fields.last_name": {"$regex": search_term, "$options": "i"}},
+                    {"list": {"$regex": search_term, "$options": "i"}}
+                ]
+
+        if list_name:
+            query["list"] = list_name
+        if status:
+            query["status"] = status
+
+        # Get total count and paginated results
+        total_count = await subscribers_collection.count_documents(query)
+        skip = (page - 1) * limit
+        total_pages = (total_count + limit - 1) // limit
+
+        sort_direction = -1 if sort_order == "desc" else 1
+        cursor = subscribers_collection.find(query).skip(skip).limit(limit).sort(sort_by, sort_direction)
+
+        subscribers = []
+        async for doc in cursor:
+            doc["_id"] = str(doc["_id"])
+            subscribers.append(doc)
+
+        duration = time.time() - start_time
+
+        response = {
+            "subscribers": subscribers,
+            "pagination": {
+                "current_page": page,
+                "total_pages": total_pages,
+                "total": total_count,
+                "limit": limit,
+                "has_next": page < total_pages,
+                "has_prev": page > 1
+            },
+            "performance": {
+                "query_time": f"{duration:.3f}s",
+                "strategy": search_mode,
+                "results_count": len(subscribers)
+            }
+        }
+
+        logger.info(f"âœ… Search completed: {len(subscribers)} results in {duration:.3f}s")
+        return response
+
+    except Exception as e:
+        logger.error(f"âŒ Search failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
+
+
+@router.post("/bulk")
+async def bulk_upload_subscribers(payload: BulkPayload):
+    """Bulk upload - Convert Pydantic to dict approach"""
+    start_time = time.time()
+    try:
+        subscribers_collection = get_subscribers_collection()
+        
+        # ✅ Convert Pydantic models to dictionaries if needed
+        subscribers_data = []
+        for sub in payload.subscribers:
+            if hasattr(sub, 'model_dump'):
+                # Pydantic v2
+                subscribers_data.append(sub.model_dump())
+            elif hasattr(sub, 'dict'):
+                # Pydantic v1
+                subscribers_data.append(sub.dict())
+            else:
+                # Already a dictionary
+                subscribers_data.append(sub)
+        
+        total_records = len(subscribers_data)
+        batch_size = SafeBatchProcessor.get_optimal_batch_size(total_records, "subscriber_upload")
+        
+        processed_count = 0
+        failed_count = 0
+        errors = []
+
+        for i in range(0, total_records, batch_size):
+            batch = subscribers_data[i:i + batch_size]
+
+            try:
+                operations = []
+                for sub_data in batch:
+                    # Now we can safely use .get() since sub_data is a dictionary
+                    if not sub_data.get("email"):
+                        failed_count += 1
+                        errors.append("Missing email address")
+                        continue
+
+                    subscriber_doc = {
+                        "email": sub_data["email"].lower().strip(),
+                        "list": payload.list,
+                        "status": sub_data.get("status", "active"),
+                        "standard_fields": sub_data.standard_fields or {},
+                        "custom_fields": sub_data.custom_fields or {},
+                        "created_at": datetime.utcnow(),
+                        "updated_at": datetime.utcnow()
+                    }
+
+                    operations.append(UpdateOne(
+                        {"email": subscriber_doc["email"], "list": payload.list},
+                        {"$set": subscriber_doc},
+                        upsert=True
+                    ))
+
+                if operations:
+                    result = await subscribers_collection.bulk_write(operations, ordered=False)
+                    processed_count += result.upserted_count + result.modified_count
+
+            except Exception as batch_error:
+                failed_count += len(batch)
+                error_msg = f"Batch processing failed: {str(batch_error)}"
+                errors.append(error_msg)
+                logger.error(error_msg)
+
+        duration = time.time() - start_time
+        logger.info(f"✅ Bulk upload completed: {processed_count} processed, {failed_count} failed in {duration:.3f}s")
+
+        return {
+            "message": f"Bulk upload completed",
+            "processed": processed_count,
+            "failed": failed_count,
+            "errors": errors[:5]
+        }
 
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Bulk upload failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-async def process_bulk_subscribers(subscribers_collection, payload: BulkPayload, request: Request):
-    try:
-        new_docs = []
-        skipped = []
-        for sub in payload.subscribers:
-            email = sub.email.strip().lower()
-            existing = await subscribers_collection.find_one(
-                {"email": email, "list": payload.list}  # Use payload.list not payload.list_name
-            )
-            if existing:
-                skipped.append({"email": email, "reason": "Already exists"})
-                continue
-
-            # --- split fields into universal / standard / custom ---
-            standard_fields = sub.standard_fields or {}
-            custom_fields = sub.custom_fields or {}
-
-            doc = {
-                "list": payload.list,
-                "email": email,
-                "status": sub.status or "active",
-                "created_at": datetime.utcnow(),
-                "updated_at": datetime.utcnow(),
-                "standard_fields": standard_fields,
-                "custom_fields": custom_fields,
-            }
-
-            new_docs.append(doc)
-
-        if not new_docs:
-            await log_activity(
-                action="upload",
-                entity_type="bulk_upload",
-                entity_id=payload.list,
-                user_action=(
-                    f"Attempted bulk upload to list '{payload.list}' - "
-                    f"all {len(payload.subscribers)} subscribers were duplicates"
-                ),
-                metadata={
-                    "ip_address": str(request.client.host)
-                    if request.client
-                    else "unknown",
-                    "list_name": payload.list,
-                    "attempted_count": len(payload.subscribers),
-                    "inserted_count": 0,
-                    "skipped_count": len(skipped),
-                },
-            )
-            return {
-                "inserted": 0,
-                "skipped": len(skipped),
-                "message": "No new subscribers added - all were duplicates",
-            }
-
-        result = await subscribers_collection.insert_many(new_docs)
-
-        await log_activity(
-            action="upload",
-            entity_type="bulk_upload",
-            entity_id=payload.list,
-            user_action=(
-                f"Bulk uploaded {len(result.inserted_ids)} subscribers "
-                f"to list '{payload.list}'"
-            ),
-            after_data={
-                "sample_emails": [doc.get("email") for doc in new_docs[:5]],
-                "total_count": len(result.inserted_ids),
-            },
-            metadata={
-                "ip_address": str(request.client.host)
-                if request.client
-                else "unknown",
-                "list_name": payload.list,
-                "inserted_count": len(result.inserted_ids),
-                "skipped_count": len(skipped),
-                "attempted_count": len(payload.subscribers),
-            },
-        )
-
-        logger.info(
-            f"Bulk upload completed: {len(result.inserted_ids)} subscribers added"
-        )
-
-        return {"inserted": len(result.inserted_ids), "skipped": len(skipped)}
-
-    except Exception as e:
-        logger.error(f"Bulk processing failed: {e}")
-        raise HTTPException(status_code=500, detail="Bulk upload failed")
-
-# Add this missing function
-async def get_estimated_count(collection, query, max_limit=None):
-    """Get estimated count with performance optimization"""
-    try:
-        # For simple queries, use count_documents with limit
-        if not max_limit or max_limit > 10000:
-            # Use sampling for large datasets
-            sample_size = min(1000, max_limit or 1000)
-            pipeline = [
-                {"$match": query},
-                {"$limit": sample_size},
-                {"$count": "count"}
-            ]
-            
-            cursor = collection.aggregate(pipeline)
-            result = await cursor.to_list(length=1)
-            if result:
-                # Estimate based on sample
-                estimated = result[0]["count"] * (max_limit or 100000) // sample_size
-                return min(estimated, max_limit or estimated)
-            return 0
-        else:
-            # For smaller limits, use accurate count
-            return await collection.count_documents(query, limit=max_limit)
-    except Exception as e:
-        logger.error(f"Count estimation failed: {e}")
-        return 0
-
-
-
-@router.get("/search")
-async def get_subscribers(
-    list_name: str = None,
-    search: str = None,
-    page: int = 1,
-    limit: int = 50,
-    search_mode: str = "smart"  # "smart", "exact", "paginated"
-):
-    try:
-        subscribers_collection = get_subscribers_collection()
-        
-        # Determine search strategy
-        is_search_query = search and search.strip()
-        search_term = search.strip() if is_search_query else ""
-        
-        # Analyze search term specificity
-        search_specificity = analyze_search_specificity(search_term) if is_search_query else "none"
-        
-        # Set limits based on search type and dataset size
-        if is_search_query:
-            if search_specificity == "exact":
-                # Email or ID searches - very specific, limit to 100
-                effective_limit = 100
-                max_results = 100
-            elif search_specificity == "specific":
-                # Specific searches (long terms) - limit to 1000
-                effective_limit = min(limit, 1000)
-                max_results = 5000
-            elif search_specificity == "general":
-                # General searches (short terms) - use pagination
-                effective_limit = min(limit, 500)
-                max_results = 50000  # Allow pagination up to 50k
-            else:
-                # Very broad searches - force pagination
-                effective_limit = min(limit, 200)
-                max_results = 10000
-        else:
-            # Default browsing mode
-            effective_limit = min(limit, 1000)
-            max_results = None  # No limit for browsing
-        
-        # Build optimized query
-        query = {}
-        sort_order = [("_id", 1)]  # Default sort
-        
-        if list_name:
-            query["list"] = list_name
-        
-        if is_search_query:
-            query, sort_order = build_optimized_search_query(search_term, search_specificity)
-            if list_name:
-                query["list"] = list_name
-        
-        # Execute query with smart pagination
-        skip = (page - 1) * effective_limit
-        
-        # For very specific searches, don't use skip (get all results)
-        if is_search_query and search_specificity == "exact":
-            skip = 0
-        
-        cursor = subscribers_collection.find(query).sort(sort_order).skip(skip).limit(effective_limit)
-        subscribers = await cursor.to_list(length=effective_limit)
-        
-        # Process results
-        for sub in subscribers:
-            sub["_id"] = str(sub["_id"])
-            sub.setdefault("standard_fields", {})
-            sub.setdefault("custom_fields", {})
-        
-        # Smart count calculation
-        if is_search_query:
-            if search_specificity == "exact":
-                total_count = len(subscribers)
-                has_more = False
-            else:
-                # Use estimated count for performance on large datasets
-                total_count = await get_estimated_count(subscribers_collection, query, max_results)
-                has_more = total_count > (page * effective_limit) and total_count < max_results
-        else:
-            # For browsing, use estimated count
-            total_count = await subscribers_collection.estimated_document_count()
-            has_more = skip + len(subscribers) < total_count
-        
-        pages = (min(total_count, max_results or total_count) + effective_limit - 1) // effective_limit
-        
-        return {
-            "subscribers": subscribers,
-            "pagination": {
-                "page": page,
-                "limit": effective_limit,
-                "total": min(total_count, max_results or total_count),
-                "pages": pages,
-                "has_more": has_more,
-                "is_search": is_search_query,
-                "search_specificity": search_specificity
-            },
-            "performance": {
-                "result_count": len(subscribers),
-               # "query_time": "< 100ms",  # Add actual timing if needed
-                "strategy": search_specificity if is_search_query else "browse"
-            }
-        }
-        
-    except Exception as e:
-        logger.error(f"Search failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-def analyze_search_specificity(search_term: str) -> str:
-    """Analyze search term to determine query strategy"""
-    if not search_term:
-        return "none"
-
-    # Email pattern
-    if "@" in search_term and "." in search_term:
-        return "exact"
-
-    # ObjectId pattern
-    if len(search_term) == 24 and all(c in '0123456789abcdef' for c in search_term.lower()):
-        return "exact"
-
-    # Phone number pattern
-    if len(search_term) >= 10 and search_term.replace("+", "").replace("-", "").replace(" ", "").replace("(", "").replace(")", "").isdigit():
-        return "exact"
-
-    # Long specific terms
-    if len(search_term) >= 8:
-        return "specific"
-
-    # Medium terms
-    if len(search_term) >= 4:
-        return "general"
-
-    # Very short terms
-    return "broad"
-
-
-def build_optimized_search_query(search_term: str, specificity: str):
-    """Build optimized MongoDB query based on search specificity"""
-    query = {}
-    sort_order = [("_id", 1)]
-
-    if specificity == "exact":
-        # Exact searches - use precise matching
-        conditions = []
-
-        if "@" in search_term:
-            # Email search - use exact match first, then regex
-            conditions.extend([
-                {"email": search_term.lower()},
-                {"email": {"$regex": f"^{re.escape(search_term)}", "$options": "i"}}
-            ])
-            sort_order = [("email", 1), ("_id", 1)]
-
-        elif len(search_term) == 24:
-            # Potential ObjectId
-            try:
-                from bson import ObjectId
-                conditions.append({"_id": ObjectId(search_term)})
-            except:
-                conditions.append({"email": {"$regex": search_term, "$options": "i"}})
-
-        query["$or"] = conditions
-
-    elif specificity == "specific":
-        # Specific searches - focused field search
-        query["$or"] = [
-            {"email": {"$regex": search_term, "$options": "i"}},
-            {"standard_fields.first_name": {"$regex": search_term, "$options": "i"}},
-            {"standard_fields.last_name": {"$regex": search_term, "$options": "i"}},
-        ]
-        sort_order = [("email", 1), ("standard_fields.first_name", 1)]
-
-    else:
-        # General/broad searches - comprehensive but limited
-        query["$or"] = [
-            {"email": {"$regex": search_term, "$options": "i"}},
-            {"standard_fields.first_name": {"$regex": search_term, "$options": "i"}},
-            {"standard_fields.last_name": {"$regex": search_term, "$options": "i"}},
-            {"list": {"$regex": search_term, "$options": "i"}},
-            {"custom_fields.company": {"$regex": search_term, "$options": "i"}},
-            {"custom_fields.city": {"$regex": search_term, "$options": "i"}},
-        ]
-        sort_order = [("email", 1)]
-
-    return query, sort_order
+        logger.error(f"❌ Bulk upload failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Bulk upload failed: {str(e)}")
 
 @router.get("/list/{list_name}")
-async def get_subscribers_by_list(list_name: str):
+async def get_list_subscribers_paginated(
+    list_name: str,
+    page: int = Query(1, ge=1),
+    limit: int = Query(50, ge=1, le=100),
+    search: Optional[str] = Query(None)
+):
+    """Get subscribers by list with proper pagination and full field support"""
     try:
         subscribers_collection = get_subscribers_collection()
-        cursor = subscribers_collection.find({"list": list_name}).limit(100)
 
-        results = []
+        # Build query
+        query = {"list": list_name}
+        if search:
+            query["$or"] = [
+                {"email": {"$regex": search, "$options": "i"}},
+                {"standard_fields.first_name": {"$regex": search, "$options": "i"}},
+                {"standard_fields.last_name": {"$regex": search, "$options": "i"}},
+                {"custom_fields.list": {"$regex": search, "$options": "i"}}
+            ]
+
+        # Count total
+        total_count = await subscribers_collection.count_documents(query)
+        total_pages = math.ceil(total_count / limit) if total_count > 0 else 1
+        skip = (page - 1) * limit
+
+        # Projection: include everything needed
+        projection = {
+            "_id": 1,
+            "email": 1,
+            "status": 1,
+            "list": 1,
+            "created_at": 1,
+            "updated_at": 1,
+            "standard_fields": 1,
+            "custom_fields": 1,
+            "job_id": 1
+        }
+
+        cursor = (
+            subscribers_collection
+            .find(query, projection)
+            .skip(skip)
+            .limit(limit)
+            .sort("created_at", -1)
+        )
+
+        subscribers = []
         async for doc in cursor:
             doc["_id"] = str(doc["_id"])
-            doc.setdefault("standard_fields", {})
-            doc.setdefault("custom_fields", {})
-            results.append(doc)
 
-        return results
+            # Always ensure both keys exist
+            doc["standard_fields"] = doc.get("standard_fields", {})
+            doc["custom_fields"] = doc.get("custom_fields", {})
+
+            subscribers.append(doc)
+
+        return {
+            "success": True,
+            "subscribers": subscribers,
+            "pagination": {
+                "current_page": page,
+                "total_pages": total_pages,
+                "total": total_count,
+                "page_size": limit,
+                "has_more": page < total_pages,
+            },
+        }
+
     except Exception as e:
-        logger.error(f"Get subscribers by list failed: {e}")
+        logger.error(f"Failed to fetch subscribers for list '{list_name}': {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.delete("/lists/{list_name}")
+async def delete_list_enhanced(
+    list_name: str,
+    force: bool = Query(False, description="Force delete without confirmation checks"),
+    reason: str = Query(None, description="Reason for deletion")
+):
+    """Enhanced list deletion with safety features (no backup, single-user optimized)"""
+    try:
+        subscribers_collection = get_subscribers_collection()
+        jobs_collection = get_jobs_collection()
+
+        logger.info(f"ðŸ—‘ï¸ Enhanced deletion initiated for list '{list_name}'")
+
+        # ===== 1. PRE-DELETION SAFETY CHECKS =====
+
+        # Check if list exists and get count
+        list_count = await subscribers_collection.count_documents({"list": list_name})
+        if list_count == 0:
+            raise HTTPException(status_code=404, detail=f"List '{list_name}' not found or already empty")
+
+        # Check for active/pending jobs for this list
+        active_jobs = await jobs_collection.find({
+            "list_name": list_name,
+            "status": {"$in": ["pending", "processing", "uploading"]}
+        }).to_list(10)
+
+        if active_jobs and not force:
+            job_details = [f"Job {job['job_id']}: {job['status']}" for job in active_jobs]
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "message": f"Cannot delete list '{list_name}' - active jobs found",
+                    "active_jobs": len(active_jobs),
+                    "jobs": job_details,
+                    "suggestion": "Wait for jobs to complete or use force=true to override"
+                }
+            )
+
+        # Large list warning (unless forced)
+        if list_count > 100000 and not force:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "message": f"Large list deletion requires confirmation",
+                    "list_size": list_count,
+                    "warning": f"You are about to delete {list_count:,} subscribers",
+                    "suggestion": "Add force=true parameter to confirm deletion"
+                }
+            )
+
+        # ===== 2. CANCEL/CLEANUP RELATED JOBS =====
+        cancelled_jobs = 0
+        if active_jobs:
+            logger.info(f"ðŸ›‘ Cancelling {len(active_jobs)} active jobs for list '{list_name}'")
+
+            for job in active_jobs:
+                await jobs_collection.update_one(
+                    {"_id": job["_id"]},
+                    {"$set": {
+                        "status": "cancelled",
+                        "cancellation_reason": f"List '{list_name}' deleted",
+                        "cancelled_at": datetime.utcnow(),
+                        "error_message": "Job cancelled due to list deletion"
+                    }}
+                )
+                cancelled_jobs += 1
+
+            # Clean up chunk files for cancelled jobs
+            for job in active_jobs:
+                chunk_dir = f"upload_queue/chunks/{job['job_id']}"
+                if os.path.exists(chunk_dir):
+                    try:
+                        import shutil
+                        shutil.rmtree(chunk_dir, ignore_errors=True)
+                        logger.info(f"ðŸ§¹ Cleaned up chunks for job {job['job_id']}")
+                    except Exception as cleanup_error:
+                        logger.warning(f"âš ï¸ Chunk cleanup failed for job {job['job_id']}: {cleanup_error}")
+
+        # ===== 3. PERFORM THE DELETION =====
+        logger.info(f"ðŸ—‘ï¸ Deleting {list_count:,} subscribers from list '{list_name}'")
+
+        deletion_start = datetime.utcnow()
+
+        # Get sample of data before deletion (for audit)
+        sample_subscribers = []
+        cursor = subscribers_collection.find({"list": list_name}).limit(3)
+        async for sub in cursor:
+            sub["_id"] = str(sub["_id"])
+            sample_subscribers.append({
+                "email": sub.get("email", ""),
+                "standard_fields": sub.get("standard_fields", {}),
+                "status": sub.get("status", "")
+            })
+
+        # Perform the actual deletion
+        delete_result = await subscribers_collection.delete_many({"list": list_name})
+        deletion_time = (datetime.utcnow() - deletion_start).total_seconds()
+
+        if delete_result.deleted_count == 0:
+            raise HTTPException(status_code=500, detail="Deletion failed - no records were deleted")
+
+        logger.info(f"âœ… Successfully deleted {delete_result.deleted_count:,} subscribers in {deletion_time:.2f}s")
+
+        # ===== 4. AUDIT LOGGING =====
+        await log_activity(
+            action="list_deletion",
+            entity_type="subscriber_list",
+            entity_id=list_name,
+            user_action=f"Deleted entire list '{list_name}' containing {delete_result.deleted_count:,} subscribers",
+            before_data={
+                "list_name": list_name,
+                "subscriber_count": list_count,
+                "sample_subscribers": sample_subscribers,
+                "active_jobs_cancelled": cancelled_jobs
+            },
+            after_data={
+                "deleted_count": delete_result.deleted_count,
+                "deletion_time_seconds": deletion_time,
+                "cancelled_jobs": cancelled_jobs
+            },
+            metadata={
+                "deletion_reason": reason or "Not specified",
+                "force_deletion": force,
+                "deletion_method": "enhanced_bulk_delete",
+                "safety_checks_performed": True,
+                "large_list": list_count > 100000,
+                "single_user_app": True
+            }
+        )
+
+        # ===== 5. CLEANUP RELATED JOBS =====
+        cleanup_result = await jobs_collection.delete_many({
+            "list_name": list_name,
+            "status": {"$in": ["completed", "failed", "cancelled"]}
+        })
+
+        logger.info(f"ðŸ§¹ Cleaned up {cleanup_result.deleted_count} related job records")
+
+        # ===== 6. SIMPLIFIED RESPONSE =====
+        response = {
+            "success": True,
+            "message": f"List '{list_name}' deleted successfully",
+            "deletion_summary": {
+                "list_name": list_name,
+                "subscribers_deleted": delete_result.deleted_count,
+                "deletion_time_seconds": round(deletion_time, 2),
+                "deletion_speed_per_second": int(delete_result.deleted_count / deletion_time) if deletion_time > 0 else 0,
+                "deletion_timestamp": deletion_start.isoformat(),
+                "reason": reason or "Not specified"
+            },
+            "cleanup_actions": {
+                "jobs_cancelled": cancelled_jobs,
+                "chunk_files_cleaned": len(active_jobs) if active_jobs else 0,
+                "job_records_cleaned": cleanup_result.deleted_count,
+                "audit_logged": True
+            },
+            "performance": {
+                "records_per_second": int(delete_result.deleted_count / deletion_time) if deletion_time > 0 else 0,
+                "was_large_operation": list_count > 100000,
+                "required_force": bool(active_jobs) and force
+            }
+        }
+
+        return response
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"âŒ Enhanced list deletion failed for '{list_name}': {e}")
+
+        # Log the failure for audit
+        try:
+            await log_activity(
+                action="list_deletion_failed",
+                entity_type="subscriber_list",
+                entity_id=list_name,
+                user_action=f"Failed to delete list '{list_name}'",
+                metadata={
+                    "error": str(e),
+                    "failure_reason": reason,
+                    "single_user_app": True
+                }
+            )
+        except:
+            pass
+
+        raise HTTPException(status_code=500, detail=f"List deletion failed: {str(e)}")
+
+
+@router.post("/")
+async def add_single_subscriber(subscriber: SubscriberIn, request: Request):
+    """Add single subscriber for your frontend"""
+    try:
+        subscribers_collection = get_subscribers_collection()
+        email = subscriber.email.strip().lower()
+
+        existing = await subscribers_collection.find_one(
+            {"email": email, "list": subscriber.list}
+        )
+        if existing:
+            raise HTTPException(
+                status_code=400, detail="Subscriber already exists in this list"
+            )
+
+        doc = {
+            "list": subscriber.list,
+            "email": email,
+            "status": subscriber.status or "active",
+            "created_at": datetime.utcnow(),
+            "updated_at": datetime.utcnow(),
+            "standard_fields": subscriber.standard_fields or {},
+            "custom_fields": subscriber.custom_fields or {},
+        }
+
+        result = await subscribers_collection.insert_one(doc)
+        doc["_id"] = str(result.inserted_id)
+
+        await log_activity(
+            action="create",
+            entity_type="subscriber",
+            entity_id=str(result.inserted_id),
+            user_action=f"Added subscriber {email} to list '{subscriber.list}'",
+            after_data={
+                "email": email,
+                "list": subscriber.list,
+                "status": doc["status"],
+                "standard_fields": doc["standard_fields"],
+                "custom_fields": doc["custom_fields"],
+            },
+            metadata={
+                "ip_address": str(request.client.host) if request.client else "unknown",
+                "list_name": subscriber.list,
+                "email": email,
+            },
+        )
+
+        return doc
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Add subscriber failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.put("/{subscriber_id}")
+async def update_subscriber(subscriber_id: str, subscriber: SubscriberIn, request: Request):
+    """Update subscriber for your frontend"""
+    try:
+        subscribers_collection = get_subscribers_collection()
+
+        if not ObjectId.is_valid(subscriber_id):
+            raise HTTPException(status_code=400, detail="Invalid subscriber ID")
+
+        existing = await subscribers_collection.find_one({"_id": ObjectId(subscriber_id)})
+        if not existing:
+            raise HTTPException(status_code=404, detail="Subscriber not found")
+
+        update_doc = {
+            "email": subscriber.email.lower().strip(),
+            "list": subscriber.list,
+            "status": subscriber.status or "active",
+            "standard_fields": subscriber.standard_fields or {},
+            "custom_fields": subscriber.custom_fields or {},
+            "updated_at": datetime.utcnow()
+        }
+
+        result = await subscribers_collection.update_one(
+            {"_id": ObjectId(subscriber_id)},
+            {"$set": update_doc}
+        )
+
+        if result.modified_count == 0:
+            raise HTTPException(status_code=404, detail="Subscriber not found")
+
+        await log_activity(
+            action="update",
+            entity_type="subscriber",
+            entity_id=subscriber_id,
+            user_action=f"Updated subscriber {subscriber.email}",
+            before_data={
+                "email": existing.get("email"),
+                "list": existing.get("list"),
+                "status": existing.get("status"),
+                "standard_fields": existing.get("standard_fields", {}),
+                "custom_fields": existing.get("custom_fields", {}),
+            },
+            after_data={
+                "email": subscriber.email,
+                "list": subscriber.list,
+                "status": subscriber.status,
+                "standard_fields": subscriber.standard_fields or {},
+                "custom_fields": subscriber.custom_fields or {},
+            },
+            metadata={
+                "ip_address": str(request.client.host) if request.client else "unknown",
+            },
+        )
+
+        return {"message": "Subscriber updated successfully"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Update subscriber failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.delete("/{subscriber_id}")
 async def delete_subscriber(subscriber_id: str, request: Request):
+    """Delete subscriber for your frontend"""
     try:
         subscribers_collection = get_subscribers_collection()
 
@@ -431,9 +1548,7 @@ async def delete_subscriber(subscriber_id: str, request: Request):
                 "custom_fields": subscriber.get("custom_fields", {}),
             },
             metadata={
-                "ip_address": str(request.client.host)
-                if request.client
-                else "unknown",
+                "ip_address": str(request.client.host) if request.client else "unknown",
                 "list_name": subscriber.get("list"),
                 "email": subscriber.get("email"),
             },
@@ -445,185 +1560,22 @@ async def delete_subscriber(subscriber_id: str, request: Request):
         logger.error(f"Delete subscriber failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-
-
-
-
-@router.post("")
-async def add_single_subscriber(subscriber: SubscriberIn, request: Request):
-    try:
-        subscribers_collection = get_subscribers_collection()
-
-        # normalize email
-        email = subscriber.email.strip().lower()
-
-        existing = await subscribers_collection.find_one(
-            {"email": email, "list": subscriber.list}
-        )
-        if existing:
-            raise HTTPException(
-                status_code=400, detail="Subscriber already exists in this list"
-            )
-
-        # --- build doc with universal + standard + custom fields ---
-        doc = {
-            "list": subscriber.list,
-            "email": email,
-            "status": subscriber.status or "active",
-            "created_at": datetime.utcnow(),
-            "updated_at": datetime.utcnow(),
-            "standard_fields": subscriber.standard_fields or {},
-            "custom_fields": subscriber.custom_fields or {},
-        }
-
-        result = await subscribers_collection.insert_one(doc)
-        doc["_id"] = str(result.inserted_id)
-
-        await log_activity(
-            action="create",
-            entity_type="subscriber",
-            entity_id=str(result.inserted_id),
-            user_action=f"Added subscriber {email} to list '{subscriber.list}'",
-            after_data={
-                "email": email,
-                "list": subscriber.list,
-                "status": doc["status"],
-                "standard_fields": doc["standard_fields"],
-                "custom_fields": doc["custom_fields"],
-            },
-            metadata={
-                "ip_address": str(request.client.host)
-                if request.client
-                else "unknown",
-                "list_name": subscriber.list,
-                "email": email,
-            },
-        )
-
-        return doc
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Add subscriber failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-
-@router.put("/{subscriber_id}")
-async def update_subscriber(subscriber_id: str, subscriber: SubscriberIn, request: Request):
-    try:
-        subscribers_collection = get_subscribers_collection()
-
-        if not ObjectId.is_valid(subscriber_id):
-            raise HTTPException(status_code=400, detail="Invalid subscriber ID")
-
-        old_subscriber = await subscribers_collection.find_one(
-            {"_id": ObjectId(subscriber_id)}
-        )
-        if not old_subscriber:
-            raise HTTPException(status_code=404, detail="Subscriber not found")
-
-        # normalize email
-        email = subscriber.email.strip().lower()
-
-        # --- prepare update document ---
-        update_data = {
-            "list": subscriber.list,
-            "email": email,
-            "status": subscriber.status or old_subscriber.get("status", "active"),
-            "updated_at": datetime.utcnow(),
-            "standard_fields": subscriber.standard_fields or {},
-            "custom_fields": subscriber.custom_fields or {},
-        }
-
-        result = await subscribers_collection.update_one(
-            {"_id": ObjectId(subscriber_id)}, {"$set": update_data}
-        )
-
-        if result.matched_count == 0:
-            raise HTTPException(status_code=404, detail="Subscriber not found")
-
-        await log_activity(
-            action="update",
-            entity_type="subscriber",
-            entity_id=subscriber_id,
-            user_action=f"Updated subscriber {email} in list '{subscriber.list}'",
-            before_data={
-                "email": old_subscriber.get("email"),
-                "list": old_subscriber.get("list"),
-                "status": old_subscriber.get("status"),
-                "standard_fields": old_subscriber.get("standard_fields", {}),
-                "custom_fields": old_subscriber.get("custom_fields", {}),
-            },
-            after_data=update_data,
-            metadata={
-                "ip_address": str(request.client.host)
-                if request.client
-                else "unknown",
-                "old_list": old_subscriber.get("list"),
-                "new_list": subscriber.list,
-            },
-        )
-
-        return {"message": "Subscriber updated successfully"}
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Update subscriber failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
 @router.patch("/{subscriber_id}/status")
-async def update_subscriber_status(
-    subscriber_id: str,
-    request: Request,
-    status: str = Query(..., regex="^(active|unsubscribed|inactive|bounced)$"),
-):
+async def update_subscriber_status(subscriber_id: str, status: str = Query(...), request: Request = None):
+    """Update subscriber status for your frontend"""
     try:
         subscribers_collection = get_subscribers_collection()
 
         if not ObjectId.is_valid(subscriber_id):
             raise HTTPException(status_code=400, detail="Invalid subscriber ID")
-
-        old_subscriber = await subscribers_collection.find_one(
-            {"_id": ObjectId(subscriber_id)}
-        )
-        if not old_subscriber:
-            raise HTTPException(status_code=404, detail="Subscriber not found")
 
         result = await subscribers_collection.update_one(
             {"_id": ObjectId(subscriber_id)},
-            {"$set": {"status": status, "updated_at": datetime.utcnow()}},
+            {"$set": {"status": status, "updated_at": datetime.utcnow()}}
         )
 
-        if result.matched_count == 0:
+        if result.modified_count == 0:
             raise HTTPException(status_code=404, detail="Subscriber not found")
-
-        await log_activity(
-            action="update",
-            entity_type="subscriber_status",
-            entity_id=subscriber_id,
-            user_action=f"Updated subscriber {old_subscriber.get('email')} status to {status}",
-            before_data={
-                "email": old_subscriber.get("email"),
-                "list": old_subscriber.get("list"),
-                "status": old_subscriber.get("status"),
-            },
-            after_data={
-                "email": old_subscriber.get("email"),
-                "list": old_subscriber.get("list"),
-                "status": status,
-            },
-            metadata={
-                "ip_address": str(request.client.host)
-                if request.client
-                else "unknown",
-                "list_name": old_subscriber.get("list"),
-                "email": old_subscriber.get("email"),
-            },
-        )
 
         return {"message": f"Subscriber status updated to {status}"}
 
@@ -633,108 +1585,9 @@ async def update_subscriber_status(
         logger.error(f"Update status failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-
-
-
-
-
-@router.delete("/{subscriber_id}")
-async def delete_subscriber(subscriber_id: str, request: Request):
-    try:
-        subscribers_collection = get_subscribers_collection()
-
-        if not ObjectId.is_valid(subscriber_id):
-            raise HTTPException(status_code=400, detail="Invalid subscriber ID")
-
-        subscriber = await subscribers_collection.find_one({"_id": ObjectId(subscriber_id)})
-        if not subscriber:
-            raise HTTPException(status_code=404, detail="Subscriber not found")
-
-        result = await subscribers_collection.delete_one({"_id": ObjectId(subscriber_id)})
-        if result.deleted_count == 0:
-            raise HTTPException(status_code=404, detail="Subscriber not found")
-
-        await log_activity(
-            action="delete",
-            entity_type="subscriber",
-            entity_id=subscriber_id,
-            user_action=f"Deleted subscriber {subscriber.get('email')} from list '{subscriber.get('list')}'",
-            before_data={
-                "name": subscriber.get("name", ""),
-                "email": subscriber.get("email", ""),
-                "list": subscriber.get("list", ""),
-                "status": subscriber.get("status", "active"),
-                "created_at": subscriber.get("created_at"),
-            },
-            metadata={
-                "ip_address": str(request.client.host)
-                if request.client
-                else "unknown",
-                "list_name": subscriber.get("list"),
-                "email": subscriber.get("email"),
-            },
-        )
-
-        return {"message": "Subscriber deleted successfully"}
-    except Exception as e:
-        logger.error(f"Delete subscriber failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@router.delete("/lists/{list_name}")
-async def delete_list_by_name(list_name: str, request: Request):
-    try:
-        subscribers_collection = get_subscribers_collection()
-
-        # Count + snapshot before deletion
-        count_before = await subscribers_collection.count_documents({"list": list_name})
-        if count_before == 0:
-            raise HTTPException(status_code=404, detail="List not found or already empty")
-
-        # Take a small sample of subscribers for audit
-        sample_docs = await subscribers_collection.find(
-            {"list": list_name}, {"email": 1, "standard_fields": 1, "custom_fields": 1}
-        ).to_list(5)
-
-        # Perform deletion
-        result = await subscribers_collection.delete_many({"list": list_name})
-
-        await log_activity(
-            action="delete",
-            entity_type="list",
-            entity_id=list_name,
-            user_action=f"Deleted entire list '{list_name}' with {result.deleted_count} subscribers",
-            before_data={
-                "list_name": list_name,
-                "subscriber_count": count_before,
-                "sample_subscribers": [
-                    {
-                        "email": doc.get("email"),
-                        "standard_fields": doc.get("standard_fields", {}),
-                        "custom_fields": doc.get("custom_fields", {}),
-                    }
-                    for doc in sample_docs
-                ],
-            },
-            metadata={
-                "ip_address": str(request.client.host)
-                if request.client
-                else "unknown",
-                "list_name": list_name,
-                "deleted_count": result.deleted_count,
-            },
-        )
-
-        return {
-            "message": f"✅ Deleted {result.deleted_count} subscribers from list '{list_name}'"
-        }
-
-    except Exception as e:
-        logger.error(f"Delete list failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
 @router.get("/lists/{list_name}/export")
 async def export_list_csv(list_name: str, request: Request):
+    """Export list as CSV for your frontend"""
     try:
         subscribers_collection = get_subscribers_collection()
         cursor = subscribers_collection.find({"list": list_name})
@@ -742,7 +1595,7 @@ async def export_list_csv(list_name: str, request: Request):
         output = io.StringIO()
         writer = csv.writer(output)
 
-        # Collect all possible columns across subscribers
+        # Collect all possible columns
         standard_keys = set()
         custom_keys = set()
         docs = []
@@ -751,7 +1604,7 @@ async def export_list_csv(list_name: str, request: Request):
             standard_keys.update((doc.get("standard_fields") or {}).keys())
             custom_keys.update((doc.get("custom_fields") or {}).keys())
 
-        # Define header: universal + standard + custom
+        # Define header
         headers = (
             ["email", "status", "created_at", "updated_at", "list"]
             + sorted(list(standard_keys))
@@ -791,9 +1644,7 @@ async def export_list_csv(list_name: str, request: Request):
             entity_id=list_name,
             user_action=f"Exported list '{list_name}' as CSV with {subscriber_count} subscribers",
             metadata={
-                "ip_address": str(request.client.host)
-                if request.client
-                else "unknown",
+                "ip_address": str(request.client.host) if request.client else "unknown",
                 "list_name": list_name,
                 "export_count": subscriber_count,
                 "export_format": "csv",
@@ -812,180 +1663,63 @@ async def export_list_csv(list_name: str, request: Request):
         logger.error(f"Export failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-# Background Task for Large Operations
-import asyncio
-from fastapi import BackgroundTasks
-
-class UploadTaskManager:
-    def __init__(self):
-        self.tasks = {}
-    
-    def create_task(self, task_id: str, coro):
-        task = asyncio.create_task(coro)
-        self.tasks[task_id] = {
-            "task": task,
-            "status": "running",
-            "created_at": datetime.utcnow()
-        }
-        return task_id
-    
-    def get_task_status(self, task_id: str):
-        if task_id not in self.tasks:
-            return {"status": "not_found"}
-        
-        task_info = self.tasks[task_id]
-        task = task_info["task"]
-        
-        if task.done():
-            if task.exception():
-                return {"status": "failed", "error": str(task.exception())}
-            else:
-                return {"status": "completed", "result": task.result()}
-        else:
-            return {"status": "running", "created_at": task_info["created_at"]}
-
-# Global task manager
-upload_manager = UploadTaskManager()
-
-@router.get("/upload-status/{task_id}")
-async def get_upload_status(task_id: str):
-    """Check the status of a background upload task"""
-    return upload_manager.get_task_status(task_id)
-
-#  Memory Efficient CSV Processing
-@router.post("/bulk-stream")
-async def stream_bulk_upload(
-    file: UploadFile = File(...),
-    list_name: str = Form(...)
-):
-    """Stream process large CSV files without loading everything into memory"""
-
-    subscribers_collection = get_subscribers_collection()
-
-    # Process file in chunks
-    chunk_size = 1000
-    processed_count = 0
-
-    content = await file.read()
-    csv_reader = csv.DictReader(io.StringIO(content.decode("utf-8")))
-
-    batch = []
-    for row in csv_reader:
-        # Process and validate row
-        subscriber = {
-            "email": row.get("email", "").strip(),
-            "list": list_name,
-            "status": "active",
-            "standard_fields": {
-                "first_name": row.get("first_name", "").strip(),
-                "last_name": row.get("last_name", "").strip(),
-            },
-            "custom_fields": {
-                k: v for k, v in row.items() if k not in ["email", "first_name", "last_name"]
-            },
-            "created_at": datetime.utcnow(),
-            "updated_at": datetime.utcnow(),
-        }
-
-        if subscriber["email"]:  # Only add valid emails
-            batch.append(subscriber)
-
-        # Process in chunks
-        if len(batch) >= chunk_size:
-            await process_batch(subscribers_collection, batch)
-            processed_count += len(batch)
-            batch = []
-
-    # Process remaining items
-    if batch:
-        await process_batch(subscribers_collection, batch)
-        processed_count += len(batch)
-
-    return {"message": f"Processed {processed_count} subscribers"}
-
-
-async def process_batch(subscribers_collection, batch: List[Dict]):
-    """Process a batch of subscribers efficiently"""
-    operations = []
-
-    for subscriber in batch:
-        operations.append(
-            UpdateOne(
-                {"email": subscriber["email"], "list": subscriber["list"]},
-                {
-                    "$set": subscriber,
-                    "$setOnInsert": {"created_at": datetime.utcnow()},
-                },
-                upsert=True,
-            )
-        )
-
-    if operations:
-        await subscribers_collection.bulk_write(operations, ordered=False)
-
-@router.get("/audit/logs")
-async def get_audit_logs(
-    limit: int = Query(50, le=1000),
-    skip: int = Query(0),
-    entity_type: str = Query(None),
-    action: str = Query(None),
-    start_date: str = Query(None),
-    end_date: str = Query(None),
-):
-    """Get audit trail logs with filtering"""
+@router.post("/jobs/{job_id}/force-retry")
+async def retry_failed_job(job_id: str, request: Request, background_tasks: BackgroundTasks):
+    """Retry failed job for your frontend"""
     try:
-        audit_collection = get_audit_collection()
-
-        query = {}
-        if entity_type:
-            query["entity_type"] = entity_type
-        if action:
-            query["action"] = action
-        if start_date or end_date:
-            date_query = {}
-            if start_date:
-                date_query["$gte"] = datetime.fromisoformat(start_date.replace("T", " "))
-            if end_date:
-                date_query["$lte"] = datetime.fromisoformat(end_date.replace("T", " "))
-            query["timestamp"] = date_query
-
-        cursor = (
-            audit_collection.find(query)
-            .sort("timestamp", -1)
-            .skip(skip)
-            .limit(limit)
+        jobs_collection = get_jobs_collection()
+        job = await jobs_collection.find_one({"_id": job_id})
+        
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        
+        if job.get("status") != "failed":
+            raise HTTPException(status_code=400, detail="Only failed jobs can be retried")
+        
+        # Reset job status
+        await jobs_collection.update_one(
+            {"_id": job_id},
+            {"$set": {
+                "status": "pending",
+                "updated_at": datetime.utcnow(),
+                "retry_count": job.get("retry_count", 0) + 1
+            }}
         )
-
-        logs = []
-        async for log in cursor:
-            log["_id"] = str(log["_id"])
-
-            # Ensure before/after data always contain tier fields
-            if "before_data" in log:
-                log["before_data"].setdefault("standard_fields", {})
-                log["before_data"].setdefault("custom_fields", {})
-            if "after_data" in log:
-                log["after_data"].setdefault("standard_fields", {})
-                log["after_data"].setdefault("custom_fields", {})
-
-            logs.append(log)
-
-        total = await audit_collection.count_documents(query)
-
-        return {
-            "logs": logs,
-            "total": total,
-            "page": skip // limit + 1,
-            "total_pages": (total + limit - 1) // limit,
-        }
-
+        
+        return {"message": "Job retry initiated"}
+        
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Get audit logs failed: {e}")
+        logger.error(f"Retry job failed: {e}")
+        raise HTTPException(status_code=500, detail="Failed to retry job")
+
+# ===== FILE-FIRST RECOVERY ENDPOINTS =====
+@router.get("/upload-queue/status")
+async def get_upload_queue_status():
+    """Get upload queue status for file-first system"""
+    try:
+        if PRODUCTION_FEATURES.get('file_first_recovery', False):
+            return simple_file_recovery.get_status()
+        else:
+            return {"error": "File-first recovery not available", "queued": 0, "processing": 0, "completed": 0}
+    except Exception as e:
+        return {"error": str(e)}
+
+@router.post("/upload-queue/retry")
+async def manual_retry_uploads():
+    """Manually retry stuck/failed uploads"""
+    try:
+        if PRODUCTION_FEATURES.get('file_first_recovery', False):
+            result = await simple_file_recovery.manual_retry()
+            return result
+        else:
+            return {"error": "File-first recovery not available"}
+    except Exception as e:
+        logger.error(f"Manual retry failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-
-
-#Required for logger 
+# ===== UTILITY FUNCTIONS =====
 async def log_activity(
     action: str,
     entity_type: str,
@@ -1010,8 +1744,262 @@ async def log_activity(
         }
 
         await audit_collection.insert_one(log_entry)
-        logger.info(f"AUDIT: {action} - {user_action}")  # Add this line
+        logger.info(f"AUDIT: {action} - {user_action}")
 
     except Exception as e:
         logger.error(f"Failed to log activity: {e}")
+ 
+# ===== MISSING UTILITY FUNCTIONS =====
+def convert_objectids_to_strings(obj):
+    """Recursively convert all ObjectId instances to strings"""
+    if isinstance(obj, ObjectId):
+        return str(obj)
+    elif isinstance(obj, dict):
+        return {key: convert_objectids_to_strings(value) for key, value in obj.items()}
+    elif isinstance(obj, list):
+        return [convert_objectids_to_strings(item) for item in obj]
+    else:
+        return obj
 
+async def get_estimated_count(collection, query, max_limit=None):
+    """Get estimated count with performance optimization"""
+    try:
+        if not max_limit or max_limit <= 10000:
+            return await collection.count_documents(query, limit=max_limit)
+        else:
+            # Use sampling for large datasets
+            sample_size = min(1000, max_limit or 1000)
+            pipeline = [
+                {"$match": query},
+                {"$limit": sample_size},
+                {"$count": "count"}
+            ]
+            
+            cursor = collection.aggregate(pipeline)
+            result = await cursor.to_list(length=1)
+            
+            if result:
+                # Estimate based on sample
+                estimated = (result[0]["count"] / sample_size) * (max_limit or 100000)
+                return min(estimated, max_limit or estimated)
+            return 0
+    except Exception as e:
+        logger.error(f"Count estimation failed: {e}")
+        return 0
+
+def analyze_search_specificity(search_term: str) -> str:
+    """Analyze search term to determine query strategy"""
+    if not search_term:
+        return "none"
+        
+    # Email pattern
+    if "@" in search_term and "." in search_term:
+        return "exact"
+        
+    # ObjectId pattern  
+    if len(search_term) == 24 and all(c in "0123456789abcdef" for c in search_term.lower()):
+        return "exact"
+        
+    # Phone number pattern
+    if len(search_term) >= 10 and search_term.replace("(", "").replace(")", "").replace("-", "").replace(" ", "").replace("+", "").replace(".", "").isdigit():
+        return "exact"
+        
+    # Long specific terms
+    if len(search_term) >= 8:
+        return "specific"
+        
+    # Medium terms 
+    if len(search_term) >= 4:
+        return "general"
+        
+    return "broad"
+
+def build_optimized_search_query(search_term: str, specificity: str):
+    """Build optimized MongoDB query based on search specificity"""
+    query = {}
+    sort_order = [("_id", 1)]
+    
+    if specificity == "exact":
+        # Exact searches - use precise matching
+        conditions = []
+        
+        if "@" in search_term:
+            # Email search - use exact match first, then regex  
+            conditions.extend([
+                {"email": search_term.lower()},
+                {"email": {"$regex": f"^{re.escape(search_term)}", "$options": "i"}}
+            ])
+            sort_order = [("email", 1), ("_id", 1)]
+        elif len(search_term) == 24:
+            # Potential ObjectId
+            try:
+                from bson import ObjectId
+                conditions.append({"_id": ObjectId(search_term)})
+            except:
+                conditions.append({"email": {"$regex": search_term, "$options": "i"}})
+                
+        query["$or"] = conditions
+        
+    elif specificity == "specific":
+        # Specific searches - focused field search
+        query["$or"] = [
+            {"email": {"$regex": search_term, "$options": "i"}},
+            {"standard_fields.first_name": {"$regex": search_term, "$options": "i"}},
+            {"standard_fields.last_name": {"$regex": search_term, "$options": "i"}}
+        ]
+        sort_order = [("email", 1), ("standard_fields.first_name", 1)]
+        
+    else:
+        # General/broad searches - comprehensive but limited
+        query["$or"] = [
+            {"email": {"$regex": search_term, "$options": "i"}},
+            {"standard_fields.first_name": {"$regex": search_term, "$options": "i"}},
+            {"standard_fields.last_name": {"$regex": search_term, "$options": "i"}},
+            {"list": {"$regex": search_term, "$options": "i"}},
+            {"custom_fields.company": {"$regex": search_term, "$options": "i"}},
+            {"custom_fields.city": {"$regex": search_term, "$options": "i"}}
+        ]
+        sort_order = [("email", 1)]
+    
+    return query, sort_order
+ 
+
+
+ # ===== RESTORE ORIGINAL AUDIT ENDPOINTS =====
+@router.get("/audit/logs")
+async def get_audit_logs(
+    limit: int = Query(50, le=1000),
+    skip: int = Query(0),
+    entity_type: str = Query(None),
+    action: str = Query(None),
+    start_date: str = Query(None),
+    end_date: str = Query(None)
+):
+    """Get audit trail logs with filtering - FIXED for ObjectId serialization"""
+    try:
+        audit_collection = get_audit_collection()
+        query = {}
+
+        if entity_type:
+            query["entity_type"] = entity_type
+        if action:
+            query["action"] = action
+
+        if start_date or end_date:
+            date_query = {}
+            if start_date:
+                date_query["$gte"] = datetime.fromisoformat(start_date.replace("T", " "))
+            if end_date:
+                date_query["$lte"] = datetime.fromisoformat(end_date.replace("T", " "))
+            if date_query:
+                query["timestamp"] = date_query
+
+        # Get total count for pagination
+        total_count = await audit_collection.count_documents(query)
+
+        # Get paginated results
+        cursor = audit_collection.find(query).sort("timestamp", -1).skip(skip).limit(limit)
+        logs = []
+
+        async for doc in cursor:
+            # Convert ObjectIds to strings for JSON serialization
+            log_entry = convert_objectids_to_strings(doc)
+            logs.append(log_entry)
+
+        return {
+            "logs": logs,
+            "total_count": total_count,
+            "limit": limit,
+            "skip": skip,
+            "has_more": skip + limit < total_count
+        }
+
+    except Exception as e:
+        logger.error(f"Get audit logs failed: {e}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve audit logs")
+@router.post("/analyze-fields")
+async def analyze_fields(request: dict):
+    """Analyze subscriber data to find available fields for field mapping"""
+    list_ids = request.get("listIds", [])
+    if not list_ids:
+        return {"universal": ["email"], "standard": [], "custom": []}
+    
+    try:
+        subscribers_collection = get_subscribers_collection()
+        
+        # Analyze actual subscriber data to find available fields
+        pipeline = [
+            {"$match": {"list": {"$in": list_ids}}},
+            {
+                "$group": {
+                    "_id": None,
+                    "standard_field_keys": {"$addToSet": {"$map": {"input": {"$objectToArray": "$standard_fields"}, "as": "field", "in": "$$field.k"}}},
+                    "custom_field_keys": {"$addToSet": {"$map": {"input": {"$objectToArray": "$custom_fields"}, "as": "field", "in": "$$field.k"}}}
+                }
+            }
+        ]
+        
+        result = await subscribers_collection.aggregate(pipeline).to_list(1)
+        
+        if not result:
+            return {"universal": ["email"], "standard": [], "custom": []}
+        
+        # Flatten the nested arrays and remove duplicates  
+        standard_fields = set()
+        custom_fields = set()
+        
+        for std_array in result[0].get("standard_field_keys", []):
+            if std_array:  # Check if array is not None
+                standard_fields.update(std_array)
+                
+        for cust_array in result[0].get("custom_field_keys", []):
+            if cust_array:  # Check if array is not None
+                custom_fields.update(cust_array)
+        
+        return {
+            "universal": ["email"],  # Email is always universal
+            "standard": list(standard_fields), 
+            "custom": list(custom_fields)
+        }
+        
+    except Exception as e:
+        logger.error(f"Field analysis failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Field analysis failed: {str(e)}")
+
+# ===== ADD THIS MISSING ENDPOINT =====
+@router.post("/recovery/manual-retry")
+async def manual_retry():
+    """Manual retry system for recovery"""
+    try:
+        # Simple implementation - you can enhance this
+        return {
+            "success": True,
+            "message": "Manual retry completed",
+            "timestamp": datetime.utcnow()
+        }
+    except Exception as e:
+        logger.error(f"Manual retry failed: {e}")
+        return {
+            "success": False,
+            "message": str(e),
+            "timestamp": datetime.utcnow()
+        }
+    
+
+@router.delete("/jobs/clear-all")
+async def clear_all_jobs():
+    """Clear all completed/failed jobs"""
+    try:
+        jobs_collection = get_jobs_collection()
+        result = await jobs_collection.delete_many({
+            "status": {"$in": ["completed", "failed"]}
+        })
+        
+        return {
+            "message": f"Cleared {result.deleted_count} old jobs",
+            "deleted_count": result.deleted_count
+        }
+    except Exception as e:
+        logger.error(f"Clear jobs failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+   

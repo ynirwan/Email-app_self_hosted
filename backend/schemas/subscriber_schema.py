@@ -18,6 +18,26 @@ class StandardFields(BaseModel):
     last_name: Optional[str] = Field(None, max_length=50)
 
 
+# Models
+class ChunkMetadata(BaseModel):
+    job_id: str
+    list_name: str
+    total_subscribers: int
+    chunk_size: int
+    total_chunks: int
+    field_mapping: Dict[str, Any]
+    created_at: datetime
+    original_filename: Optional[str] = None
+
+class BackgroundUploadPayload(BaseModel):
+    list_name: str
+    subscribers: List[Dict]
+    processing_mode: str = "background"
+    field_mapping: Dict[str, Any]
+    original_filename: Optional[str] = None
+
+
+
 # 3. Define other models
 class SubscriberIn(BaseModel):
     """Input model for creating subscribers"""
