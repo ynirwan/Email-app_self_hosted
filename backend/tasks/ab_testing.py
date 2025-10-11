@@ -1,7 +1,7 @@
 import logging
 from datetime import datetime
 from bson import ObjectId
-from database_sync import (
+from database import (
     get_sync_campaigns_collection,
     get_sync_subscribers_collection, 
     get_sync_templates_collection,

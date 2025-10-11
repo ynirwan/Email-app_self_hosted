@@ -12,8 +12,8 @@ from celery import Celery
 from celery_app import celery_app
 
 # Import all production systems
-from core.campaign_config import settings
-from database_pool import (
+from core.config import settings
+from database import (
     get_sync_campaigns_collection, get_sync_email_logs_collection,
     get_sync_subscribers_collection, get_sync_templates_collection
 )

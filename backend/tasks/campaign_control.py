@@ -9,11 +9,11 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any, Tuple
 from bson import ObjectId
 from celery_app import celery_app
-from database_pool import (
+from database import (
     get_sync_campaigns_collection, get_sync_email_logs_collection, 
     get_sync_subscribers_collection
 )
-from core.campaign_config import settings, get_redis_key
+from core.config import settings, get_redis_key
 import json
 
 logger = logging.getLogger(__name__)
@@ -440,7 +440,7 @@ class CampaignController:
             if not settings.ENABLE_AUDIT_LOGGING:
                 return
             
-            from database_pool import get_sync_audit_collection
+            from database import get_sync_audit_collection
             audit_collection = get_sync_audit_collection()
             
             audit_record = {

@@ -11,8 +11,8 @@ from typing import Dict, List, Any, Optional, Tuple
 from enum import Enum
 from abc import ABC, abstractmethod
 from celery_app import celery_app
-from database_pool import get_sync_settings_collection
-from core.campaign_config import settings, get_redis_key
+from database import get_sync_settings_collection
+from core.config import settings, get_redis_key
 from tasks.rate_limiter import EmailProvider
 from tasks.audit_logger import log_system_event, AuditEventType, AuditSeverity
 import redis

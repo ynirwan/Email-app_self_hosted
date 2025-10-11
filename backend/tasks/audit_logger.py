@@ -11,8 +11,8 @@ from typing import Dict, List, Any, Optional, Union
 from enum import Enum
 from bson import ObjectId
 from celery_app import celery_app
-from database_pool import get_sync_audit_collection, get_sync_campaigns_collection
-from core.campaign_config import settings, get_redis_key
+from database import get_sync_audit_collection, get_sync_campaigns_collection
+from core.config import settings, get_redis_key
 import redis
 
 logger = logging.getLogger(__name__)

@@ -1,7 +1,7 @@
 # backend/utils/suppression_filter.py
 from typing import List, Dict, Any, Tuple, Optional
 from database import get_suppressions_collection
-from database_sync import get_sync_suppressions_collection  # For sync operations
+from database import get_sync_suppressions_collection  # For sync operations
 from datetime import datetime
 import asyncio
 import logging

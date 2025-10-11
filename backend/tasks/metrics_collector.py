@@ -11,11 +11,11 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Any, Optional
 from bson import ObjectId
 from celery_app import celery_app
-from database_pool import (
+from database import (
     get_sync_campaigns_collection, get_sync_email_logs_collection,
     get_sync_subscribers_collection, get_sync_analytics_collection
 )
-from core.campaign_config import settings, get_redis_key
+from core.config import settings, get_redis_key
 import redis
 
 logger = logging.getLogger(__name__)
@@ -267,7 +267,7 @@ class MetricsCollector:
     def collect_database_metrics(self) -> Dict[str, Any]:
         """Collect database performance metrics"""
         try:
-            from database_pool import DatabasePool
+            from database import DatabasePool
             
             # Get database connection
             client = DatabasePool.get_sync_client()

@@ -67,7 +67,7 @@ async def log_activity(
 
 # Safe production imports
 try:
-    from core.subscriber_config import settings
+    from core.config import settings
     PRODUCTION_FEATURES['config'] = True
     logger = logging.getLogger(__name__)
     logger.info(" Production config loaded")
@@ -937,7 +937,7 @@ async def cleanup_stuck_jobs():
         }
         
     except Exception as e:
-        logger.error(f"âŒ Stuck job cleanup failed: {e}")
+        logger.error(f" Stuck job cleanup failed: {e}")
         return {
             "error": str(e),
             "cleaned": 0,
@@ -1264,7 +1264,7 @@ async def delete_list_enhanced(
         # ===== 2. CANCEL/CLEANUP RELATED JOBS =====
         cancelled_jobs = 0
         if active_jobs:
-            logger.info(f"ðŸ›‘ Cancelling {len(active_jobs)} active jobs for list '{list_name}'")
+            logger.info(f" Cancelling {len(active_jobs)} active jobs for list '{list_name}'")
 
             for job in active_jobs:
                 await jobs_collection.update_one(
@@ -1285,12 +1285,12 @@ async def delete_list_enhanced(
                     try:
                         import shutil
                         shutil.rmtree(chunk_dir, ignore_errors=True)
-                        logger.info(f"ðŸ§¹ Cleaned up chunks for job {job['job_id']}")
+                        logger.info(f" Cleaned up chunks for job {job['job_id']}")
                     except Exception as cleanup_error:
-                        logger.warning(f"âš ï¸ Chunk cleanup failed for job {job['job_id']}: {cleanup_error}")
+                        logger.warning(f" Chunk cleanup failed for job {job['job_id']}: {cleanup_error}")
 
         # ===== 3. PERFORM THE DELETION =====
-        logger.info(f"ðŸ—‘ï¸ Deleting {list_count:,} subscribers from list '{list_name}'")
+        logger.info(f" Deleting {list_count:,} subscribers from list '{list_name}'")
 
         deletion_start = datetime.utcnow()
 
@@ -1312,7 +1312,7 @@ async def delete_list_enhanced(
         if delete_result.deleted_count == 0:
             raise HTTPException(status_code=500, detail="Deletion failed - no records were deleted")
 
-        logger.info(f"âœ… Successfully deleted {delete_result.deleted_count:,} subscribers in {deletion_time:.2f}s")
+        logger.info(f" Successfully deleted {delete_result.deleted_count:,} subscribers in {deletion_time:.2f}s")
 
         # ===== 4. AUDIT LOGGING =====
         await log_activity(
@@ -1347,7 +1347,7 @@ async def delete_list_enhanced(
             "status": {"$in": ["completed", "failed", "cancelled"]}
         })
 
-        logger.info(f"ðŸ§¹ Cleaned up {cleanup_result.deleted_count} related job records")
+        logger.info(f" Cleaned up {cleanup_result.deleted_count} related job records")
 
         # ===== 6. SIMPLIFIED RESPONSE =====
         response = {

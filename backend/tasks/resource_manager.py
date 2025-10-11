@@ -8,7 +8,7 @@ import logging
 import time
 from datetime import datetime, timedelta
 from typing import Tuple, Dict, Any
-from core.campaign_config import settings, get_redis_key
+from core.config import settings, get_redis_key
 import redis
 import json
 
@@ -142,7 +142,7 @@ class ResourceManager:
     def check_database_connectivity(self) -> Tuple[bool, Dict[str, Any]]:
         """Check database connectivity and performance"""
         try:
-            from database_pool import DatabasePool
+            from database import DatabasePool
             
             start_time = time.time()
             client = DatabasePool.get_sync_client()

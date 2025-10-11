@@ -2,7 +2,7 @@
 import logging
 from datetime import datetime, timedelta
 from celery_app import celery_app
-from database_sync import get_sync_email_logs_collection, get_sync_campaigns_collection
+from database import get_sync_email_logs_collection, get_sync_campaigns_collection
 
 logger = logging.getLogger(__name__)
 

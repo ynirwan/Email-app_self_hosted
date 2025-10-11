@@ -4,7 +4,7 @@ import logging
 from datetime import datetime
 from bson import ObjectId
 from celery_app import celery_app
-from database_sync import (
+from database import (
     get_sync_email_logs_collection, 
     get_sync_analytics_collection, 
     get_sync_subscribers_collection

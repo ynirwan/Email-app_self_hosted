@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 from bson import ObjectId
 import redis
 import os
-from database_sync import (
+from database import (
     get_sync_campaigns_collection,
     get_sync_email_logs_collection,
     get_sync_subscribers_collection

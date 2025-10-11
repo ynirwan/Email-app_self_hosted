@@ -9,7 +9,7 @@ import json
 import logging
 from datetime import datetime, timedelta
 from typing import Dict, Tuple, Optional, List
-from core.campaign_config import settings, get_redis_key
+from core.config import settings, get_redis_key
 from enum import Enum
 
 logger = logging.getLogger(__name__)

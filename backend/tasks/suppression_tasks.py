@@ -1,6 +1,6 @@
 # backend/tasks/suppression_tasks.py
 from celery_app import celery_app  # Use your unified celery app
-from database_sync import (
+from database import (
     get_sync_suppressions_collection,
     get_sync_audit_collection, 
     get_sync_subscribers_collection,

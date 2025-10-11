@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Any, Optional, Tuple
 from enum import Enum
 from celery_app import celery_app
-from database_pool import DatabasePool
+from database import DatabasePool
 from config import settings, get_redis_key
 from tasks.resource_manager import resource_manager
 from tasks.metrics_collector import metrics_collector
@@ -271,7 +271,7 @@ class HealthMonitor:
     def _check_email_throughput(self) -> Tuple[HealthStatus, Dict[str, Any]]:
         """Check email processing throughput"""
         try:
-            from database_pool import get_sync_email_logs_collection
+            from database import get_sync_email_logs_collection
             
             email_logs = get_sync_email_logs_collection()
             one_hour_ago = datetime.utcnow() - timedelta(hours=1)
@@ -342,7 +342,7 @@ class HealthMonitor:
     def _check_failed_campaigns(self) -> Tuple[HealthStatus, Dict[str, Any]]:
         """Check for failed campaigns"""
         try:
-            from database_pool import get_sync_campaigns_collection
+            from database import get_sync_campaigns_collection
             
             campaigns = get_sync_campaigns_collection()
             one_hour_ago = datetime.utcnow() - timedelta(hours=1)

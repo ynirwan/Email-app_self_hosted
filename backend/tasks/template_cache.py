@@ -11,8 +11,8 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Any, Optional, Tuple
 from bson import ObjectId
 from celery_app import celery_app
-from database_pool import get_sync_templates_collection
-from core.campaign_config import settings, get_redis_key
+from database import get_sync_templates_collection
+from core.config import settings, get_redis_key
 import redis
 import re
 
@@ -323,7 +323,7 @@ class TemplateProcessor:
     def get_template_statistics(self, template_id: str) -> Dict[str, Any]:
         """Get usage statistics for a template"""
         try:
-            from database_pool import get_sync_campaigns_collection
+            from database import get_sync_campaigns_collection
             
             campaigns_collection = get_sync_campaigns_collection()
             

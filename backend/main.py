@@ -22,7 +22,7 @@ from routes import (
 PRODUCTION_FEATURES = {}
 
 try:
-    from core.campaign_config import settings
+    from core.config import settings
     PRODUCTION_FEATURES['config'] = True
 except ImportError:
     class MockSettings:
