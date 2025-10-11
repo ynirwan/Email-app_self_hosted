@@ -1,0 +1,386 @@
+// frontend/src/pages/EmailSettings.jsx
+import { useState, useEffect } from 'react';
+import API from '../api';
+
+export default function EmailSettings() {
+  const [mtaProviders, setMtaProviders] = useState([]);
+  const [selectedProvider, setSelectedProvider] = useState('');
+  const [settings, setSettings] = useState({
+    provider: '',
+    smtp_server: '',
+    smtp_port: 587,
+    username: '',
+    password: '',
+    reply_to: '',
+    sending_limits: {
+      per_minute: 100,
+      per_hour: 3600,
+      per_day: 50000
+    },
+    bounce_handling: {
+      enabled: true,
+      webhook_url: '',
+      forward_bounces: false,
+      forward_email: ''
+    },
+    delivery_tracking: {
+      enabled: true,
+      webhook_url: '',
+      track_opens: true,
+      track_clicks: true
+    }
+  });
+  const [testing, setTesting] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  const providerConfigs = {
+    sendgrid: {
+      name: 'SendGrid',
+      smtp_server: 'smtp.sendgrid.net',
+      smtp_port: 587,
+      limits: {
+        per_minute: 600, // API requests per minute
+        per_hour: 36000,
+        per_day: 100000
+      }
+    },
+    mailgun: {
+      name: 'Mailgun',
+      smtp_server: 'smtp.mailgun.org',
+      smtp_port: 587,
+      limits: {
+        per_minute: 300, // Conservative limit
+        per_hour: 10000,
+        per_day: 100000
+      }
+    },
+    amazonses: {
+      name: 'Amazon SES',
+      smtp_server: 'email-smtp.us-east-1.amazonaws.com',
+      smtp_port: 587,
+      limits: {
+        per_minute: 200,
+        per_hour: 12000,
+        per_day: 200000
+      }
+    },
+     internal: {
+      name: 'Internal SMTP',
+      smtp_server: 'Internal', // Backend will handle this
+      smtp_port: 587,
+      limits: {
+        per_minute: 500,
+        per_hour: 25000,
+        per_day: 100000
+      },
+      isInternal: true   
+    }	     
+  };
+
+  useEffect(() => {
+    fetchCurrentSettings();
+  }, []);
+
+  const fetchCurrentSettings = async () => {
+    try {
+      const response = await API.get('/settings/email');
+      setSettings(response.data);
+      setSelectedProvider(response.data.provider);
+    } catch (err) {
+      console.error('Failed to fetch email settings:', err);
+    }
+  };
+
+  const handleProviderChange = (provider) => {
+    setSelectedProvider(provider);
+    const config = providerConfigs[provider];
+    if (config) {
+      setSettings(prev => ({
+        ...prev,
+        provider,
+        smtp_server: config.smtp_server,
+        smtp_port: config.smtp_port,
+        sending_limits: config.limits
+      }));
+    }
+  };
+
+
+const testConnection = async () => {
+  try {
+    setTesting(true);
+
+
+   await API.post('/settings/email/test', {
+  smtp_server: settings.smtp_server,
+  smtp_port: Number(settings.smtp_port), // ensure integer
+  username: settings.username,
+  password: settings.password.trim()     // remove accidental spaces
+});
+
+	  
+    alert('✅ Connection test successful!');
+  } catch (err) {
+    alert(`❌ Connection test failed: ${err.response?.data?.detail || 'Unknown error'}`);
+  } finally {
+    setTesting(false);
+  }
+};
+	
+  const saveSettings = async () => {
+    try {
+      setSaving(true);
+      await API.put('/settings/email', settings);
+      alert('✅ Email settings saved successfully!');
+    } catch (err) {
+      alert(`❌ Failed to save settings: ${err.response?.data?.detail || 'Unknown error'}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+      
+    // Check if current provider is internal
+  const isInternalProvider = selectedProvider === 'internal';
+      
+    
+
+  return (
+    <div className="max-w-6xl mx-auto mt-10 space-y-8">
+      <h2 className="text-2xl font-bold">📧 SMTP Settings</h2>
+
+      {/* MTA Provider Selection */}
+      <div className="bg-white p-6 rounded-lg shadow">
+        <h3 className="text-lg font-semibold mb-4">MTA Provider</h3>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {Object.entries(providerConfigs).map(([key, config]) => (
+            <div
+              key={key}
+              className={`p-4 border rounded-lg cursor-pointer transition-all ${
+                selectedProvider === key
+                  ? 'border-blue-500 bg-blue-50'
+                  : 'border-gray-200 hover:border-blue-300'
+              }`}
+              onClick={() => handleProviderChange(key)}
+            >
+              <div className="font-medium">{config.name}</div>
+              <div className="text-sm text-gray-600 mt-2">
+                Limit: {config.limits.per_minute}/min
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+           {/* SMTP Configuration - Hidden for Internal Provider */}
+      {!isInternalProvider && (
+        <div className="bg-white p-6 rounded-lg shadow">
+          <h3 className="text-lg font-semibold mb-4">SMTP Configuration</h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div>
+              <label className="block text-sm font-medium mb-2">SMTP Server *</label>
+              <input
+                type="text"
+                className="w-full p-3 border rounded-lg"
+                value={settings.smtp_server}
+                onChange={(e) => setSettings(prev => ({...prev, smtp_server: e.target.value}))}
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-2">SMTP Port *</label>
+              <select
+                className="w-full p-3 border rounded-lg"
+                value={settings.smtp_port}
+                onChange={(e) => setSettings(prev => ({...prev, smtp_port: parseInt(e.target.value)}))}
+              >
+                <option value={587}>587 (STARTTLS)</option>
+                <option value={465}>465 (SSL)</option>
+                <option value={25}>25 (Plain)</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-2">Username *</label>
+              <input
+                type="text"
+                className="w-full p-3 border rounded-lg"
+                value={settings.username}
+                onChange={(e) => setSettings(prev => ({...prev, username: e.target.value}))}
+                placeholder={selectedProvider === 'sendgrid' ? 'apikey' : 'Username'}
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-2">Password/API Key *</label>
+              <input
+                type="password"
+                className="w-full p-3 border rounded-lg"
+                value={settings.password}
+                onChange={(e) => setSettings(prev => ({...prev, password: e.target.value}))}
+                placeholder="API Key or Password"
+              />
+            </div>
+          </div>
+        </div>
+      )}
+         
+         {/* Internal SMTP Info Panel */}
+      {isInternalProvider && (
+        <div className="bg-green-50 border border-green-200 p-6 rounded-lg">
+          <div className="flex items-center mb-3">
+            <span className="text-2xl mr-3">🏠</span>
+            <h3 className="text-lg font-semibold text-green-800">Internal SMTP Server</h3>
+          </div>
+          <p className="text-green-700">
+            Using internal SMTP server. Configuration is managed automatically by the system.
+            No manual SMTP setup required.
+          </p>
+          <div className="mt-3 text-sm text-green-600">
+            ✓ Automatic configuration<br/>
+            ✓ Optimized performance<br/>
+            ✓ Built-in security
+          </div>
+        </div>
+      )}
+	      
+      {/* Sending Limits */}
+      <div className="bg-white p-6 rounded-lg shadow">
+        <h3 className="text-lg font-semibold mb-4">📊 Sending Limits</h3>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div>
+            <label className="block text-sm font-medium mb-2">Per Minute</label>
+            <input
+              type="number"
+              className="w-full p-3 border rounded-lg"
+              value={settings.sending_limits.per_minute}
+              onChange={(e) => setSettings(prev => ({
+                ...prev,
+                sending_limits: {...prev.sending_limits, per_minute: parseInt(e.target.value)}
+              }))}
+              min="1"
+              max="1000"
+            />
+            <p className="text-xs text-gray-500 mt-1">Max emails per minute</p>
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-2">Per Hour</label>
+            <input
+              type="number"
+              className="w-full p-3 border rounded-lg"
+              value={settings.sending_limits.per_hour}
+              onChange={(e) => setSettings(prev => ({
+                ...prev,
+                sending_limits: {...prev.sending_limits, per_hour: parseInt(e.target.value)}
+              }))}
+              min="1"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-2">Per Day</label>
+            <input
+              type="number"
+              className="w-full p-3 border rounded-lg"
+              value={settings.sending_limits.per_day}
+              onChange={(e) => setSettings(prev => ({
+                ...prev,
+                sending_limits: {...prev.sending_limits, per_day: parseInt(e.target.value)}
+              }))}
+              min="1"
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* Bounce Handling */}
+      <div className="bg-white p-6 rounded-lg shadow">
+        <h3 className="text-lg font-semibold mb-4">🔄 Bounce Handling</h3>
+        <div className="space-y-4">
+          <label className="flex items-center">
+            <input
+              type="checkbox"
+              checked={settings.bounce_handling.enabled}
+              onChange={(e) => setSettings(prev => ({
+                ...prev,
+                bounce_handling: {...prev.bounce_handling, enabled: e.target.checked}
+              }))}
+              className="mr-3"
+            />
+            <span>Enable bounce handling</span>
+          </label>
+          
+          {settings.bounce_handling.enabled && (
+            <>
+              <div>
+                <label className="block text-sm font-medium mb-2">Bounce Webhook URL</label>
+                <input
+                  type="url"
+                  className="w-full p-3 border rounded-lg"
+                  value={settings.bounce_handling.webhook_url}
+                  onChange={(e) => setSettings(prev => ({
+                    ...prev,
+                    bounce_handling: {...prev.bounce_handling, webhook_url: e.target.value}
+                  }))}
+                  placeholder="https://yourdomain.com/webhooks/bounce"
+                />
+              </div>
+              
+              <label className="flex items-center">
+                <input
+                  type="checkbox"
+                  checked={settings.bounce_handling.forward_bounces}
+                  onChange={(e) => setSettings(prev => ({
+                    ...prev,
+                    bounce_handling: {...prev.bounce_handling, forward_bounces: e.target.checked}
+                  }))}
+                  className="mr-3"
+                />
+                <span>Forward bounce notifications to email</span>
+              </label>
+              
+              {settings.bounce_handling.forward_bounces && (
+                <div>
+                  <label className="block text-sm font-medium mb-2">Forward to Email</label>
+                  <input
+                    type="email"
+                    className="w-full p-3 border rounded-lg"
+                    value={settings.bounce_handling.forward_email}
+                    onChange={(e) => setSettings(prev => ({
+                      ...prev,
+                      bounce_handling: {...prev.bounce_handling, forward_email: e.target.value}
+                    }))}
+                    placeholder="admin@yourdomain.com"
+                  />
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* Action Buttons */}
+      <div className="flex justify-between">
+        <button
+          onClick={testConnection}
+          disabled={testing}
+          className={`px-6 py-3 rounded-lg font-medium ${
+            testing
+              ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+              : 'bg-blue-600 text-white hover:bg-blue-700'
+          }`}
+        >
+          {testing ? '🔄 Testing...' : '🧪 Test Connection'}
+        </button>
+
+        <button
+          onClick={saveSettings}
+          disabled={saving}
+          className={`px-8 py-3 rounded-lg font-medium ${
+            saving
+              ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+              : 'bg-green-600 text-white hover:bg-green-700'
+          }`}
+        >
+          {saving ? '💾 Saving...' : '💾 Save Settings'}
+        </button>
+      </div>
+    </div>
+  );
+}
+

@@ -1,0 +1,92 @@
+import React, { useRef, useState } from 'react';
+import EmailEditor from 'react-email-editor';
+import API from '../api';
+
+export default function TemplateEditor({ onSaved }) {
+  const emailEditorRef = useRef(null);
+  const [templateName, setTemplateName] = useState('');
+  const [description, setDescription] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [editorLoaded, setEditorLoaded] = useState(false);
+  const [placeholders, setPlaceholders] = useState([]);
+
+  const extractFields = (html) => {
+    const matches = html.match(/{{\s*[\w]+\s*}}/g) || [];
+    return [...new Set(matches.map(f => f.replace(/[{}]/g, '').trim()))];
+  };
+
+  const handleSave = () => {
+    if (!templateName.trim()) {
+      alert('Template name is required');
+      return;
+    }
+    setSaving(true);
+    if (emailEditorRef.current) {
+      emailEditorRef.current.editor.exportHtml((data) => {
+        const { design, html } = data;
+        const fields = extractFields(html);
+        setPlaceholders(fields);
+        API.post('/templates', {
+          name: templateName,
+          description,
+          content_json: design,
+          fields,
+          html,
+        })
+          .then(() => {
+            setSaving(false);
+            if (onSaved) onSaved();
+          })
+          .catch((err) => {
+            alert('Failed to save template: ' + err.message);
+            setSaving(false);
+          });
+      });
+    }
+  };
+
+  return (
+    <div>
+      <h2 className="text-xl font-semibold mb-4">Create/Edit Email Template</h2>
+      <input
+        placeholder="Template Name"
+        value={templateName}
+        onChange={(e) => setTemplateName(e.target.value)}
+        className="block my-2 px-3 py-2 border rounded w-full"
+      />
+      <textarea
+        placeholder="Description"
+        value={description}
+        onChange={(e) => setDescription(e.target.value)}
+        rows={3}
+        className="block my-2 px-3 py-2 border rounded w-full"
+      />
+      <div style={{ height: 600, margin: '24px 0' }}>
+        <EmailEditor
+          ref={emailEditorRef}
+          onLoad={() => setEditorLoaded(true)}
+          minHeight={500}
+        />
+      </div>
+      <button
+        onClick={handleSave}
+        disabled={saving || !editorLoaded}
+        className="px-5 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition"
+      >
+        {saving ? 'Saving...' : 'Save Template'}
+      </button>
+
+      {placeholders.length > 0 && (
+        <div className="mt-4">
+          <h3 className="font-semibold">Placeholders Detected:</h3>
+          <ul className="list-disc ml-6 text-sm text-gray-600">
+            {placeholders.map((field) => (
+              <li key={field}>{field}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
+

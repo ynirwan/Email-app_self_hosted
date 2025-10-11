@@ -1,0 +1,25 @@
+# backend/schemas/subscriber_schema.py - Complete updated version
+from pydantic import BaseModel, EmailStr
+from typing import List, Optional, Dict, Any, Literal
+
+class SubscriberIn(BaseModel):
+    name: str = ''
+    email: EmailStr
+    list: str = ''
+    custom_fields: Optional[Dict[str, Any]] = {}
+    status: Optional[Literal["active", "unsubscribed", "inactive"]] = "active"  # ✅ ADD THIS
+
+class BulkPayload(BaseModel):
+    list: str
+    subscribers: List[SubscriberIn]
+
+class SubscriberOut(BaseModel):
+    id: str
+    name: str
+    email: EmailStr
+    list: str
+    custom_fields: Dict[str, Any]
+    status: str
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+

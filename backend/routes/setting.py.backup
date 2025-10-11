@@ -1,0 +1,185 @@
+# routes/setting.py
+from fastapi import APIRouter, HTTPException, Request
+from pydantic import BaseModel, EmailStr
+from typing import Optional
+from datetime import datetime
+import smtplib
+from email.mime.text import MIMEText
+from pydantic import BaseModel, EmailStr, validator
+
+
+# ✅ Follow your existing pattern - import specific collection functions
+from database import get_settings_collection, get_audit_collection
+
+router = APIRouter()
+
+class SendingLimits(BaseModel):
+    per_minute: int = 100
+    per_hour: int = 3600
+    per_day: int = 50000
+
+class BounceHandling(BaseModel):
+    enabled: bool = True
+    webhook_url: Optional[str] = None
+    forward_bounces: bool = False
+    forward_email: Optional[EmailStr] = None
+    
+    @validator("webhook_url", "forward_email", pre=True)
+    def empty_str_to_none(cls, v):
+        if v == "":
+            return None
+        return v
+   
+
+class EmailSettings(BaseModel):
+    provider: str
+    smtp_server: str
+    smtp_port: int = 587
+    username: str
+    password: str
+    sending_limits: SendingLimits
+    bounce_handling: BounceHandling
+
+
+class EmailTestSettings(BaseModel):
+    smtp_server: str
+    smtp_port: int
+    username: str
+    password: str
+
+
+@router.get("/email")
+async def get_email_settings():
+    """Get current email settings"""
+    settings_collection = get_settings_collection()
+    settings = await settings_collection.find_one({"type": "email"})
+    
+    if not settings:
+        return {
+            "provider": "",
+            "smtp_server": "",
+            "smtp_port": 587,
+            "username": "",
+            "password": "",
+            "sending_limits": {
+                "per_minute": 100,
+                "per_hour": 3600,
+                "per_day": 50000
+            },
+            "bounce_handling": {
+                "enabled": True,
+                "webhook_url": "",
+                "forward_bounces": False,
+                "forward_email": ""
+            }
+        }
+    return settings.get("config", {})
+
+@router.put("/email")
+async def update_email_settings(settings: EmailSettings):
+    """Update email settings"""
+    try:
+        settings_collection = get_settings_collection()
+        audit_collection = get_audit_collection()
+        
+        # Update settings
+        result = await settings_collection.update_one(
+            {"type": "email"},
+            {
+                "$set": {
+                    "type": "email",
+                    "config": settings.dict(),
+                    "updated_at": datetime.utcnow()
+                }
+            },
+            upsert=True
+        )
+        
+        # ✅ Log the configuration change for audit trail
+        await audit_collection.insert_one({
+            "action": "email_settings_updated",
+            "provider": settings.provider,
+            "smtp_server": settings.smtp_server,
+            "updated_at": datetime.utcnow(),
+            "settings_id": str(result.upserted_id) if result.upserted_id else "existing"
+        })
+        
+        return {
+            "message": "Email settings updated successfully",
+            "modified_count": result.modified_count,
+            "upserted_id": str(result.upserted_id) if result.upserted_id else None
+        }
+    
+    except Exception as e:
+        # Log error to audit
+        audit_collection = get_audit_collection()
+        await audit_collection.insert_one({
+            "action": "email_settings_update_failed",
+            "error": str(e),
+            "attempted_at": datetime.utcnow()
+        })
+        raise HTTPException(status_code=500, detail=f"Failed to update settings: {str(e)}")
+
+        
+
+
+@router.post("/email/test")
+async def test_email_connection(settings: EmailTestSettings):
+    username = settings.username.strip()
+    password = settings.password.strip()
+    try:
+        server = smtplib.SMTP(settings.smtp_server, settings.smtp_port, timeout=10)
+        server.starttls()
+        server.login(username, password)
+        server.quit()
+        return {"detail": "✅ SMTP connection successful!"}
+    except smtplib.SMTPAuthenticationError as e:
+        raise HTTPException(status_code=401, detail="❌ Authentication failed — check username/password or region")
+    except smtplib.SMTPConnectError:
+        raise HTTPException(status_code=502, detail="❌ Could not connect to SMTP server — check host/port")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"❌ Unexpected error: {e}")
+
+
+@router.get("/email/status")
+async def get_email_system_status():
+    """Get email system status"""
+    try:
+        settings_collection = get_settings_collection()
+        audit_collection = get_audit_collection()
+        
+        settings = await settings_collection.find_one({"type": "email"})
+        
+        # Get recent audit logs
+        recent_tests = await audit_collection.find(
+            {"action": "smtp_connection_test"},
+            sort=[("tested_at", -1)],
+            limit=5
+        ).to_list(5)
+        
+        return {
+            "configured": settings is not None,
+            "provider": settings.get("config", {}).get("provider") if settings else None,
+            "last_updated": settings.get("updated_at") if settings else None,
+            "recent_connection_tests": recent_tests
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get status: {str(e)}")
+
+@router.get("/email/audit")
+async def get_email_audit_logs(limit: int = 50):
+    """Get email configuration audit logs"""
+    try:
+        audit_collection = get_audit_collection()
+        
+        logs = await audit_collection.find(
+            {"action": {"$regex": "^email_|^smtp_"}},
+            sort=[("updated_at", -1), ("tested_at", -1)],
+            limit=limit
+        ).to_list(limit)
+        
+        return {"audit_logs": logs}
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get audit logs: {str(e)}")
+
