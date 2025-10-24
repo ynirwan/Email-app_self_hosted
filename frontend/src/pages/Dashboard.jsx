@@ -53,15 +53,20 @@ export default function Dashboard() {
     }
   }
 
-  if (loading) return <p className="text-center mt-10">Loading...</p>
-
+  if (loading && !stats.total_subscribers) {
+    return <p className="text-center mt-10">Loading...</p>
+  }
+  
   return (
     <div className="max-w-5xl mx-auto mt-10 space-y-10">
       {/* User Welcome Section */}
+      {user && (
       <div>
         <h2 className="text-2xl font-bold mb-2">Welcome, {user?.name} 👋</h2>
         <p className="text-gray-600">Email: {user?.email}</p>
       </div>
+      )}
+
 
       {/* Error Display */}
       {error && (
@@ -77,6 +82,8 @@ export default function Dashboard() {
       )}
 
       {/* Main Stats Cards */}
+      {stats && (
+
       <div>
         <h3 className="text-xl font-semibold mb-4">📊 Your Stats</h3>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-2 gap-6">
@@ -103,7 +110,7 @@ export default function Dashboard() {
               </p>
             </div>
           </div>
-
+      
           {/* Campaigns Card */}
           <div className="bg-purple-100 p-6 rounded-xl shadow-sm border hover:shadow-md transition-shadow">
             <div className="flex items-center justify-between mb-3">
@@ -127,6 +134,8 @@ export default function Dashboard() {
           </div>
         </div>
       </div>
+      )}
+
 
       {/* Subscribers by List Breakdown */}
       {stats.lists && stats.lists.length > 0 && (
@@ -184,4 +193,5 @@ export default function Dashboard() {
     </div>
   )
 }
+
 

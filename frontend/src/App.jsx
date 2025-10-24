@@ -18,6 +18,8 @@ import TemplatesPage from './pages/TemplatesPage';
 import SuppressionManagement from './pages/SuppressionManagement';
 import Segmentation from './pages/Segmentation';
 import ABTestingDashboard from './pages/ABTestingDashboard'; // ✅ Add this import
+import ABTestResults from './pages/ABTestResults';
+
 
 // ✅ Default imports - NO curly braces
 import AutomationDashboard from './pages/AutomationDashboard';
@@ -49,7 +51,9 @@ const App = () => {
             <Route path="audit" element={<AuditTrail />} />
             <Route path="suppressions" element={<SuppressionManagement />} />
             <Route path="/segmentation" element={<Segmentation />} />
-            <Route path="ab-testing" element={<ABTestingDashboard />} /> 		
+            <Route path="ab-testing" element={<ABTestingDashboard />} /> 
+            <Route path="ab-tests/:testId/results" element={<ABTestResults />} />
+		
 
             {/* New Automation Routes */}
             <Route path="/automation" element={<AutomationDashboard />} />

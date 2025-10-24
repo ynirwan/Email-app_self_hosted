@@ -1,8 +1,8 @@
 # routes/subscribers.py - COMPLETE file matching your frontend requirements
-from fastapi import APIRouter, HTTPException, Query, Request, status, File, Form, UploadFile, BackgroundTasks
+from fastapi import APIRouter, HTTPException, Query, Request, status, File, Form, UploadFile, BackgroundTasks, Depends
 from database import get_subscribers_collection, get_audit_collection, get_jobs_collection
 from typing import List, Dict, Any, Optional
-from pydantic import BaseModel, Field, EmailStr
+from pydantic import BaseModel, Field, EmailStr, validator
 from bson import ObjectId
 from datetime import datetime
 import logging
@@ -18,20 +18,41 @@ import asyncio
 import json
 import glob
 import math 
+from pymongo import UpdateOne
+from pymongo.errors import BulkWriteError, DuplicateKeyError
+from functools import wraps
+import traceback
 
 
 from datetime import datetime, timedelta
 from pymongo import UpdateOne
+
+# ===== LOGGING SETUP =====
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
+# Create formatter
+formatter = logging.Formatter(
+    '%(asctime)s - %(name)s - %(levelname)s - [%(funcName)s:%(lineno)d] - %(message)s'
+)
+
+# Add console handler if not exists
+if not logger.handlers:
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(formatter)
+    logger.addHandler(console_handler)
+
+
 
 # ===== PRODUCTION IMPORTS =====
 PRODUCTION_FEATURES = {
     'config': False,
     'subscriber_recovery': False,
     'file_first_recovery': False,
-    'performance_logging': False
+    'performance_logging': False,
+    'rate_limiting': False,
+    'websocket': False
 }
-
-
 # ===== MISSING AUDIT LOGGING FUNCTION =====
 async def log_activity(
     action: str,
@@ -40,9 +61,10 @@ async def log_activity(
     user_action: str,
     before_data: dict = None,
     after_data: dict = None,
-    metadata: dict = None
+    metadata: dict = None,
+    request: Request = None
 ):
-    """Log all activities for audit trail"""
+    """Enhanced audit logging with request context"""
     try:
         audit_collection = get_audit_collection()
         
@@ -57,13 +79,21 @@ async def log_activity(
             "metadata": metadata or {}
         }
         
+        # Add request context if available
+        if request:
+            log_entry["request_info"] = {
+                "ip": get_client_ip(request),
+                "user_agent": request.headers.get("user-agent", "unknown"),
+                "method": request.method,
+                "path": str(request.url.path)
+            }
+        
         await audit_collection.insert_one(log_entry)
-        logger.info(f"AUDIT: {action} - {user_action}")
+        logger.info(f"📝 AUDIT: {action} - {user_action}")
         
     except Exception as e:
-        logger.error(f"Failed to log activity: {e}")
-
-
+        # Don't fail the operation if audit logging fails
+        logger.error(f"Audit logging failed: {e}")
 
 # Safe production imports
 try:
@@ -78,14 +108,8 @@ except ImportError:
         MAX_BATCH_SIZE = 1000
         ENABLE_BULK_OPTIMIZATIONS = False
         ENABLE_HYBRID_RECOVERY = True
+        LOG_LEVEL = "INFO"
     settings = MockSettings()
-
-try:
-    from tasks.subscriber_recovery_manager import subscriber_recovery
-    PRODUCTION_FEATURES['subscriber_recovery'] = True
-    logger.info(" Subscriber recovery enabled")
-except ImportError:
-    logger.info(" Subscriber recovery not available")
 
 try:
     from tasks.simple_file_recovery import simple_file_recovery
@@ -107,34 +131,137 @@ class JobStatus(BaseModel):
     created_at: datetime
     updated_at: datetime
     error_message: Optional[str] = None
+    new_records: Optional[int] = 0
+    updated_records: Optional[int] = 0
+    duplicate_records: Optional[int] = 0
+    records_per_second: Optional[int] = 0
 
 class BackgroundUploadPayload(BaseModel):
     list_name: str
     subscribers: List[Dict[str, Any]]
     processing_mode: Optional[str] = "background"
+    @validator('list_name')
+    def validate_list_name(cls, v):
+        if not v or not v.strip():
+            raise ValueError("List name cannot be empty")
+        if len(v) > 100:
+            raise ValueError("List name too long (max 100 characters)")
+        # Sanitize list name
+        return v.strip().replace('/', '_').replace('\\', '_')
+    
+    @validator('subscribers')
+    def validate_subscribers(cls, v):
+        if not v:
+            raise ValueError("Subscribers list cannot be empty")
+        if len(v) > 1000000:  # 1M limit
+            raise ValueError("Too many subscribers in single request (max 1M)")
+        return v
 
 # ===== UTILITIES =====
-class PerformanceTracker:
+class PerformanceMonitor:
     @staticmethod
-    async def record_operation(operation: str, duration: float, record_count: int = 1, success: bool = True):
-        if PRODUCTION_FEATURES.get('performance_logging', False):
-            try:
-                logger.info(f" {operation}: {record_count} records in {duration:.3f}s ({record_count/duration:.1f} records/sec)")
-            except:
-                pass
+    def track_operation(operation_name: str):
+        """Decorator for tracking operation performance"""
+        def decorator(func):
+            @wraps(func)
+            async def wrapper(*args, **kwargs):
+                start_time = time.time()
+                success = False
+                error_msg = None
+
+                try:
+                    result = await func(*args, **kwargs)
+                    success = True
+                    return result
+                except Exception as e:
+                    error_msg = str(e)
+                    raise
+                finally:
+                    duration = time.time() - start_time
+                    log_level = logging.INFO if success else logging.ERROR
+                    logger.log(
+                        log_level,
+                        f"Operation: {operation_name} | Duration: {duration:.3f}s | "
+                        f"Success: {success} | Error: {error_msg or 'None'}"
+                    )
+                    if duration > 5.0:
+                        logger.warning(
+                            f"SLOW OPERATION: {operation_name} took {duration:.3f}s"
+                        )
+            return wrapper
+        return decorator
+
+
+class RateLimiter:
+    """Simple in-memory rate limiter"""
+    
+    def __init__(self):
+        self.requests = {}  # {ip: [timestamps]}
+        self.window = 60  # 1 minute window
+        self.max_requests = 100  # 100 requests per minute
+    
+    def is_allowed(self, identifier: str) -> bool:
+        """Check if request is allowed"""
+        now = time.time()
+        
+        # Clean old entries
+        if identifier in self.requests:
+            self.requests[identifier] = [
+                ts for ts in self.requests[identifier] 
+                if now - ts < self.window
+            ]
+        else:
+            self.requests[identifier] = []
+        
+        # Check limit
+        if len(self.requests[identifier]) >= self.max_requests:
+            return False
+        
+        self.requests[identifier].append(now)
+        return True
+
+rate_limiter = RateLimiter()
+
+def get_client_ip(request: Request) -> str:
+    """Get client IP address"""
+    forwarded = request.headers.get("X-Forwarded-For")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+async def rate_limit_check(request: Request):
+    """Dependency for rate limiting"""
+    if PRODUCTION_FEATURES.get('rate_limiting', False):
+        client_ip = get_client_ip(request)
+        if not rate_limiter.is_allowed(client_ip):
+            raise HTTPException(
+                status_code=429,
+                detail="Rate limit exceeded. Please try again later."
+            )
+    return True
 
 class SafeBatchProcessor:
     @staticmethod
     def get_optimal_batch_size(total_records: int, operation: str = "general") -> int:
+        """Calculate optimal batch size based on record count"""
         if PRODUCTION_FEATURES.get('config', False):
             return settings.get_batch_size_for_operation(total_records, operation)
+        
+        # Conservative defaults
+        if total_records < 1000:
+            return total_records
+        elif total_records < 10000:
+            return 1000
+        elif total_records < 50000:
+            return 2000
         else:
-            return min(1000, total_records)
+            return 5000
 
 # ===== JOB MANAGER =====
 class ProductionJobManager:
     def __init__(self):
         self.active_jobs = {}
+        self.job_locks = {}
 
     async def create_job(self, job_type: str, list_name: str, total_records: int) -> str:
         job_id = str(uuid.uuid4())
@@ -147,9 +274,14 @@ class ProductionJobManager:
             "progress": 0.0,
             "total_records": total_records,
             "processed_records": 0,
+            "new_records": 0,
+            "updated_records": 0,
+            "duplicate_records": 0,
             "failed_records": 0,
+            "records_per_second": 0,
             "created_at": datetime.utcnow(),
             "updated_at": datetime.utcnow(),
+            "last_heartbeat": datetime.utcnow(),
             "completion_time": None,
             "error_messages": [],
             "file_first_enabled": PRODUCTION_FEATURES.get('file_first_recovery', False)
@@ -159,57 +291,132 @@ class ProductionJobManager:
             jobs_collection = get_jobs_collection()
             await jobs_collection.insert_one(job_doc)
             self.active_jobs[job_id] = job_doc
-            logger.info(f"âœ… Job created: {job_id} (file-first: {job_doc['file_first_enabled']})")
+            self.job_locks[job_id] = asyncio.Lock()
+
+            logger.info(f" Job created: {job_id} (file-first: {job_doc['file_first_enabled']})")
             return job_id
         except Exception as e:
-            logger.error(f"âŒ Job creation failed: {e}")
+            logger.error(f" Job creation failed: {e}")
             raise HTTPException(status_code=500, detail=f"Job creation failed: {str(e)}")
 
-    async def update_job_progress(self, job_id: str, processed: int, failed: int = 0, error_message: str = None):
+    async def update_job_progress(self, job_id: str, processed: int, new_records: int = 0,
+updated_records: int = 0, duplicate_records: int = 0, failed: int = 0, error_message: str = None):
         try:
+            if job_id in self.job_locks:
+                async with self.job_locks[job_id]:
+                    await self._update_job_internal(
+                        job_id, processed, new_records, updated_records,
+                        duplicate_records, failed, error_message
+                    )
+            else:
+                await self._update_job_internal(
+                    job_id, processed, new_records, updated_records,
+                    duplicate_records, failed, error_message
+                )
+        except Exception as e:
+            logger.error(f"❌ Job progress update failed for {job_id}: {e}")
+    
+    async def _update_job_internal(
+        self, job_id, processed, new_records, updated_records,
+        duplicate_records, failed, error_message
+    ):
+            
             jobs_collection = get_jobs_collection()
             job = await jobs_collection.find_one({"_id": job_id})
             if not job:
+                logger.warning(f"Job {job_id} not found for update")
                 return
 
             total = job.get("total_records", 1)
             progress = (processed / total) * 100 if total > 0 else 0
 
+            created_at = job.get("created_at", datetime.utcnow())
+            elapsed = (datetime.utcnow() - created_at).total_seconds()
+            speed = int(processed / elapsed) if elapsed > 0 else 0
+
             update_doc = {
                 "processed_records": processed,
+                "new_records": new_records,
+                "updated_records": updated_records,
+                "duplicate_records": duplicate_records,
                 "failed_records": failed,
-                "progress": min(progress, 100),
-                "updated_at": datetime.utcnow()
+                "progress": progress,
+                "records_per_second": speed,
+                "updated_at": datetime.utcnow(),
+                "last_heartbeat": datetime.utcnow()
             }
 
             if error_message:
                 current_errors = job.get("error_messages", [])
-                current_errors.append(error_message)
+                current_errors.append({
+                "timestamp": datetime.utcnow().isoformat(),
+                "message": error_message
+            })
                 update_doc["error_messages"] = current_errors[-10:]
 
             if processed >= total:
                 update_doc["status"] = "completed"
                 update_doc["completion_time"] = datetime.utcnow()
+                update_doc["final_records_per_second"] = speed
                 if job_id in self.active_jobs:
                     del self.active_jobs[job_id]
+                if job_id in self.job_locks:
+                    del self.job_locks[job_id]    
 
             await jobs_collection.update_one({"_id": job_id}, {"$set": update_doc})
             if job_id in self.active_jobs:
                 self.active_jobs[job_id].update(update_doc)
 
+    async def mark_job_failed(
+        self, 
+        job_id: str, 
+        error_message: str,
+        failed_at_record: int = 0
+    ):
+        """Mark job as failed with error details"""
+        try:
+            jobs_collection = get_jobs_collection()
+            
+            await jobs_collection.update_one(
+                {"_id": job_id},
+                {"$set": {
+                    "status": "failed",
+                    "error_message": error_message,
+                    "failed_at_record": failed_at_record,
+                    "failed_at": datetime.utcnow(),
+                    "updated_at": datetime.utcnow()
+                }}
+            )
+            
+            if job_id in self.active_jobs:
+                del self.active_jobs[job_id]
+            if job_id in self.job_locks:
+                del self.job_locks[job_id]
+            
+            logger.error(
+                f"❌ Job {job_id} marked as failed: {error_message} "
+                f"(at record {failed_at_record})"
+            )
+            
         except Exception as e:
-            logger.error(f" Job progress update failed for {job_id}: {e}")
+            logger.error(f"Failed to mark job as failed: {e}")
 
 # Global job manager
 job_manager = ProductionJobManager()
 
 
 
-@router.post("/background-upload")
-async def background_upload_enhanced(payload: BackgroundUploadPayload):
+@router.post("/background-upload", dependencies=[Depends(rate_limit_check)])
+@PerformanceMonitor.track_operation("background_upload")
+async def background_upload_enhanced(payload: BackgroundUploadPayload, request: Request, background_tasks: BackgroundTasks):
     """Background upload with chunked processing for all upload sizes"""
     try:
         total_records = len(payload.subscribers)
+        if total_records == 0:
+            raise HTTPException(
+                status_code=400,
+                detail="No subscribers provided"
+            )
         job_id = await job_manager.create_job("background_upload", payload.list_name, total_records)
 
         logger.info(f"📤 Background upload started: {total_records:,} subscribers for list '{payload.list_name}'")
@@ -230,18 +437,50 @@ async def background_upload_enhanced(payload: BackgroundUploadPayload):
         # SAVE UPLOAD IN CHUNKS
         chunk_files = await save_upload_in_chunks(job_id, payload)
         if not chunk_files:
-            raise Exception("Failed to create upload chunks")
+            await job_manager.mark_job_failed(
+                job_id,
+                "Failed to create upload chunks"
+            )
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to create upload chunks"
+            )
 
         # PROCESS EACH CHUNK
         total_processed = await process_upload_chunks(job_id, payload.list_name, chunk_files, total_records)
 
-        logger.info(f"✅ Completed upload for {total_processed} subscribers in job {job_id}")
-
-        return {"job_id": job_id, "message": f"Upload completed for {total_processed} subscribers"}
-
+        # Log activity
+        await log_activity(
+            action="bulk_upload",
+            entity_type="subscribers",
+            entity_id=job_id,
+            user_action=f"Uploaded {total_processed:,} subscribers to '{payload.list_name}'",
+            metadata={
+                "total_records": total_records,
+                "processed_records": total_processed,
+                "list_name": payload.list_name
+            },
+        )
+        
+        logger.info(
+            f"✅ Upload completed: {total_processed:,} subscribers | Job: {job_id}"
+        )
+        
+        return {
+            "job_id": job_id,
+            "message": f"Upload completed for {total_processed:,} subscribers",
+            "total_records": total_records,
+            "processed_records": total_processed
+        }
+        
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"❌ Background upload failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"❌ Background upload failed: {e}\n{traceback.format_exc()}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Upload failed: {str(e)}"
+        )
 
 
 # ===== SAVE UPLOAD IN CHUNKS =====
@@ -270,13 +509,16 @@ async def save_upload_in_chunks(job_id: str, payload: BackgroundUploadPayload) -
                 "subscribers": chunk
             }
 
-            with open(chunk_path, 'w') as f:
+            temp_path = chunk_path + ".tmp"
+            with open(temp_path, 'w') as f:
                 json.dump(chunk_data, f, default=str)
+            os.rename(temp_path, chunk_path)
+            
             chunk_files.append(chunk_path)
-
-        logger.info(f"🗂 Created {len(chunk_files)} chunk files for job {job_id}")
+        
+        logger.info(f"🗂️ Created {len(chunk_files)} chunk files for job {job_id}")
         return chunk_files
-
+        
     except Exception as e:
         logger.error(f"❌ Failed to create chunks: {e}")
         return []
@@ -871,6 +1113,7 @@ async def cleanup_stuck_jobs():
         
         # Jobs older than 1 hour in pending/processing are considered stuck
         stuck_threshold_1h = now - timedelta(hours=1)
+
         
         # Also check jobs from yesterday
         yesterday = now - timedelta(days=1)
@@ -946,8 +1189,8 @@ async def cleanup_stuck_jobs():
 
 
 # ===== ALL YOUR OTHER ENDPOINTS THAT FRONTEND NEEDS =====
-
-@router.get("/lists")
+@router.get("/lists", dependencies=[Depends(rate_limit_check)])
+@PerformanceMonitor.track_operation("list_subscriber_lists")
 async def list_subscriber_lists(simple: bool = Query(False)):
     """Get subscriber lists - matches your frontend exactly"""
     start_time = time.time()
@@ -971,14 +1214,12 @@ async def list_subscriber_lists(simple: bool = Query(False)):
                 lists.append(doc)
 
         duration = time.time() - start_time
-        await PerformanceTracker.record_operation("list_aggregation", duration, len(lists), True)
-        logger.info(f"âœ… Listed {len(lists)} subscriber lists in {duration:.3f}s")
+        logger.info(f" Listed {len(lists)} subscriber lists in {duration:.3f}s")
         return lists
 
     except Exception as e:
         duration = time.time() - start_time
-        await PerformanceTracker.record_operation("list_aggregation", duration, 0, False)
-        logger.error(f"âŒ List aggregation failed: {e}")
+        logger.error(f" List aggregation failed: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to retrieve lists: {str(e)}")
 
 @router.get("/search")
@@ -1019,7 +1260,7 @@ async def search_subscribers(
         # Get total count and paginated results
         total_count = await subscribers_collection.count_documents(query)
         skip = (page - 1) * limit
-        total_pages = (total_count + limit - 1) // limit
+        total_pages = math.ceil(total_count / limit) if total_count > 0 else 1
 
         sort_direction = -1 if sort_order == "desc" else 1
         cursor = subscribers_collection.find(query).skip(skip).limit(limit).sort(sort_by, sort_direction)
@@ -1048,11 +1289,11 @@ async def search_subscribers(
             }
         }
 
-        logger.info(f"âœ… Search completed: {len(subscribers)} results in {duration:.3f}s")
+        logger.info(f" Search completed: {len(subscribers)} results in {duration:.3f}s")
         return response
 
     except Exception as e:
-        logger.error(f"âŒ Search failed: {e}")
+        logger.error(f" Search failed: {e}")
         raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
 
 
@@ -1211,7 +1452,8 @@ async def get_list_subscribers_paginated(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.delete("/lists/{list_name}")
+@router.delete("/lists/{list_name}", dependencies=[Depends(rate_limit_check)])
+@PerformanceMonitor.track_operation("delete_list")
 async def delete_list_enhanced(
     list_name: str,
     force: bool = Query(False, description="Force delete without confirmation checks"),
@@ -1222,7 +1464,7 @@ async def delete_list_enhanced(
         subscribers_collection = get_subscribers_collection()
         jobs_collection = get_jobs_collection()
 
-        logger.info(f"ðŸ—‘ï¸ Enhanced deletion initiated for list '{list_name}'")
+        logger.info(f" Enhanced deletion initiated for list '{list_name}'")
 
         # ===== 1. PRE-DELETION SAFETY CHECKS =====
 
@@ -1306,6 +1548,7 @@ async def delete_list_enhanced(
             })
 
         # Perform the actual deletion
+        deletion_start = datetime.utcnow()
         delete_result = await subscribers_collection.delete_many({"list": list_name})
         deletion_time = (datetime.utcnow() - deletion_start).total_seconds()
 
@@ -1400,15 +1643,23 @@ async def delete_list_enhanced(
         raise HTTPException(status_code=500, detail=f"List deletion failed: {str(e)}")
 
 
-@router.post("/")
+@router.post("/", dependencies=[Depends(rate_limit_check)])
+@PerformanceMonitor.track_operation("add_subscriber")
 async def add_single_subscriber(subscriber: SubscriberIn, request: Request):
     """Add single subscriber for your frontend"""
     try:
+        from schemas.subscriber_schema import SubscriberIn
+        
+        # Validate with Pydantic
+        validated = SubscriberIn(**subscriber)
+
         subscribers_collection = get_subscribers_collection()
-        email = subscriber.email.strip().lower()
+        # email = subscriber.email.strip().lower()
+        email = validated.email.strip().lower()
+
 
         existing = await subscribers_collection.find_one(
-            {"email": email, "list": subscriber.list}
+            {"email": email, "list": validated.list}
         )
         if existing:
             raise HTTPException(
@@ -1416,13 +1667,13 @@ async def add_single_subscriber(subscriber: SubscriberIn, request: Request):
             )
 
         doc = {
-            "list": subscriber.list,
+            "list": validated.list,
             "email": email,
-            "status": subscriber.status or "active",
+            "status": validated.status or "active",
             "created_at": datetime.utcnow(),
             "updated_at": datetime.utcnow(),
-            "standard_fields": subscriber.standard_fields or {},
-            "custom_fields": subscriber.custom_fields or {},
+            "standard_fields": validated.standard_fields or {},
+            "custom_fields": validated.custom_fields or {},
         }
 
         result = await subscribers_collection.insert_one(doc)
@@ -1862,61 +2113,7 @@ def build_optimized_search_query(search_term: str, specificity: str):
         sort_order = [("email", 1)]
     
     return query, sort_order
- 
 
-
- # ===== RESTORE ORIGINAL AUDIT ENDPOINTS =====
-@router.get("/audit/logs")
-async def get_audit_logs(
-    limit: int = Query(50, le=1000),
-    skip: int = Query(0),
-    entity_type: str = Query(None),
-    action: str = Query(None),
-    start_date: str = Query(None),
-    end_date: str = Query(None)
-):
-    """Get audit trail logs with filtering - FIXED for ObjectId serialization"""
-    try:
-        audit_collection = get_audit_collection()
-        query = {}
-
-        if entity_type:
-            query["entity_type"] = entity_type
-        if action:
-            query["action"] = action
-
-        if start_date or end_date:
-            date_query = {}
-            if start_date:
-                date_query["$gte"] = datetime.fromisoformat(start_date.replace("T", " "))
-            if end_date:
-                date_query["$lte"] = datetime.fromisoformat(end_date.replace("T", " "))
-            if date_query:
-                query["timestamp"] = date_query
-
-        # Get total count for pagination
-        total_count = await audit_collection.count_documents(query)
-
-        # Get paginated results
-        cursor = audit_collection.find(query).sort("timestamp", -1).skip(skip).limit(limit)
-        logs = []
-
-        async for doc in cursor:
-            # Convert ObjectIds to strings for JSON serialization
-            log_entry = convert_objectids_to_strings(doc)
-            logs.append(log_entry)
-
-        return {
-            "logs": logs,
-            "total_count": total_count,
-            "limit": limit,
-            "skip": skip,
-            "has_more": skip + limit < total_count
-        }
-
-    except Exception as e:
-        logger.error(f"Get audit logs failed: {e}")
-        raise HTTPException(status_code=500, detail="Failed to retrieve audit logs")
 @router.post("/analyze-fields")
 async def analyze_fields(request: dict):
     """Analyze subscriber data to find available fields for field mapping"""
@@ -1987,19 +2184,33 @@ async def manual_retry():
     
 
 @router.delete("/jobs/clear-all")
+@PerformanceMonitor.track_operation("clear_all_jobs")
 async def clear_all_jobs():
-    """Clear all completed/failed jobs"""
+    """Clear completed/failed jobs"""
     try:
         jobs_collection = get_jobs_collection()
-        result = await jobs_collection.delete_many({
-            "status": {"$in": ["completed", "failed"]}
-        })
-        
-        return {
-            "message": f"Cleared {result.deleted_count} old jobs",
-            "deleted_count": result.deleted_count
+        cutoff = datetime.utcnow() - timedelta(hours=24)
+
+        delete_filter = {
+            "$or": [
+                {"status": {"$in": ["completed", "failed"]}},
+                {"updated_at": {"$lt": cutoff}},
+            ]
         }
+
+        match_count = await jobs_collection.count_documents(delete_filter)
+        logger.info(f"Matched {match_count} jobs (cutoff: {cutoff})")
+
+        result = await jobs_collection.delete_many(delete_filter)
+        logger.info(f"🧹 Deleted {result.deleted_count} jobs older than 24h or completed/failed")
+
+        return {"deleted_count": result.deleted_count}
+
+        
     except Exception as e:
         logger.error(f"Clear jobs failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        )
    

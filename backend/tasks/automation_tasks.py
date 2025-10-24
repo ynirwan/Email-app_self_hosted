@@ -1,547 +1,444 @@
 # backend/tasks/automation_tasks.py
 """
-Production-grade Celery tasks for email automation campaigns
-Integrates with existing FastAPI, MongoDB, and email service infrastructure
+Celery tasks for automation workflow execution
 """
-
-import logging
+from celery import shared_task
 from datetime import datetime, timedelta
-from typing import Dict, Any, List, Optional
 from bson import ObjectId
-from pymongo import MongoClient
-from celery import Task
-import time
+import logging
 
-from celery_app import celery_app
 from database import (
-    get_sync_database,
     get_sync_automation_rules_collection,
     get_sync_automation_steps_collection,
     get_sync_automation_executions_collection,
     get_sync_subscribers_collection,
-    get_sync_campaigns_collection,
     get_sync_templates_collection,
-    get_sync_settings_collection,
-    get_sync_audit_collection
+    get_sync_segments_collection
 )
-from routes.smtp_services.email_service_factory import get_email_service_sync
-from routes.smtp_services.email_campaign_processor import SyncEmailCampaignProcessor
 
-# Configure logging
 logger = logging.getLogger(__name__)
 
-class AutomationBaseTask(Task):
-    """Base task class for automation tasks with error handling and logging"""
+
+@shared_task(
+    name="tasks.process_automation_trigger",
+    bind=True,
+    max_retries=3,
+    default_retry_delay=300  # 5 minutes
+)
+def process_automation_trigger(self, trigger_type: str, subscriber_id: str, trigger_data: dict = None):
+    """
+    Process automation trigger for a subscriber
     
-    def on_failure(self, exc, task_id, args, kwargs, einfo):
-        logger.error(f"Automation task {task_id} failed: {exc}", extra={
-            "task_id": task_id,
-            "args": args,
-            "kwargs": kwargs,
-            "error": str(exc)
-        })
-
-    def on_success(self, retval, task_id, args, kwargs):
-        logger.info(f"Automation task {task_id} completed successfully", extra={
-            "task_id": task_id,
-            "result": retval
-        })
-
-@celery_app.task(base=AutomationBaseTask, bind=True, max_retries=3, default_retry_delay=300)
-def execute_automation_step(
-    self, 
-    automation_rule_id: str, 
-    step_id: str, 
-    subscriber_id: str,
-    execution_context: Dict[str, Any] = None
-):
-    """
-    Execute a single automation step for a specific subscriber
-    """
-    execution_context = execution_context or {}
-    
-    try:
-        logger.info(f"Executing automation step", extra={
-            "automation_rule_id": automation_rule_id,
-            "step_id": step_id,
-            "subscriber_id": subscriber_id
-        })
-
-        # Get database collections
-        db = get_sync_database()
-        automation_rules = get_automation_rules_collection_sync()
-        automation_steps = get_automation_steps_collection_sync()
-        automation_executions = get_automation_executions_collection_sync()
-        subscribers = get_subscribers_collection_sync()
-        templates = get_templates_collection_sync()
-        settings = get_settings_collection_sync()
-        audit = get_audit_collection_sync()
-
-        # Validate automation rule exists and is active
-        automation_rule = automation_rules.find_one({
-            "_id": ObjectId(automation_rule_id),
-            "status": "active",
-            "deleted_at": {"$exists": False}
-        })
-        
-        if not automation_rule:
-            logger.warning(f"Automation rule not found or inactive: {automation_rule_id}")
-            return {"status": "skipped", "reason": "automation_inactive"}
-
-        # Get automation step
-        step = automation_steps.find_one({
-            "_id": ObjectId(step_id),
-            "automation_rule_id": automation_rule_id
-        })
-        
-        if not step:
-            logger.error(f"Automation step not found: {step_id}")
-            return {"status": "error", "reason": "step_not_found"}
-
-        # Get subscriber
-        subscriber = subscribers.find_one({
-            "_id": ObjectId(subscriber_id),
-            "status": "active"
-        })
-        
-        if not subscriber:
-            logger.warning(f"Subscriber not found or inactive: {subscriber_id}")
-            return {"status": "skipped", "reason": "subscriber_inactive"}
-
-        # Check if execution already exists (prevent duplicates)
-        existing_execution = automation_executions.find_one({
-            "automation_rule_id": automation_rule_id,
-            "automation_step_id": step_id,
-            "subscriber_id": subscriber_id
-        })
-        
-        if existing_execution:
-            logger.info(f"Execution already exists for subscriber {subscriber_id} and step {step_id}")
-            return {"status": "skipped", "reason": "already_executed"}
-
-        # Check segment conditions if specified
-        if step.get("segment_conditions"):
-            if not _check_segment_conditions(subscriber, step["segment_conditions"]):
-                logger.info(f"Subscriber {subscriber_id} doesn't match segment conditions")
-                return {"status": "skipped", "reason": "segment_mismatch"}
-
-        # Get email template
-        template = templates.find_one({"_id": ObjectId(step["email_template_id"])})
-        if not template:
-            logger.error(f"Email template not found: {step['email_template_id']}")
-            return {"status": "error", "reason": "template_not_found"}
-
-        # Initialize email processor
-        processor = SyncEmailCampaignProcessor(
-            campaigns_collection=get_campaigns_collection_sync(),
-            templates_collection=templates,
-            subscribers_collection=subscribers
-        )
-
-        # Prepare email content with automation context
-        email_data = _prepare_automation_email_content(
-            processor, template, subscriber, automation_rule, execution_context
-        )
-
-        if not email_data:
-            logger.error(f"Failed to prepare email content for subscriber {subscriber_id}")
-            return {"status": "error", "reason": "content_preparation_failed"}
-
-        # Get email service
-        email_service = get_email_service_sync(settings)
-
-        # Create execution record
-        execution_id = ObjectId()
-        execution_record = {
-            "_id": execution_id,
-            "automation_rule_id": automation_rule_id,
-            "automation_step_id": step_id,
-            "subscriber_id": subscriber_id,
-            "email_template_id": step["email_template_id"],
-            "scheduled_at": execution_context.get("scheduled_at", datetime.utcnow()),
-            "executed_at": datetime.utcnow(),
-            "status": "sending",
-            "subject": email_data["subject"],
-            "recipient_email": email_data["recipient_email"],
-            "execution_context": execution_context
-        }
-        
-        automation_executions.insert_one(execution_record)
-
-        # Send email
-        sender_email = execution_context.get("sender_email", "noreply@yourdomain.com")
-        sender_name = execution_context.get("sender_name", "Your Company")
-        
-        email_result = email_service.send_email(
-            sender_email=sender_email,
-            recipient_email=email_data["recipient_email"],
-            subject=email_data["subject"],
-            html_content=email_data["html_content"],
-            sender_name=sender_name
-        )
-
-        # Update execution record with results
-        update_data = {
-            "status": "sent" if email_result.success else "failed",
-            "sent_at": datetime.utcnow() if email_result.success else None,
-            "message_id": getattr(email_result, "message_id", None),
-            "error_message": getattr(email_result, "error", None)
-        }
-        
-        automation_executions.update_one(
-            {"_id": execution_id},
-            {"$set": update_data}
-        )
-
-        # Log audit trail
-        audit.insert_one({
-            "timestamp": datetime.utcnow(),
-            "action": "automation_email_sent" if email_result.success else "automation_email_failed",
-            "entity_type": "automation_execution",
-            "entity_id": str(execution_id),
-            "details": f"Automation '{automation_rule['name']}' step {step.get('step_order', 1)} for {email_data['recipient_email']}",
-            "automation_rule_id": automation_rule_id,
-            "subscriber_id": subscriber_id,
-            "success": email_result.success
-        })
-
-        # Schedule next step if this one succeeded
-        if email_result.success:
-            _schedule_next_automation_step(
-                automation_rule_id, step, subscriber_id, execution_context
-            )
-
-        result = {
-            "status": "sent" if email_result.success else "failed",
-            "execution_id": str(execution_id),
-            "subscriber_email": email_data["recipient_email"],
-            "message_id": getattr(email_result, "message_id", None),
-            "error": getattr(email_result, "error", None)
-        }
-
-        logger.info(f"Automation step execution completed", extra={
-            "result": result,
-            "automation_rule_id": automation_rule_id,
-            "step_id": step_id,
-            "subscriber_id": subscriber_id
-        })
-
-        return result
-
-    except Exception as exc:
-        logger.exception(f"Error executing automation step: {exc}")
-        
-        # Update execution record if it exists
-        try:
-            if 'execution_id' in locals():
-                automation_executions.update_one(
-                    {"_id": execution_id},
-                    {"$set": {
-                        "status": "failed",
-                        "error_message": str(exc),
-                        "failed_at": datetime.utcnow()
-                    }}
-                )
-        except Exception as update_exc:
-            logger.error(f"Failed to update execution record: {update_exc}")
-
-        # Retry logic
-        if self.request.retries < self.max_retries:
-            retry_delay = min(300 * (2 ** self.request.retries), 3600)  # Exponential backoff, max 1 hour
-            logger.info(f"Retrying automation step in {retry_delay} seconds (attempt {self.request.retries + 1})")
-            raise self.retry(countdown=retry_delay, exc=exc)
-        
-        return {"status": "error", "error": str(exc)}
-
-@celery_app.task(base=AutomationBaseTask, bind=True)
-def process_automation_trigger(
-    self,
-    automation_rule_id: str,
-    trigger_data: Dict[str, Any],
-    subscriber_ids: List[str] = None
-):
-    """
-    Process automation trigger for subscribers
+    Args:
+        trigger_type: Type of trigger (welcome, birthday, abandoned_cart, etc.)
+        subscriber_id: Subscriber ObjectId string
+        trigger_data: Additional trigger context
     """
     try:
-        logger.info(f"Processing automation trigger", extra={
-            "automation_rule_id": automation_rule_id,
-            "trigger_data": trigger_data,
-            "subscriber_count": len(subscriber_ids) if subscriber_ids else 0
-        })
-
-        # Get database collections
-        automation_rules = get_automation_rules_collection_sync()
-        automation_steps = get_automation_steps_collection_sync()
-        subscribers = get_subscribers_collection_sync()
-
-        # Get automation rule
-        automation_rule = automation_rules.find_one({
-            "_id": ObjectId(automation_rule_id),
-            "status": "active",
-            "deleted_at": {"$exists": False}
-        })
+        rules_collection = get_sync_automation_rules_collection()
+        subscribers_collection = get_sync_subscribers_collection()
         
-        if not automation_rule:
-            logger.warning(f"Automation rule not found or inactive: {automation_rule_id}")
-            return {"status": "skipped", "reason": "automation_inactive"}
-
-        # Get first step
-        first_step = automation_steps.find_one({
-            "automation_rule_id": automation_rule_id,
-            "step_order": 1
-        })
-        
-        if not first_step:
-            logger.warning(f"No first step found for automation: {automation_rule_id}")
-            return {"status": "skipped", "reason": "no_steps"}
-
-        # Determine target subscribers
-        if subscriber_ids:
-            target_subscribers = list(subscribers.find({
-                "_id": {"$in": [ObjectId(sid) for sid in subscriber_ids]},
-                "status": "active"
-            }))
-        else:
-            # Use target segments from automation rule
-            target_segments = automation_rule.get("target_segments", [])
-            if target_segments:
-                query = {
-                    "list": {"$in": target_segments},
-                    "status": "active"
-                }
-            else:
-                query = {"status": "active"}
-                
-            target_subscribers = list(subscribers.find(query))
-
-        logger.info(f"Found {len(target_subscribers)} target subscribers for automation")
-
-        # Schedule first step for each subscriber
-        scheduled_count = 0
-        execution_context = {
-            "trigger": automation_rule["trigger"],
-            "trigger_data": trigger_data,
-            "scheduled_at": datetime.utcnow(),
-            "sender_email": trigger_data.get("sender_email", "noreply@yourdomain.com"),
-            "sender_name": trigger_data.get("sender_name", "Your Company")
-        }
-
-        for subscriber in target_subscribers:
-            try:
-                # Calculate delay for first step
-                delay_seconds = first_step.get("delay_hours", 0) * 3600
-                
-                if delay_seconds > 0:
-                    # Schedule for later execution
-                    execute_automation_step.apply_async(
-                        args=[automation_rule_id, str(first_step["_id"]), str(subscriber["_id"])],
-                        kwargs={"execution_context": execution_context},
-                        countdown=delay_seconds
-                    )
-                else:
-                    # Execute immediately
-                    execute_automation_step.delay(
-                        automation_rule_id, str(first_step["_id"]), str(subscriber["_id"]), execution_context
-                    )
-                    
-                scheduled_count += 1
-                
-            except Exception as exc:
-                logger.error(f"Failed to schedule automation for subscriber {subscriber['_id']}: {exc}")
-
-        # Log audit trail
-        audit = get_audit_collection_sync()
-        audit.insert_one({
-            "timestamp": datetime.utcnow(),
-            "action": "automation_triggered",
-            "entity_type": "automation",
-            "entity_id": automation_rule_id,
-            "details": f"Triggered automation '{automation_rule['name']}' for {scheduled_count} subscribers",
-            "trigger_data": trigger_data,
-            "scheduled_count": scheduled_count
-        })
-
-        result = {
-            "status": "processed",
-            "automation_rule_id": automation_rule_id,
-            "scheduled_count": scheduled_count,
-            "total_subscribers": len(target_subscribers)
-        }
-
-        logger.info(f"Automation trigger processed successfully", extra=result)
-        return result
-
-    except Exception as exc:
-        logger.exception(f"Error processing automation trigger: {exc}")
-        return {"status": "error", "error": str(exc)}
-
-@celery_app.task(base=AutomationBaseTask)
-def cleanup_automation_executions():
-    """
-    Cleanup old automation execution records (older than 90 days)
-    """
-    try:
-        logger.info("Starting automation executions cleanup")
-        
-        automation_executions = get_automation_executions_collection_sync()
-        cutoff_date = datetime.utcnow() - timedelta(days=90)
-        
-        result = automation_executions.delete_many({
-            "executed_at": {"$lt": cutoff_date},
-            "status": {"$in": ["sent", "failed"]}
-        })
-        
-        logger.info(f"Cleaned up {result.deleted_count} old automation execution records")
-        
-        return {
-            "status": "completed",
-            "deleted_count": result.deleted_count,
-            "cutoff_date": cutoff_date.isoformat()
-        }
-        
-    except Exception as exc:
-        logger.exception(f"Error during automation cleanup: {exc}")
-        return {"status": "error", "error": str(exc)}
-
-# Helper functions
-
-def _check_segment_conditions(subscriber: Dict[str, Any], segment_conditions: List[str]) -> bool:
-    """
-    Check if subscriber matches segment conditions
-    """
-    if not segment_conditions:
-        return True
-        
-    subscriber_lists = subscriber.get("list", [])
-    if isinstance(subscriber_lists, str):
-        subscriber_lists = [subscriber_lists]
-        
-    return any(segment_id in subscriber_lists for segment_id in segment_conditions)
-
-def _prepare_automation_email_content(
-    processor: SyncEmailCampaignProcessor,
-    template: Dict[str, Any],
-    subscriber: Dict[str, Any],
-    automation_rule: Dict[str, Any],
-    execution_context: Dict[str, Any]
-) -> Optional[Dict[str, str]]:
-    """
-    Prepare email content for automation
-    """
-    try:
-        # Create a mock campaign object for the processor
-        mock_campaign = {
-            "_id": ObjectId(),
-            "name": f"Automation: {automation_rule['name']}",
-            "subject": template.get("subject", "Automated Email"),
-            "template_id": str(template["_id"]),
-            "template": template,
-            "field_map": execution_context.get("field_map", {}),
-            "fallback_values": execution_context.get("fallback_values", {})
-        }
-        
-        return processor.prepare_email_content(mock_campaign, subscriber)
-        
-    except Exception as exc:
-        logger.error(f"Error preparing automation email content: {exc}")
-        return None
-
-def _schedule_next_automation_step(
-    automation_rule_id: str,
-    current_step: Dict[str, Any],
-    subscriber_id: str,
-    execution_context: Dict[str, Any]
-):
-    """
-    Schedule the next step in the automation sequence
-    """
-    try:
-        automation_steps = get_automation_steps_collection_sync()
-        
-        # Find next step
-        next_step = automation_steps.find_one({
-            "automation_rule_id": automation_rule_id,
-            "step_order": current_step.get("step_order", 0) + 1
-        })
-        
-        if next_step:
-            delay_seconds = next_step.get("delay_hours", 0) * 3600
-            
-            logger.info(f"Scheduling next automation step", extra={
-                "automation_rule_id": automation_rule_id,
-                "next_step_id": str(next_step["_id"]),
-                "subscriber_id": subscriber_id,
-                "delay_seconds": delay_seconds
-            })
-            
-            if delay_seconds > 0:
-                execute_automation_step.apply_async(
-                    args=[automation_rule_id, str(next_step["_id"]), subscriber_id],
-                    kwargs={"execution_context": execution_context},
-                    countdown=delay_seconds
-                )
-            else:
-                execute_automation_step.delay(
-                    automation_rule_id, str(next_step["_id"]), subscriber_id, execution_context
-                )
-                
-    except Exception as exc:
-        logger.error(f"Error scheduling next automation step: {exc}")
-
-# Periodic task for processing scheduled automations
-@celery_app.task(base=AutomationBaseTask)
-def process_scheduled_automations():
-    """
-    Process automations that should be triggered based on subscriber events
-    This is a periodic task that should run every few minutes
-    """
-    try:
-        logger.info("Processing scheduled automations")
-        
-        # This is where you would implement logic to:
-        # 1. Check for new subscribers (welcome trigger)
-        # 2. Check for birthdays (birthday trigger)
-        # 3. Check for abandoned carts, etc.
-        
-        # Example for welcome trigger:
-        subscribers = get_subscribers_collection_sync()
-        automation_rules = get_automation_rules_collection_sync()
-        
-        # Find active welcome automations
-        welcome_automations = list(automation_rules.find({
-            "trigger": "welcome",
+        # Find active automation rules for this trigger
+        rules = list(rules_collection.find({
+            "trigger": trigger_type,
             "status": "active",
             "deleted_at": {"$exists": False}
         }))
         
-        processed_count = 0
-        for automation in welcome_automations:
-            # Find new subscribers (within last 5 minutes to avoid duplicates)
-            cutoff_time = datetime.utcnow() - timedelta(minutes=5)
-            new_subscribers = list(subscribers.find({
-                "status": "active",
-                "created_at": {"$gte": cutoff_time}
-            }))
-            
-            if new_subscribers:
-                subscriber_ids = [str(sub["_id"]) for sub in new_subscribers]
-                
-                process_automation_trigger.delay(
-                    str(automation["_id"]),
-                    {"trigger_type": "welcome", "timestamp": datetime.utcnow().isoformat()},
-                    subscriber_ids
-                )
-                
-                processed_count += len(subscriber_ids)
+        if not rules:
+            logger.info(f"No active automation rules for trigger: {trigger_type}")
+            return {"status": "no_rules", "trigger": trigger_type}
         
-        logger.info(f"Processed {processed_count} scheduled automations")
+        # Get subscriber info
+        subscriber = subscribers_collection.find_one({"_id": ObjectId(subscriber_id)})
+        if not subscriber:
+            logger.error(f"Subscriber not found: {subscriber_id}")
+            return {"status": "subscriber_not_found"}
+        
+        # Check subscriber status
+        if subscriber.get("status") != "active":
+            logger.info(f"Subscriber {subscriber_id} is not active, skipping automation")
+            return {"status": "subscriber_inactive"}
+        
+        # Process each matching rule
+        results = []
+        for rule in rules:
+            # Check if subscriber matches target segments
+            target_segments = rule.get("target_segments", [])
+            if target_segments:
+                subscriber_segments = subscriber.get("segments", [])
+                if not any(seg in subscriber_segments for seg in target_segments):
+                    logger.info(f"Subscriber not in target segments for rule: {rule['name']}")
+                    continue
+            
+            # Check trigger conditions
+            trigger_conditions = rule.get("trigger_conditions", {})
+            if not evaluate_trigger_conditions(trigger_conditions, subscriber, trigger_data):
+                logger.info(f"Trigger conditions not met for rule: {rule['name']}")
+                continue
+            
+            # Start automation workflow
+            result = start_automation_workflow.delay(
+                automation_rule_id=str(rule["_id"]),
+                subscriber_id=subscriber_id,
+                trigger_data=trigger_data or {}
+            )
+            
+            results.append({
+                "rule_id": str(rule["_id"]),
+                "rule_name": rule["name"],
+                "task_id": result.id
+            })
         
         return {
-            "status": "completed",
-            "processed_count": processed_count
+            "status": "success",
+            "trigger": trigger_type,
+            "subscriber_id": subscriber_id,
+            "rules_triggered": len(results),
+            "results": results
         }
         
     except Exception as exc:
-        logger.exception(f"Error processing scheduled automations: {exc}")
-        return {"status": "error", "error": str(exc)}
+        logger.error(f"Error processing automation trigger: {exc}")
+        raise self.retry(exc=exc)
+
+
+@shared_task(
+    name="tasks.start_automation_workflow",
+    bind=True,
+    max_retries=3
+)
+def start_automation_workflow(self, automation_rule_id: str, subscriber_id: str, trigger_data: dict = None):
+    """
+    Start an automation workflow for a subscriber
+    Schedules all steps with appropriate delays
+    """
+    try:
+        steps_collection = get_sync_automation_steps_collection()
+        executions_collection = get_sync_automation_executions_collection()
+        
+        # Get all steps for this automation
+        steps = list(steps_collection.find({
+            "automation_rule_id": automation_rule_id
+        }).sort("step_order", 1))
+        
+        if not steps:
+            logger.warning(f"No steps found for automation: {automation_rule_id}")
+            return {"status": "no_steps"}
+        
+        # Schedule each step
+        scheduled_tasks = []
+        for step in steps:
+            delay_hours = step.get("delay_hours", 0)
+            
+            # Schedule the step execution
+            eta = datetime.utcnow() + timedelta(hours=delay_hours)
+            
+            result = execute_automation_step.apply_async(
+                args=[
+                    automation_rule_id,
+                    str(step["_id"]),
+                    subscriber_id,
+                    trigger_data or {}
+                ],
+                eta=eta
+            )
+            
+            # Record the scheduled execution
+            execution_record = {
+                "_id": ObjectId(),
+                "automation_rule_id": automation_rule_id,
+                "automation_step_id": str(step["_id"]),
+                "subscriber_id": subscriber_id,
+                "task_id": result.id,
+                "scheduled_at": datetime.utcnow(),
+                "scheduled_for": eta,
+                "status": "scheduled",
+                "step_order": step["step_order"],
+                "trigger_data": trigger_data or {},
+                "created_at": datetime.utcnow()
+            }
+            
+            executions_collection.insert_one(execution_record)
+            
+            scheduled_tasks.append({
+                "step_id": str(step["_id"]),
+                "step_order": step["step_order"],
+                "task_id": result.id,
+                "scheduled_for": eta.isoformat()
+            })
+        
+        logger.info(f"Started automation workflow: {automation_rule_id} for subscriber: {subscriber_id}")
+        
+        return {
+            "status": "success",
+            "automation_rule_id": automation_rule_id,
+            "subscriber_id": subscriber_id,
+            "steps_scheduled": len(scheduled_tasks),
+            "tasks": scheduled_tasks
+        }
+        
+    except Exception as exc:
+        logger.error(f"Error starting automation workflow: {exc}")
+        raise self.retry(exc=exc)
+
+
+@shared_task(
+    name="tasks.execute_automation_step",
+    bind=True,
+    max_retries=3
+)
+def execute_automation_step(
+    self,
+    automation_rule_id: str,
+    step_id: str,
+    subscriber_id: str,
+    trigger_data: dict = None
+):
+    """
+    Execute a single automation step (send email)
+    """
+    try:
+        steps_collection = get_sync_automation_steps_collection()
+        executions_collection = get_sync_automation_executions_collection()
+        subscribers_collection = get_sync_subscribers_collection()
+        templates_collection = get_sync_templates_collection()
+        segments_collection = get_sync_segments_collection()
+        
+        # Get step details
+        step = steps_collection.find_one({"_id": ObjectId(step_id)})
+        if not step:
+            logger.error(f"Step not found: {step_id}")
+            return {"status": "step_not_found"}
+        
+        # Get subscriber
+        subscriber = subscribers_collection.find_one({"_id": ObjectId(subscriber_id)})
+        if not subscriber:
+            logger.error(f"Subscriber not found: {subscriber_id}")
+            return {"status": "subscriber_not_found"}
+        
+        # Check if subscriber is still active
+        if subscriber.get("status") != "active":
+            logger.info(f"Subscriber {subscriber_id} is no longer active, skipping step")
+            executions_collection.update_one(
+                {
+                    "automation_step_id": step_id,
+                    "subscriber_id": subscriber_id,
+                    "status": "scheduled"
+                },
+                {
+                    "$set": {
+                        "status": "skipped",
+                        "skipped_reason": "subscriber_inactive",
+                        "updated_at": datetime.utcnow()
+                    }
+                }
+            )
+            return {"status": "skipped", "reason": "subscriber_inactive"}
+        
+        # Check segment conditions
+        segment_conditions = step.get("segment_conditions", [])
+        if segment_conditions:
+            subscriber_segments = subscriber.get("segments", [])
+            if not any(seg in subscriber_segments for seg in segment_conditions):
+                logger.info(f"Subscriber not in required segments, skipping step")
+                executions_collection.update_one(
+                    {
+                        "automation_step_id": step_id,
+                        "subscriber_id": subscriber_id,
+                        "status": "scheduled"
+                    },
+                    {
+                        "$set": {
+                            "status": "skipped",
+                            "skipped_reason": "segment_mismatch",
+                            "updated_at": datetime.utcnow()
+                        }
+                    }
+                )
+                return {"status": "skipped", "reason": "segment_mismatch"}
+        
+        # Get template
+        template = templates_collection.find_one({"_id": ObjectId(step["email_template_id"])})
+        if not template:
+            logger.error(f"Template not found: {step['email_template_id']}")
+            return {"status": "template_not_found"}
+        
+        # Prepare email data
+        email_data = {
+            "to_email": subscriber.get("email"),
+            "subject": template.get("subject", ""),
+            "html_content": template.get("content_html", ""),
+            "text_content": template.get("content_text", ""),
+            "subscriber_id": subscriber_id,
+            "automation_rule_id": automation_rule_id,
+            "automation_step_id": step_id,
+            "template_id": str(template["_id"]),
+            "personalization": {
+                **subscriber.get("standard_fields", {}),
+                **subscriber.get("custom_fields", {}),
+                **trigger_data
+            }
+        }
+        
+        # Send email via your existing email sending task
+        from tasks.email_campaign_tasks import send_single_campaign_email
+        
+        result = send_single_campaign_email.delay(
+            campaign_id=f"automation_{automation_rule_id}",
+            subscriber_data=email_data
+        )
+        
+        # Update execution record
+        executions_collection.update_one(
+            {
+                "automation_step_id": step_id,
+                "subscriber_id": subscriber_id,
+                "status": "scheduled"
+            },
+            {
+                "$set": {
+                    "status": "sent",
+                    "executed_at": datetime.utcnow(),
+                    "email_task_id": result.id,
+                    "updated_at": datetime.utcnow()
+                }
+            }
+        )
+        
+        logger.info(f"Executed automation step {step_id} for subscriber {subscriber_id}")
+        
+        return {
+            "status": "success",
+            "step_id": step_id,
+            "subscriber_id": subscriber_id,
+            "email_task_id": result.id
+        }
+        
+    except Exception as exc:
+        logger.error(f"Error executing automation step: {exc}")
+        
+        # Mark as failed
+        executions_collection = get_sync_automation_executions_collection()
+        executions_collection.update_one(
+            {
+                "automation_step_id": step_id,
+                "subscriber_id": subscriber_id,
+                "status": "scheduled"
+            },
+            {
+                "$set": {
+                    "status": "failed",
+                    "error": str(exc),
+                    "failed_at": datetime.utcnow(),
+                    "updated_at": datetime.utcnow()
+                }
+            }
+        )
+        
+        raise self.retry(exc=exc)
+
+
+def evaluate_trigger_conditions(conditions: dict, subscriber: dict, trigger_data: dict = None) -> bool:
+    """
+    Evaluate if trigger conditions are met for a subscriber
+    
+    Example conditions:
+    {
+        "field": "signup_date",
+        "operator": "older_than",
+        "value": 7,
+        "unit": "days"
+    }
+    """
+    if not conditions:
+        return True
+    
+    try:
+        field = conditions.get("field")
+        operator = conditions.get("operator")
+        value = conditions.get("value")
+        
+        # Get field value from subscriber or trigger data
+        subscriber_value = subscriber.get(field)
+        if subscriber_value is None and trigger_data:
+            subscriber_value = trigger_data.get(field)
+        
+        if subscriber_value is None:
+            return False
+        
+        # Evaluate based on operator
+        if operator == "equals":
+            return subscriber_value == value
+        elif operator == "not_equals":
+            return subscriber_value != value
+        elif operator == "contains":
+            return value in str(subscriber_value)
+        elif operator == "greater_than":
+            return float(subscriber_value) > float(value)
+        elif operator == "less_than":
+            return float(subscriber_value) < float(value)
+        elif operator == "older_than":
+            # For date fields
+            if isinstance(subscriber_value, datetime):
+                unit = conditions.get("unit", "days")
+                if unit == "days":
+                    threshold = datetime.utcnow() - timedelta(days=int(value))
+                elif unit == "hours":
+                    threshold = datetime.utcnow() - timedelta(hours=int(value))
+                else:
+                    threshold = datetime.utcnow() - timedelta(days=int(value))
+                return subscriber_value < threshold
+        
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error evaluating trigger conditions: {e}")
+        return False
+
+
+@shared_task(name="tasks.cancel_automation_workflow")
+def cancel_automation_workflow(automation_rule_id: str, subscriber_id: str):
+    """Cancel all pending automation steps for a subscriber"""
+    try:
+        executions_collection = get_sync_automation_executions_collection()
+        
+        # Find all scheduled executions
+        scheduled_executions = list(executions_collection.find({
+            "automation_rule_id": automation_rule_id,
+            "subscriber_id": subscriber_id,
+            "status": "scheduled"
+        }))
+        
+        # Revoke Celery tasks
+        from celery_app import celery_app
+        for execution in scheduled_executions:
+            if execution.get("task_id"):
+                celery_app.control.revoke(execution["task_id"], terminate=True)
+        
+        # Update status
+        result = executions_collection.update_many(
+            {
+                "automation_rule_id": automation_rule_id,
+                "subscriber_id": subscriber_id,
+                "status": "scheduled"
+            },
+            {
+                "$set": {
+                    "status": "cancelled",
+                    "cancelled_at": datetime.utcnow(),
+                    "updated_at": datetime.utcnow()
+                }
+            }
+        )
+        
+        logger.info(f"Cancelled {result.modified_count} automation steps")
+        
+        return {
+            "status": "success",
+            "cancelled_count": result.modified_count
+        }
+        
+    except Exception as e:
+        logger.error(f"Error cancelling automation workflow: {e}")
+        return {"status": "error", "error": str(e)}

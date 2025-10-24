@@ -10,7 +10,7 @@ from email.mime.multipart import MIMEMultipart
 from jinja2 import Template
 from database import get_campaigns_collection,  get_audit_collection
 #from tasks.email_campaign_tasks import send_campaign_batch
-from tasks.email_campaign_tasks import celery_app, send_campaign_batch
+from tasks.campaign.email_campaign_tasks import celery_app, send_campaign_batch
 from .email_sender import send_test_email
 from .list_validator import validate_target_lists_exist, compute_target_list_count 
 from .field_handler import   get_subscriber_field_value, render_email_for_subscriber, count_populated_fields, create_mock_subscriber_tiered,get_sample_subscriber_tiered, FIELD_TIERS

@@ -5,7 +5,7 @@ Unified task registration for all Celery tasks
 
 # Import all task modules to register them with Celery
 try:
-    from . import email_campaign_tasks
+    from .campaign import email_campaign_tasks
     print("✅ Loaded email_campaign_tasks")
 except ImportError as e:
     print(f"❌ Failed to load email_campaign_tasks: {e}")
@@ -56,6 +56,3 @@ if FILE_FIRST_AVAILABLE:
 
 
 print("✅ All task modules loaded successfully")
-
-
-

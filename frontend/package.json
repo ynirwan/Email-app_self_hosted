@@ -10,7 +10,6 @@
     "serve": "vite preview --port 3000 --host 0.0.0.0"
   },
   "dependencies": {
-    "@tinymce/tinymce-react": "^6.2.1",
     "@usewaypoint/email-builder": "^0.0.8",
     "axios": "^1.11.0",
     "lucide-react": "^0.542.0",
