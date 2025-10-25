@@ -243,77 +243,41 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         request_id = str(uuid.uuid4())
         request.state.request_id = request_id
-        
         response = await call_next(request)
         response.headers["X-Request-ID"] = request_id
-        
         return response
 
 app.add_middleware(RequestIDMiddleware)
 logger.info("✅ Request ID middleware configured")
 
 
-# 4. Security Headers Middleware
-class SecurityHeadersMiddleware(BaseHTTPMiddleware):
-    """Add security headers to all responses"""
+# 4. Request Logging Middleware
+class RequestLoggingMiddleware(BaseHTTPMiddleware):
+    """Log all requests with timing"""
     
     async def dispatch(self, request: Request, call_next):
+        start_time = time.time()
+        
         response = await call_next(request)
         
-        # Security headers
-        response.headers["X-Content-Type-Options"] = "nosniff"
-        response.headers["X-Frame-Options"] = "DENY"
-        response.headers["X-XSS-Protection"] = "1; mode=block"
-        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
-        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        process_time = time.time() - start_time
+        
+        # Log slow requests
+        if process_time > 1.0:
+            logger.warning(
+                f"Slow request: {request.method} {request.url.path} "
+                f"took {process_time:.3f}s"
+            )
+        
+        response.headers["X-Process-Time"] = str(round(process_time, 3))
         
         return response
 
-app.add_middleware(SecurityHeadersMiddleware)
-logger.info("✅ Security headers middleware configured")
+app.add_middleware(RequestLoggingMiddleware)
+logger.info("✅ Request logging middleware configured")
 
 
-# 5. Performance Monitoring Middleware
-@app.middleware("http")
-async def performance_monitoring_middleware(request: Request, call_next):
-    """Monitor request performance and add metrics"""
-    start_time = time.time()
-    
-    # Process request
-    response = await call_next(request)
-    
-    # Calculate processing time
-    process_time = time.time() - start_time
-    
-    # Add performance headers
-    response.headers["X-Process-Time"] = f"{process_time:.3f}"
-    
-    # Log slow requests
-    if process_time > 2.0:
-        logger.warning(
-            f"Slow request: {request.method} {request.url.path} - {process_time:.3f}s"
-        )
-    
-    # Collect metrics if enabled
-    if settings.ENABLE_METRICS_COLLECTION and metrics_collector:
-        try:
-            asyncio.create_task(
-                metrics_collector.record_request_metric(
-                    method=request.method,
-                    path=request.url.path,
-                    status_code=response.status_code,
-                    duration=process_time
-                )
-            )
-        except Exception as e:
-            logger.debug(f"Failed to record metrics: {e}")
-    
-    return response
-
-logger.info("✅ Performance monitoring middleware configured")
-
-
-# 6. Error Handling Middleware
+# 5. Error Handling Middleware
 @app.middleware("http")
 async def error_handling_middleware(request: Request, call_next):
     """Catch and format all unhandled errors"""
@@ -336,7 +300,7 @@ logger.info("✅ Error handling middleware configured")
 
 
 # ============================================
-# EXCEPTION HANDLERS
+# EXCEPTION HANDLERS - FIXED VERSION
 # ============================================
 
 @app.exception_handler(StarletteHTTPException)
@@ -355,12 +319,46 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException):
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
-    """Handle request validation errors"""
+    """Handle request validation errors - FIXED VERSION"""
+    try:
+        # Safely extract error details
+        if hasattr(exc, 'errors') and callable(exc.errors):
+            error_details = exc.errors()
+        else:
+            error_details = [{"msg": str(exc), "type": "validation_error", "loc": ["body"]}]
+    except Exception as e:
+        logger.warning(f"Failed to extract validation errors: {e}")
+        error_details = [{"msg": str(exc), "type": "validation_error", "loc": ["body"]}]
+    
+    logger.warning(f"Validation error on {request.url.path}: {error_details}")
+    
     return JSONResponse(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
         content={
             "error": "Validation error",
-            "details": exc.errors(),
+            "details": error_details,
+            "request_id": getattr(request.state, 'request_id', None),
+            "timestamp": datetime.utcnow().isoformat()
+        }
+    )
+
+
+@app.exception_handler(ValueError)
+async def value_error_handler(request: Request, exc: ValueError):
+    """Handle ValueError exceptions from Pydantic validators"""
+    logger.warning(f"ValueError in request to {request.url.path}: {str(exc)}")
+    
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        content={
+            "error": "Validation error",
+            "details": [
+                {
+                    "msg": str(exc),
+                    "type": "value_error",
+                    "loc": ["body"]
+                }
+            ],
             "request_id": getattr(request.state, 'request_id', None),
             "timestamp": datetime.utcnow().isoformat()
         }
@@ -449,30 +447,11 @@ async def readiness_check():
     )
 
 
-@app.get("/health/live", tags=["Health"])
-async def liveness_check():
-    """Liveness check - is the app alive"""
-    return {
-        "status": "alive",
-        "timestamp": datetime.utcnow().isoformat()
-    }
-
-
-@app.get("/health/startup", tags=["Health"])
-async def startup_check():
-    """Startup check - has the app completed startup"""
-    return {
-        "status": "started",
-        "timestamp": datetime.utcnow().isoformat(),
-        "features": PRODUCTION_FEATURES
-    }
-
-
 @app.get("/health/detailed", tags=["Health"])
-async def detailed_health_check():
-    """Detailed system health check"""
+async def detailed_health():
+    """Detailed health check with all system information"""
     health_info = {
-        "api_status": "healthy",
+        "status": "healthy",
         "timestamp": datetime.utcnow().isoformat(),
         "version": settings.APP_VERSION,
         "environment": settings.ENVIRONMENT,
