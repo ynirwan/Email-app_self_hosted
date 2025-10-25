@@ -25,6 +25,9 @@ import ABTestResults from './pages/ABTestResults';
 import AutomationDashboard from './pages/AutomationDashboard';
 import AutomationBuilder from './pages/AutomationBuilder';
 import AutomationAnalytics from './pages/AutomationAnalytics';
+import AutomationCampaignAnalytics from './pages/AutomationCampaignAnalytics';
+
+
 
 const App = () => {
   const isLoggedIn = !!localStorage.getItem('token');
@@ -59,7 +62,8 @@ const App = () => {
             <Route path="/automation" element={<AutomationDashboard />} />
             <Route path="/automation/create" element={<AutomationBuilder />} />
             <Route path="/automation/edit/:id" element={<AutomationBuilder />} />
-	    <Route path="/automation/analytics/:id" element={<AutomationAnalytics />} />
+	          <Route path="/automation/analytics/" element={<AutomationAnalytics />} />
+            <Route path="/automation/analytics/:id" element={<AutomationCampaignAnalytics />} />
                   
             {/* Settings with nested tabs */}
             <Route path="settings" element={<SettingsPage />}>

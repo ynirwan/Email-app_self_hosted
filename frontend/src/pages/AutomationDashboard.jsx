@@ -26,19 +26,22 @@ const AutomationDashboard = () => {
       setError(null);
       console.log('🔄 Fetching automations from dashboard...');
 
-      const data = await API.get('/automation/rules');
-      console.log('📋 Raw automations response:', data);
+      const response = await API.get('/automation/rules');
+      console.log('📋 Raw automations response:', response);
 
-      // Handle different response formats
+      // ⭐ FIXED: Correct response structure handling
       let actualAutomations = [];
-      if (Array.isArray(data)) {
-        actualAutomations = data;
-      } else if (data?.data && Array.isArray(data.data)) {
-        actualAutomations = data.data;
-      } else if (data?.automations && Array.isArray(data.automations)) {
-        actualAutomations = data.automations;
+
+      if (response?.data?.rules && Array.isArray(response.data.rules)) {
+        actualAutomations = response.data.rules;
+      } else if (response?.rules && Array.isArray(response.rules)) {
+        actualAutomations = response.rules;
+      } else if (Array.isArray(response?.data)) {
+        actualAutomations = response.data;
+      } else if (Array.isArray(response)) {
+        actualAutomations = response;
       } else {
-        console.warn('⚠️ Unexpected response format:', data);
+        console.warn('⚠️ Unexpected response format:', response);
         actualAutomations = [];
       }
 
@@ -58,13 +61,15 @@ const AutomationDashboard = () => {
     const newStatus = currentStatus === 'active' ? 'paused' : 'active';
     try {
       console.log(`🔄 Toggling automation ${id} from ${currentStatus} to ${newStatus}`);
-      await API.put(`/automation/rules/${id}/status`, { status: newStatus });
-      await fetchAutomations(); // Refresh list after update
+
+      // ⭐ FIXED: Correct endpoint method
+      await API.post(`/automation/rules/${id}/status`, { status: newStatus });
+
+      await fetchAutomations();
       console.log('✅ Automation status updated successfully');
     } catch (error) {
       console.error('❌ Failed to toggle automation:', error);
       setError('Failed to update automation status');
-      // Revert optimistic update
       setTimeout(() => setError(null), 3000);
     }
   };
@@ -188,10 +193,16 @@ const AutomationDashboard = () => {
           </button>
           <button
             onClick={() => navigate('/automation/create')}
-            className="bg-blue-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 hover:bg-blue-700 transition-colors"
+            className="bg-blue-600 text-white px-2 py-2 rounded-lg flex items-center gap-1 hover:bg-blue-700 transition-colors"
           >
             <Plus size={20} />
             Create Automation
+          </button>
+          <button
+            onClick={() => navigate('/automation/analytics')}
+            className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700"
+          >
+            Analytics
           </button>
         </div>
       </div>

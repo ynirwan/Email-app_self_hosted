@@ -1,4 +1,4 @@
-# backend/routes/automation.py
+# backend/routes/automation.py - FIXED VERSION
 from fastapi import APIRouter, HTTPException, BackgroundTasks, Query
 from pydantic import BaseModel, validator, EmailStr
 from typing import List, Optional, Dict, Any
@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from enum import Enum
 import uuid
 from bson import ObjectId
+import pytz  # ⭐ CRITICAL FIX: Missing import
 
 from database import (
     get_automation_rules_collection,
@@ -17,59 +18,12 @@ from database import (
     get_audit_collection
 )
 
-# Add to existing schemas
-class AutomationRuleCreate(BaseModel):
-    name: str
-    trigger: str  # welcome, birthday, abandoned_cart, etc.
-    trigger_conditions: Dict[str, Any] = {}
-    target_segments: Optional[List[str]] = []
-    target_lists: Optional[List[str]] = []
-    active: bool = False
-    steps: List[AutomationStepCreate] = []
-    email_config: EmailConfig
-    
-    # ⭐ NEW CRITICAL FIELDS
-    # Timezone Configuration
-    timezone: str = "UTC"  # User-specified timezone for this automation
-    use_subscriber_timezone: bool = False  # Use subscriber's timezone if available
-    
-    # Re-trigger Settings
-    allow_retrigger: bool = False  # Allow automation to trigger multiple times
-    retrigger_delay_hours: int = 24  # Minimum hours between triggers
-    cancel_previous_on_retrigger: bool = True  # Cancel active workflow when retriggering
-    
-    # Exit Conditions
-    exit_on_goal_achieved: bool = True  # Stop workflow if goal achieved
-    exit_on_unsubscribe: bool = True  # Stop workflow if user unsubscribes
-    
-    # Frequency Capping
-    max_emails_per_day: int = 3  # Max emails per subscriber per day (0 = unlimited)
-    respect_quiet_hours: bool = True  # Don't send during quiet hours
-    quiet_hours_start: int = 22  # 10 PM
-    quiet_hours_end: int = 8  # 8 AM
-    
-    # Failure Handling
-    skip_step_on_failure: bool = False  # Skip failed step and continue
-    notify_on_failure: bool = True  # Notify admin on failures
-    
-    @validator('timezone')
-    def validate_timezone(cls, v):
-        try:
-            pytz.timezone(v)
-        except pytz.exceptions.UnknownTimeZoneError:
-            raise ValueError(f'Invalid timezone: {v}. Use format like "America/New_York", "Asia/Kolkata", "UTC"')
-        return v
-    
-    @validator('quiet_hours_start', 'quiet_hours_end')
-    def validate_hours(cls, v):
-        if not 0 <= v <= 23:
-            raise ValueError('Hours must be between 0 and 23')
-        return v
-    
+router = APIRouter(prefix="/automation")
 
 # ===========================
 # PYDANTIC SCHEMAS
 # ===========================
+
 class EmailConfig(BaseModel):
     """Email sending configuration"""
     sender_email: EmailStr
@@ -82,41 +36,69 @@ class EmailConfig(BaseModel):
             raise ValueError('Sender name is required')
         return v.strip()
 
+
 class AutomationStepCreate(BaseModel):
+    """Step configuration for automation"""
     template_id: str
     delay_value: int = 1
     delay_type: str = "hours"  # hours, days, weeks
     segment_conditions: Optional[List[str]] = []  # Segment IDs for conditional sending
     conditions: Optional[Dict[str, Any]] = {}
 
+
 class AutomationRuleCreate(BaseModel):
+    """Create automation rule with full timezone and scheduling support"""
     name: str
     trigger: str  # welcome, birthday, abandoned_cart, etc.
     trigger_conditions: Dict[str, Any] = {}
-    target_segments: Optional[List[str]] = []  # Initial segments to target
+    target_segments: Optional[List[str]] = []
+    target_lists: Optional[List[str]] = []
     active: bool = False
     steps: List[AutomationStepCreate] = []
-
-class AutomationRuleResponse(BaseModel):
-    id: str
-    name: str
-    trigger: str
-    trigger_conditions: Dict[str, Any] = {}
-    target_segments: List[str] = []
-    status: str
-    active: bool = False
-    emails_sent: int = 0
-    open_rate: float = 0.0
-    click_rate: float = 0.0
-    created_at: datetime
-    updated_at: datetime
-    steps: List[Dict] = []
-
-# Email configuration
     email_config: EmailConfig
+    
+    # ⭐ TIMEZONE CONFIGURATION
+    timezone: str = "UTC"  # User-specified timezone for this automation
+    use_subscriber_timezone: bool = False  # Use subscriber's timezone if available
+    
+    # ⭐ RE-TRIGGER SETTINGS
+    allow_retrigger: bool = False  # Allow automation to trigger multiple times
+    retrigger_delay_hours: int = 24  # Minimum hours between triggers
+    cancel_previous_on_retrigger: bool = True  # Cancel active workflow when retriggering
+    
+    # ⭐ EXIT CONDITIONS
+    exit_on_goal_achieved: bool = True  # Stop workflow if goal achieved
+    exit_on_unsubscribe: bool = True  # Stop workflow if user unsubscribes
+    
+    # ⭐ FREQUENCY CAPPING
+    max_emails_per_day: int = 3  # Max emails per subscriber per day (0 = unlimited)
+    respect_quiet_hours: bool = True  # Don't send during quiet hours
+    quiet_hours_start: int = 22  # 10 PM
+    quiet_hours_end: int = 8  # 8 AM
+    
+    # ⭐ FAILURE HANDLING
+    skip_step_on_failure: bool = False  # Skip failed step and continue
+    notify_on_failure: bool = True  # Notify admin on failures
+    
+    @validator('timezone')
+    def validate_timezone(cls, v):
+        """Validate timezone using pytz"""
+        try:
+            pytz.timezone(v)
+        except pytz.exceptions.UnknownTimeZoneError:
+            raise ValueError(f'Invalid timezone: {v}. Use format like "America/New_York", "Asia/Kolkata", "UTC"')
+        return v
+    
+    @validator('quiet_hours_start', 'quiet_hours_end')
+    def validate_hours(cls, v):
+        """Validate hours are in 0-23 range"""
+        if not 0 <= v <= 23:
+            raise ValueError('Hours must be between 0 and 23')
+        return v
     
     @validator('name')
     def validate_name(cls, v):
+        """Validate automation name"""
         if not v or not v.strip():
             raise ValueError('Automation name is required')
         if len(v) > 200:
@@ -125,9 +107,69 @@ class AutomationRuleResponse(BaseModel):
     
     @validator('steps')
     def validate_steps(cls, v):
+        """Validate at least one step exists"""
         if len(v) == 0:
             raise ValueError('At least one email step is required')
         return v
+
+
+class AutomationRuleUpdate(BaseModel):
+    """Update automation rule"""
+    name: Optional[str] = None
+    trigger: Optional[str] = None
+    trigger_conditions: Optional[Dict[str, Any]] = None
+    target_segments: Optional[List[str]] = None
+    target_lists: Optional[List[str]] = None
+    active: Optional[bool] = None
+    steps: Optional[List[AutomationStepCreate]] = None
+    email_config: Optional[EmailConfig] = None
+    
+    # Timezone settings
+    timezone: Optional[str] = None
+    use_subscriber_timezone: Optional[bool] = None
+    
+    # Other settings
+    allow_retrigger: Optional[bool] = None
+    retrigger_delay_hours: Optional[int] = None
+    cancel_previous_on_retrigger: Optional[bool] = None
+    exit_on_goal_achieved: Optional[bool] = None
+    exit_on_unsubscribe: Optional[bool] = None
+    max_emails_per_day: Optional[int] = None
+    respect_quiet_hours: Optional[bool] = None
+    quiet_hours_start: Optional[int] = None
+    quiet_hours_end: Optional[int] = None
+    skip_step_on_failure: Optional[bool] = None
+    notify_on_failure: Optional[bool] = None
+
+
+class AutomationRuleResponse(BaseModel):
+    """Response format for automation rules"""
+    id: str
+    name: str
+    trigger: str
+    trigger_conditions: Dict[str, Any] = {}
+    target_segments: List[str] = []
+    target_lists: List[str] = []
+    status: str
+    active: bool = False
+    emails_sent: int = 0
+    open_rate: float = 0.0
+    click_rate: float = 0.0
+    created_at: datetime
+    updated_at: datetime
+    steps: List[Dict] = []
+    
+    # Timezone and scheduling
+    timezone: str = "UTC"
+    use_subscriber_timezone: bool = False
+    respect_quiet_hours: bool = True
+    quiet_hours_start: int = 22
+    quiet_hours_end: int = 8
+    
+    # Email config
+    email_config: Optional[EmailConfig] = None
+
+
 # ===========================
 # VALIDATION FUNCTIONS
 # ===========================
@@ -199,7 +241,7 @@ async def validate_segments_exist(segment_ids: List[str]) -> Dict[str, bool]:
     
     segments_collection = get_segments_collection()
     existing_segments = await segments_collection.find(
-        {"_id": {"$in": valid_ids}, "is_active": True},
+        {"_id": {"$in": valid_ids}},
         {"_id": 1}
     ).to_list(length=len(valid_ids))
     
@@ -209,368 +251,226 @@ async def validate_segments_exist(segment_ids: List[str]) -> Dict[str, bool]:
     if missing_ids:
         raise HTTPException(
             status_code=404,
-            detail=f"Segments not found or inactive: {', '.join(missing_ids)}"
+            detail=f"Segments not found: {', '.join(missing_ids)}"
         )
     
     return {sid: sid in existing_ids for sid in segment_ids}
 
-def convert_delay_to_hours(value: int, delay_type: str) -> int:
-    """Convert delay to hours"""
-    if delay_type == "hours":
-        return value
-    elif delay_type == "days":
-        return value * 24
-    elif delay_type == "weeks":
-        return value * 24 * 7
-    return value
-
-async def log_automation_activity(action: str, automation_id: str, details: str):
-    """Log automation activity using your existing audit system"""
-    try:
-        audit_collection = get_audit_collection()
-        log_entry = {
-            "timestamp": datetime.utcnow(),
-            "action": action,
-            "entity_type": "automation",
-            "entity_id": automation_id,
-            "details": details,
-            "system": "email_automation"
-        }
-        await audit_collection.insert_one(log_entry)
-    except Exception as e:
-        print(f"Failed to log automation activity: {e}")
 
 # ===========================
-# ROUTER WITH CORRECT ORDER
+# AUTOMATION ROUTES
 # ===========================
-
-router = APIRouter(prefix="/automation", tags=["automation"])
-
-# ✅ TEMPLATES & SEGMENTS ENDPOINTS FIRST
 @router.get("/templates")
-async def get_templates_for_automation(
-    skip: int = Query(0, ge=0),
-    limit: int = Query(100, le=500),
-    search: Optional[str] = None
-):
-    """Get templates with pagination and search"""
-    from database import get_templates_collection
-    
-    templates_collection = get_templates_collection()
-    
-    # Build query with optional search
-    query = {"deleted_at": {"$exists": False}}
-    if search:
-        query["$or"] = [
-            {"name": {"$regex": search, "$options": "i"}},
-            {"subject": {"$regex": search, "$options": "i"}}
-        ]
-    
-    # Get total count for pagination
-    total = await templates_collection.count_documents(query)
-    
-    # Fetch with projection (only needed fields)
-    cursor = templates_collection.find(
-        query,
-        {
-            "_id": 1,
-            "name": 1,
-            "subject": 1,
-            "type": 1,
-            "created_at": 1,
-            "thumbnail": 1  # If you have preview images
-        }
-    ).skip(skip).limit(limit).sort("created_at", -1)
-    
-    templates = []
-    async for template in cursor:
-        templates.append({
-            "id": str(template["_id"]),
-            "name": template.get("name", "Untitled"),
-            "subject": template.get("subject", ""),
-            "type": template.get("type", "html"),
-            "created_at": template.get("created_at"),
-            "thumbnail": template.get("thumbnail")
-        })
-    
-    return {
-        "templates": templates,
-        "total": total,
-        "skip": skip,
-        "limit": limit,
-        "has_more": (skip + limit) < total
-    }
+async def get_automation_templates():
+    """Get all available templates for automation"""
+    try:
+        templates_collection = get_templates_collection()
+        
+        templates = []
+        async for template in templates_collection.find({"deleted_at": {"$exists": False}}):
+            templates.append({
+                "id": str(template["_id"]),
+                "name": template.get("name", "Untitled"),
+                "subject": template.get("subject", ""),
+                "content_preview": template.get("content_text", "")[:100] if template.get("content_text") else ""
+            })
+        
+        return {"templates": templates, "total": len(templates)}
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch templates: {str(e)}")
+
 
 @router.get("/segments")
-async def get_segments_for_automation(
-    skip: int = Query(0, ge=0),
-    limit: int = Query(100, le=500),
-    include_stats: bool = Query(False)
-):
-    """Get segments with pagination and optional statistics"""
-    from database import get_segments_collection, get_subscribers_collection
-    
-    segments_collection = get_segments_collection()
-    
-    query = {
-        "is_active": True,
-        "deleted_at": {"$exists": False}
-    }
-    
-    total = await segments_collection.count_documents(query)
-    
-    # Use projection for performance
-    projection = {
-        "_id": 1,
-        "name": 1,
-        "description": 1,
-        "subscriber_count": 1,
-        "criteria_types": 1,
-        "last_calculated": 1
-    }
-    
-    cursor = segments_collection.find(
-        query, 
-        projection
-    ).skip(skip).limit(limit).sort("name", 1)
-    
-    segments = []
-    async for segment in cursor:
-        segment_data = {
-            "id": str(segment["_id"]),
-            "name": segment["name"],
-            "description": segment.get("description", ""),
-            "subscriber_count": segment.get("subscriber_count", 0),
-            "criteria_types": segment.get("criteria_types", []),
-            "last_calculated": segment.get("last_calculated")
-        }
+async def get_automation_segments():
+    """Get all available segments for targeting"""
+    try:
+        segments_collection = get_segments_collection()
         
-        # Optional: Get real-time subscriber count if requested
-        if include_stats:
-            subscribers_collection = get_subscribers_collection()
-            actual_count = await subscribers_collection.count_documents({
-                "segments": str(segment["_id"]),
-                "status": "active"
+        segments = []
+        async for segment in segments_collection.find({"deleted_at": {"$exists": False}}):
+            segments.append({
+                "id": str(segment["_id"]),
+                "name": segment.get("name", "Untitled"),
+                "description": segment.get("description", ""),
+                "subscriber_count": segment.get("subscriber_count", 0)
             })
-            segment_data["actual_subscriber_count"] = actual_count
         
-        segments.append(segment_data)
-    
-    return {
-        "segments": segments,
-        "total": total,
-        "skip": skip,
-        "limit": limit,
-        "has_more": (skip + limit) < total
-    }
+        return {"segments": segments, "total": len(segments)}
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch segments: {str(e)}")
 
-# ✅ SPECIFIC ROUTES BEFORE GENERAL ONES
-@router.get("/rules/{rule_id}/analytics")
-async def get_automation_analytics(
-    rule_id: str,
-    range: str = Query(default="30d", regex="^[0-9]+d$")
-):
-    """Optimized analytics with aggregation pipeline"""
-    from database import (
-        get_automation_rules_collection,
-        get_automation_executions_collection,
-        get_automation_steps_collection,
-        get_templates_collection,
-        get_subscribers_collection
-    )
+
+@router.post("/rules", status_code=201)
+async def create_automation_rule(rule_data: AutomationRuleCreate, background_tasks: BackgroundTasks):
+    """
+    Create a new automation rule with comprehensive validation """
+       # ⭐ ADD THIS DEBUG LOGGING AT THE TOP
+    import logging
+    logger = logging.getLogger(__name__)
     
-    # Verify rule exists
-    if not ObjectId.is_valid(rule_id):
-        raise HTTPException(status_code=400, detail="Invalid rule ID format")
+    logger.info("=" * 60)
+    logger.info("📥 RECEIVED AUTOMATION RULE DATA:")
+    logger.info(f"Name: {rule_data.name}")
+    logger.info(f"Trigger: {rule_data.trigger}")
+    logger.info(f"Timezone: {rule_data.timezone}")
+    logger.info(f"Email Config: {rule_data.email_config}")
+    logger.info(f"Steps count: {len(rule_data.steps)}")
+    logger.info("=" * 60)
     
     rules_collection = get_automation_rules_collection()
-    rule = await rules_collection.find_one({
-        "_id": ObjectId(rule_id),
-        "deleted_at": {"$exists": False}
-    })
-    
-    if not rule:
-        raise HTTPException(status_code=404, detail="Automation rule not found")
-    
-    # Calculate date range
-    days = int(range.replace('d', ''))
-    start_date = datetime.utcnow() - timedelta(days=days)
-    
-    # Use aggregation pipeline for better performance
-    executions_collection = get_automation_executions_collection()
-    
-    # Aggregate execution statistics
-    pipeline = [
-        {
-            "$match": {
-                "automation_rule_id": rule_id,
-                "executed_at": {"$gte": start_date}
-            }
-        },
-        {
-            "$group": {
-                "_id": "$automation_step_id",
-                "total_sent": {"$sum": 1},
-                "total_opened": {
-                    "$sum": {"$cond": [{"$ifNull": ["$opened_at", False]}, 1, 0]}
-                },
-                "total_clicked": {
-                    "$sum": {"$cond": [{"$ifNull": ["$clicked_at", False]}, 1, 0]}
-                },
-                "total_bounced": {
-                    "$sum": {"$cond": [{"$ifNull": ["$bounced_at", False]}, 1, 0]}
-                },
-                "total_unsubscribed": {
-                    "$sum": {"$cond": [{"$ifNull": ["$unsubscribed_at", False]}, 1, 0]}
-                }
-            }
-        }
-    ]
-    
-    execution_stats = await executions_collection.aggregate(pipeline).to_list(None)
-    
-    # Create lookup map for step stats
-    stats_by_step = {
-        stat["_id"]: stat for stat in execution_stats
-    }
-    
-    # Get steps with template info
     steps_collection = get_automation_steps_collection()
-    templates_collection = get_templates_collection()
+    audit_collection = get_audit_collection()
     
-    steps = await steps_collection.find({
-        "automation_rule_id": rule_id
-    }).sort("step_order", 1).to_list(None)
+    # Validate templates exist
+    template_ids = [step.template_id for step in rule_data.steps]
+    await validate_templates_exist(template_ids)
     
-    # Batch fetch templates
-    template_ids = [ObjectId(step["email_template_id"]) for step in steps]
-    templates = await templates_collection.find(
-        {"_id": {"$in": template_ids}},
-        {"_id": 1, "subject": 1, "name": 1}
-    ).to_list(None)
+    # Validate segments if specified
+    if rule_data.target_segments:
+        await validate_segments_exist(rule_data.target_segments)
     
-    template_map = {str(t["_id"]): t for t in templates}
-    
-    # Calculate email performance
-    email_performance = []
-    total_sent = 0
-    total_opened = 0
-    total_clicked = 0
-    total_bounced = 0
-    total_unsubscribed = 0
-    
-    for step in steps:
-        step_id = str(step["_id"])
-        stats = stats_by_step.get(step_id, {})
+    # Convert delay to hours for storage
+    steps_data = []
+    for idx, step in enumerate(rule_data.steps):
+        delay_hours = step.delay_value
+        if step.delay_type == "days":
+            delay_hours = step.delay_value * 24
+        elif step.delay_type == "weeks":
+            delay_hours = step.delay_value * 168
         
-        sent = stats.get("total_sent", 0)
-        opened = stats.get("total_opened", 0)
-        clicked = stats.get("total_clicked", 0)
-        bounced = stats.get("total_bounced", 0)
-        unsubscribed = stats.get("total_unsubscribed", 0)
-        
-        total_sent += sent
-        total_opened += opened
-        total_clicked += clicked
-        total_bounced += bounced
-        total_unsubscribed += unsubscribed
-        
-        template = template_map.get(step["email_template_id"], {})
-        subject = template.get("subject") or template.get("name", f"Email {step['step_order']}")
-        
-        email_performance.append({
-            "step_id": step_id,
-            "step_order": step["step_order"],
-            "subject": subject,
-            "sent": sent,
-            "opened": opened,
-            "clicked": clicked,
-            "bounced": bounced,
-            "unsubscribed": unsubscribed,
-            "open_rate": round((opened / sent * 100), 2) if sent > 0 else 0,
-            "click_rate": round((clicked / sent * 100), 2) if sent > 0 else 0,
-            "bounce_rate": round((bounced / sent * 100), 2) if sent > 0 else 0,
-            "unsubscribe_rate": round((unsubscribed / sent * 100), 2) if sent > 0 else 0
+        steps_data.append({
+            "email_template_id": step.template_id,
+            "delay_hours": delay_hours,
+            "delay_value": step.delay_value,
+            "delay_type": step.delay_type,
+            "segment_conditions": step.segment_conditions or [],
+            "conditions": step.conditions or {},
+            "step_order": idx + 1
         })
     
-    # Get active subscriber count
-    subscribers_collection = get_subscribers_collection()
-    active_subscribers = await subscribers_collection.count_documents({
-        "status": "active"
+    # Create automation rule document
+    rule_doc = {
+        "name": rule_data.name,
+        "trigger": rule_data.trigger,
+        "trigger_conditions": rule_data.trigger_conditions,
+        "target_segments": rule_data.target_segments or [],
+        "target_lists": rule_data.target_lists or [],
+        "status": "active" if rule_data.active else "draft",
+        "email_config": rule_data.email_config.dict(),
+        
+        # Timezone settings
+        "timezone": rule_data.timezone,
+        "use_subscriber_timezone": rule_data.use_subscriber_timezone,
+        
+        # Re-trigger settings
+        "allow_retrigger": rule_data.allow_retrigger,
+        "retrigger_delay_hours": rule_data.retrigger_delay_hours,
+        "cancel_previous_on_retrigger": rule_data.cancel_previous_on_retrigger,
+        
+        # Exit conditions
+        "exit_on_goal_achieved": rule_data.exit_on_goal_achieved,
+        "exit_on_unsubscribe": rule_data.exit_on_unsubscribe,
+        
+        # Frequency capping
+        "max_emails_per_day": rule_data.max_emails_per_day,
+        "respect_quiet_hours": rule_data.respect_quiet_hours,
+        "quiet_hours_start": rule_data.quiet_hours_start,
+        "quiet_hours_end": rule_data.quiet_hours_end,
+        
+        # Failure handling
+        "skip_step_on_failure": rule_data.skip_step_on_failure,
+        "notify_on_failure": rule_data.notify_on_failure,
+        
+        # Analytics
+        "emails_sent": 0,
+        "emails_opened": 0,
+        "emails_clicked": 0,
+        "subscribers_entered": 0,
+        "subscribers_completed": 0,
+        
+        # Metadata
+        "created_at": datetime.utcnow(),
+        "updated_at": datetime.utcnow()
+    }
+    
+    result = await rules_collection.insert_one(rule_doc)
+    rule_id = str(result.inserted_id)
+    
+    # Insert steps
+    for step_data in steps_data:
+        step_data["automation_rule_id"] = rule_id
+        step_data["created_at"] = datetime.utcnow()
+        await steps_collection.insert_one(step_data)
+    
+    # Audit log
+    await audit_collection.insert_one({
+        "action": "automation_created",
+        "entity_type": "automation_rule",
+        "entity_id": rule_id,
+        "details": {"name": rule_data.name, "trigger": rule_data.trigger},
+        "timestamp": datetime.utcnow()
     })
     
     return {
-        "rule_id": rule_id,
-        "rule_name": rule.get("name"),
-        "date_range": f"{days} days",
-        "total_sent": total_sent,
-        "total_delivered": total_sent - total_bounced,
-        "total_opened": total_opened,
-        "total_clicked": total_clicked,
-        "total_bounced": total_bounced,
-        "total_unsubscribed": total_unsubscribed,
-        "open_rate": round((total_opened / total_sent * 100), 2) if total_sent > 0 else 0,
-        "click_rate": round((total_clicked / total_sent * 100), 2) if total_sent > 0 else 0,
-        "bounce_rate": round((total_bounced / total_sent * 100), 2) if total_sent > 0 else 0,
-        "unsubscribe_rate": round((total_unsubscribed / total_sent * 100), 2) if total_sent > 0 else 0,
-        "active_subscribers": active_subscribers,
-        "email_performance": email_performance
+        "id": rule_id,
+        "message": "Automation rule created successfully",
+        "status": rule_doc["status"]
     }
 
-@router.post("/rules/{rule_id}/trigger")
-async def trigger_automation_manually(
-    rule_id: str,
-    background_tasks: BackgroundTasks,
-    target_segments: Optional[List[str]] = None
+
+@router.get("/rules")
+async def list_automation_rules(
+    status: Optional[str] = Query(None),
+    trigger: Optional[str] = Query(None),
+    limit: int = Query(50, le=100),
+    skip: int = Query(0)
 ):
-    """Manually trigger automation for specific segments"""
-    # Get automation rule
+    """
+    List all automation rules with filtering
+    """
     rules_collection = get_automation_rules_collection()
-    rule = await rules_collection.find_one({
-        "_id": ObjectId(rule_id),
-        "deleted_at": {"$exists": False}
-    })
-
-    if not rule:
-        raise HTTPException(status_code=404, detail="Automation rule not found")
-
-    # Determine which segments to target
-    segments_to_target = target_segments or rule.get("target_segments", [])
-
-    if not segments_to_target:
-        raise HTTPException(status_code=400, detail="No target segments specified")
-
-    # Validate segments exist
-    await validate_segments_exist(segments_to_target)
-
+    
+    query = {"deleted_at": {"$exists": False}}
+    
+    if status:
+        query["status"] = status
+    if trigger:
+        query["trigger"] = trigger
+    
+    total = await rules_collection.count_documents(query)
+    
+    rules = await rules_collection.find(query).sort("created_at", -1).skip(skip).limit(limit).to_list(length=limit)
+    
+    # Format response
+    formatted_rules = []
+    for rule in rules:
+        formatted_rules.append({
+            "id": str(rule["_id"]),
+            "name": rule["name"],
+            "trigger": rule["trigger"],
+            "status": rule.get("status", "draft"),
+            "active": rule.get("status") == "active",
+            "emails_sent": rule.get("emails_sent", 0),
+            "subscribers_entered": rule.get("subscribers_entered", 0),
+            "subscribers_completed": rule.get("subscribers_completed", 0),
+            "timezone": rule.get("timezone", "UTC"),
+            "created_at": rule["created_at"],
+            "updated_at": rule["updated_at"]
+        })
+    
     return {
-        "message": "Automation triggered successfully",
-        "subscribers_count": 0,  # Implement actual logic
-        "segments_count": len(segments_to_target)
+        "rules": formatted_rules,
+        "total": total,
+        "limit": limit,
+        "skip": skip
     }
 
-@router.put("/rules/{rule_id}/status")
-async def update_automation_status(rule_id: str, status_data: Dict[str, str]):
-    """Update automation status"""
-    rules_collection = get_automation_rules_collection()
 
-    result = await rules_collection.update_one(
-        {"_id": ObjectId(rule_id)},
-        {"$set": {
-            "status": status_data["status"],
-            "updated_at": datetime.utcnow()
-        }}
-    )
-
-    if result.matched_count == 0:
-        raise HTTPException(status_code=404, detail="Automation not found")
-
-    return {"message": "Status updated successfully"}
-
-# ✅ GENERAL ROUTES AFTER SPECIFIC ONES
 @router.get("/rules/{rule_id}")
 async def get_automation_rule(rule_id: str):
-    """Get a specific automation rule by ID"""
+    """Get a specific automation rule by ID with all details"""
     try:
         object_id = ObjectId(rule_id)
     except:
@@ -598,8 +498,36 @@ async def get_automation_rule(rule_id: str):
         "trigger": rule["trigger"],
         "trigger_conditions": rule.get("trigger_conditions", {}),
         "target_segments": rule.get("target_segments", []),
+        "target_lists": rule.get("target_lists", []),
         "status": rule.get("status", "draft"),
         "active": rule.get("status") == "active",
+        
+        # Timezone settings
+        "timezone": rule.get("timezone", "UTC"),
+        "use_subscriber_timezone": rule.get("use_subscriber_timezone", False),
+        
+        # Scheduling settings
+        "respect_quiet_hours": rule.get("respect_quiet_hours", True),
+        "quiet_hours_start": rule.get("quiet_hours_start", 22),
+        "quiet_hours_end": rule.get("quiet_hours_end", 8),
+        
+        # Other settings
+        "allow_retrigger": rule.get("allow_retrigger", False),
+        "retrigger_delay_hours": rule.get("retrigger_delay_hours", 24),
+        "max_emails_per_day": rule.get("max_emails_per_day", 3),
+        "exit_on_unsubscribe": rule.get("exit_on_unsubscribe", True),
+        
+        # Email config
+        "email_config": rule.get("email_config", {}),
+        
+        # Analytics
+        "emails_sent": rule.get("emails_sent", 0),
+        "emails_opened": rule.get("emails_opened", 0),
+        "emails_clicked": rule.get("emails_clicked", 0),
+        "subscribers_entered": rule.get("subscribers_entered", 0),
+        "subscribers_completed": rule.get("subscribers_completed", 0),
+        
+        # Metadata
         "created_at": rule["created_at"],
         "updated_at": rule["updated_at"],
         "steps": []
@@ -631,203 +559,225 @@ async def get_automation_rule(rule_id: str):
     
     return rule_response
 
+
 @router.put("/rules/{rule_id}")
-async def update_automation_rule(rule_id: str, automation: AutomationRuleCreate):
-    """Update existing automation rule"""
+async def update_automation_rule(rule_id: str, rule_data: AutomationRuleUpdate):
+    """Update an automation rule"""
     try:
-        if not ObjectId.is_valid(rule_id):
-            raise HTTPException(status_code=400, detail="Invalid rule ID")
-
-        automation_rules_collection = get_automation_rules_collection()
-        automation_steps_collection = get_automation_steps_collection()
-
-        # Update automation rule
-        update_data = {
-            "name": automation.name,
-            "description": automation.description,
-            "trigger": automation.trigger,
-            "trigger_conditions": automation.trigger_conditions,
-            "target_segments": automation.target_segments,
-            "status": "active" if automation.active else "draft",
-            "email_config": {
-                "sender_email": automation.email_config.sender_email,
-                "sender_name": automation.email_config.sender_name,
-                "reply_to": automation.email_config.reply_to or automation.email_config.sender_email
-            },
-            "updated_at": datetime.utcnow()
-        }
-
-        result = await automation_rules_collection.update_one(
-            {"_id": ObjectId(rule_id)},
-            {"$set": update_data}
-        )
-
-        if result.matched_count == 0:
-            raise HTTPException(status_code=404, detail="Automation rule not found")
-
-        # Delete old steps
-        await automation_steps_collection.delete_many({"automation_rule_id": rule_id})
-
-        # Create new steps
-        for index, step in enumerate(automation.steps):
+        object_id = ObjectId(rule_id)
+    except:
+        raise HTTPException(status_code=400, detail="Invalid rule ID format")
+    
+    rules_collection = get_automation_rules_collection()
+    steps_collection = get_automation_steps_collection()
+    
+    # Build update document
+    update_doc = {}
+    
+    if rule_data.name is not None:
+        update_doc["name"] = rule_data.name
+    if rule_data.trigger is not None:
+        update_doc["trigger"] = rule_data.trigger
+    if rule_data.trigger_conditions is not None:
+        update_doc["trigger_conditions"] = rule_data.trigger_conditions
+    if rule_data.target_segments is not None:
+        update_doc["target_segments"] = rule_data.target_segments
+        await validate_segments_exist(rule_data.target_segments)
+    if rule_data.target_lists is not None:
+        update_doc["target_lists"] = rule_data.target_lists
+    if rule_data.active is not None:
+        update_doc["status"] = "active" if rule_data.active else "draft"
+    if rule_data.email_config is not None:
+        update_doc["email_config"] = rule_data.email_config.dict()
+    
+    # Update timezone settings
+    if rule_data.timezone is not None:
+        update_doc["timezone"] = rule_data.timezone
+    if rule_data.use_subscriber_timezone is not None:
+        update_doc["use_subscriber_timezone"] = rule_data.use_subscriber_timezone
+    if rule_data.respect_quiet_hours is not None:
+        update_doc["respect_quiet_hours"] = rule_data.respect_quiet_hours
+    if rule_data.quiet_hours_start is not None:
+        update_doc["quiet_hours_start"] = rule_data.quiet_hours_start
+    if rule_data.quiet_hours_end is not None:
+        update_doc["quiet_hours_end"] = rule_data.quiet_hours_end
+    
+    # Update steps if provided
+    if rule_data.steps is not None:
+        # Validate templates
+        template_ids = [step.template_id for step in rule_data.steps]
+        await validate_templates_exist(template_ids)
+        
+        # Delete existing steps
+        await steps_collection.delete_many({"automation_rule_id": rule_id})
+        
+        # Insert new steps
+        for idx, step in enumerate(rule_data.steps):
             delay_hours = step.delay_value
             if step.delay_type == "days":
                 delay_hours = step.delay_value * 24
             elif step.delay_type == "weeks":
-                delay_hours = step.delay_value * 24 * 7
-
+                delay_hours = step.delay_value * 168
+            
             step_doc = {
-                "_id": ObjectId(),
                 "automation_rule_id": rule_id,
-                "step_order": index + 1,
                 "email_template_id": step.template_id,
                 "delay_hours": delay_hours,
-                "delay_type": step.delay_type,
                 "delay_value": step.delay_value,
+                "delay_type": step.delay_type,
+                "segment_conditions": step.segment_conditions or [],
+                "conditions": step.conditions or {},
+                "step_order": idx + 1,
                 "created_at": datetime.utcnow()
             }
-
-            await automation_steps_collection.insert_one(step_doc)
-
-        # Log activity (use `automation`, not undefined `rule_data`)
-        await log_automation_activity(
-            action="update",
-            automation_id=rule_id,
-            details=f"Updated automation '{automation.name}' with {len([s for s in automation.steps if s.template_id])} steps"
+            await steps_collection.insert_one(step_doc)
+    
+    if update_doc:
+        update_doc["updated_at"] = datetime.utcnow()
+        result = await rules_collection.update_one(
+            {"_id": object_id},
+            {"$set": update_doc}
         )
-
-        return {"message": "Automation updated successfully", "automation_id": rule_id}
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        
+        if result.matched_count == 0:
+            raise HTTPException(status_code=404, detail="Automation not found")
+    
+    return {"message": "Automation rule updated successfully"}
 
 
 @router.delete("/rules/{rule_id}")
 async def delete_automation_rule(rule_id: str):
-    """Soft delete automation rule"""
+    """Soft delete an automation rule"""
+    try:
+        object_id = ObjectId(rule_id)
+    except:
+        raise HTTPException(status_code=400, detail="Invalid rule ID format")
+    
     rules_collection = get_automation_rules_collection()
-
+    
     result = await rules_collection.update_one(
-        {"_id": ObjectId(rule_id)},
+        {"_id": object_id},
         {"$set": {
             "deleted_at": datetime.utcnow(),
-            "status": "deleted"
+            "status": "deleted",
+            "updated_at": datetime.utcnow()
         }}
     )
-
+    
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Automation not found")
+    
+    return {"message": "Automation rule deleted successfully"}
 
-    return {"message": "Automation deleted successfully"}
 
-@router.get("/rules")
-async def get_automation_rules():
-    """Get all automation rules"""
-    collection = get_automation_rules_collection()
-    rules = await collection.find({"deleted_at": {"$exists": False}}).to_list(None)
-
-    response_rules = []
-    for rule in rules:
-        rule_dict = {
-            "id": str(rule["_id"]),
-            "name": rule["name"],
-            "trigger": rule["trigger"],
-            "trigger_conditions": rule.get("trigger_conditions", {}),
-            "target_segments": rule.get("target_segments", []),
-            "status": rule.get("status", "draft"),
-            "active": rule.get("status") == "active",
-            "created_at": rule["created_at"],
-            "updated_at": rule["updated_at"],
-            "emails_sent": 0,  # Calculate from executions
-            "open_rate": 0.0,  # Calculate from executions
-            "click_rate": 0.0  # Calculate from executions
-        }
-
-        # Get steps
-        steps_collection = get_automation_steps_collection()
-        steps = await steps_collection.find({
-            "automation_rule_id": str(rule["_id"])
-        }).sort("step_order", 1).to_list(None)
-
-        rule_dict["steps"] = [
-            {
-                "id": str(step["_id"]),
-                "template_id": step["email_template_id"],
-                "delay_hours": step["delay_hours"],
-                "segment_conditions": step.get("segment_conditions", []),
-                "step_order": step["step_order"]
-            }
-            for step in steps
-        ]
-
-        response_rules.append(rule_dict)
-
-    return response_rules
-
-@router.post("/rules")
-async def create_automation_rule(automation: AutomationRuleCreate):
-    """Create new automation rule with email configuration"""
+@router.post("/rules/{rule_id}/status")
+async def update_automation_status(rule_id: str, status_data: Dict[str, str]):
+    """Toggle automation active status"""
     try:
-        automation_rules_collection = get_automation_rules_collection()
-        automation_steps_collection = get_automation_steps_collection()
-        
-        # Create automation rule document
-        rule_doc = {
-            "_id": ObjectId(),
-            "name": automation.name,
-            "description": automation.description,
-            "trigger": automation.trigger,
-            "trigger_conditions": automation.trigger_conditions,
-            "target_segments": automation.target_segments,
-            "status": "active" if automation.active else "draft",
-            
-            # Email configuration
-            "email_config": {
-                "sender_email": automation.email_config.sender_email,
-                "sender_name": automation.email_config.sender_name,
-                "reply_to": automation.email_config.reply_to or automation.email_config.sender_email
-            },
-            
-            "created_at": datetime.utcnow(),
-            "updated_at": datetime.utcnow(),
-            "emails_sent": 0,
-            "open_rate": 0,
-            "click_rate": 0
-        }
-        
-        result = await automation_rules_collection.insert_one(rule_doc)
-        rule_id = str(result.inserted_id)
-        
-        # Create automation steps
-        for index, step in enumerate(automation.steps):
-            # Convert delay to hours
-            delay_hours = step.delay_value
-            if step.delay_type == "days":
-                delay_hours = step.delay_value * 24
-            elif step.delay_type == "weeks":
-                delay_hours = step.delay_value * 24 * 7
-            
-            step_doc = {
-                "_id": ObjectId(),
-                "automation_rule_id": rule_id,
-                "step_order": index + 1,
-                "email_template_id": step.template_id,
-                "delay_hours": delay_hours,
-                "delay_type": step.delay_type,
-                "delay_value": step.delay_value,
-                "created_at": datetime.utcnow()
-            }
-            
-            await automation_steps_collection.insert_one(step_doc)
-        
-        return {
-            "message": "Automation rule created successfully",
-            "id": rule_id,
-            "name": automation.name,
-            "status": rule_doc["status"]
-        }
-        
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        object_id = ObjectId(rule_id)
+    except:
+        raise HTTPException(status_code=400, detail="Invalid rule ID format")
+    
+    rules_collection = get_automation_rules_collection()
+    
+    new_status = status_data.get("status")
+    if new_status not in ["active", "draft", "paused"]:
+        raise HTTPException(status_code=400, detail="Invalid status")
+    
+    result = await rules_collection.update_one(
+        {"_id": object_id},
+        {"$set": {
+            "status": new_status,
+            "updated_at": datetime.utcnow()
+        }}
+    )
+    
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Automation not found")
+    
+    return {"message": "Status updated successfully", "status": new_status}
+
+
+@router.get("/rules/{rule_id}/analytics")
+async def get_automation_analytics(rule_id: str):
+    """Get analytics for a specific automation"""
+    try:
+        object_id = ObjectId(rule_id)
+    except:
+        raise HTTPException(status_code=400, detail="Invalid rule ID format")
+    
+    rules_collection = get_automation_rules_collection()
+    executions_collection = get_automation_executions_collection()
+    
+    rule = await rules_collection.find_one({"_id": object_id})
+    if not rule:
+        raise HTTPException(status_code=404, detail="Automation not found")
+    
+    # Get execution stats
+    total_executions = await executions_collection.count_documents({
+        "automation_rule_id": rule_id
+    })
+    
+    completed_executions = await executions_collection.count_documents({
+        "automation_rule_id": rule_id,
+        "status": "completed"
+    })
+    
+    failed_executions = await executions_collection.count_documents({
+        "automation_rule_id": rule_id,
+        "status": "failed"
+    })
+    
+    # Calculate rates
+    emails_sent = rule.get("emails_sent", 0)
+    emails_opened = rule.get("emails_opened", 0)
+    emails_clicked = rule.get("emails_clicked", 0)
+    
+    open_rate = (emails_opened / emails_sent * 100) if emails_sent > 0 else 0
+    click_rate = (emails_clicked / emails_sent * 100) if emails_sent > 0 else 0
+    
+    return {
+        "rule_id": rule_id,
+        "rule_name": rule["name"],
+        "emails_sent": emails_sent,
+        "emails_opened": emails_opened,
+        "emails_clicked": emails_clicked,
+        "open_rate": round(open_rate, 2),
+        "click_rate": round(click_rate, 2),
+        "total_executions": total_executions,
+        "completed_executions": completed_executions,
+        "failed_executions": failed_executions,
+        "subscribers_entered": rule.get("subscribers_entered", 0),
+        "subscribers_completed": rule.get("subscribers_completed", 0)
+    }
+
+
+@router.post("/trigger")
+async def trigger_automation(background_tasks: BackgroundTasks, trigger_data: Dict[str, Any]):
+    """
+    Manually trigger automation for testing
+    """
+    from tasks.automation_tasks import process_automation_trigger
+    
+    trigger_type = trigger_data.get("trigger")
+    subscriber_id = trigger_data.get("subscriber_id")
+    
+    if not trigger_type or not subscriber_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Both trigger and subscriber_id are required"
+        )
+    
+    # Queue the automation trigger task
+    task = process_automation_trigger.delay(
+        trigger_type=trigger_type,
+        subscriber_id=subscriber_id,
+        trigger_data=trigger_data
+    )
+    
+    return {
+        "message": "Automation trigger queued",
+        "task_id": task.id,
+        "trigger": trigger_type,
+        "subscriber_id": subscriber_id
+    }
