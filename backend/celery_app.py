@@ -3,6 +3,7 @@ from celery.signals import (
     task_failure, task_success, task_retry, task_prerun, task_postrun,
     worker_ready, worker_shutdown, after_setup_logger, worker_init
 )
+from celery.schedules import crontab
 import os
 import logging
 from datetime import timedelta
@@ -412,6 +413,53 @@ beat_schedule.update({
         'options': {'queue': 'automation', 'priority': 1}
     },
 })
+
+
+
+# Add to beat_schedule
+celery_app.conf.beat_schedule = {
+    
+    # ⭐ Check birthdays daily at multiple times for different timezones
+    'check-birthdays-midnight-utc': {
+        'task': 'tasks.check_daily_birthdays',
+        'schedule': crontab(hour=0, minute=0),  # Midnight UTC
+        'options': {'queue': 'automation', 'priority': 8}
+    },
+    'check-birthdays-morning-utc': {
+        'task': 'tasks.check_daily_birthdays',
+        'schedule': crontab(hour=6, minute=0),  # 6 AM UTC
+        'options': {'queue': 'automation', 'priority': 8}
+    },
+    'check-birthdays-noon-utc': {
+        'task': 'tasks.check_daily_birthdays',
+        'schedule': crontab(hour=12, minute=0),  # Noon UTC
+        'options': {'queue': 'automation', 'priority': 8}
+    },
+
+        # Clean old events monthly
+    'cleanup-old-events': {
+        'task': 'tasks.cleanup_old_events',
+        'schedule': crontab(day_of_month=1, hour=2, minute=0),  # 1st of month at 2 AM
+        'options': {'queue': 'automation', 'priority': 3}
+    },
+    
+    'check-inactive-subscribers': {
+        'task': 'tasks.check_inactive_subscribers',
+        'schedule': crontab(hour=3, minute=0),
+        'options': {'queue': 'automation', 'priority': 7}
+    },
+    
+    # Detect at-risk subscribers daily at 4 AM
+    'detect-at-risk-subscribers': {
+        'task': 'tasks.detect_at_risk_subscribers',
+        'schedule': crontab(hour=4, minute=0),
+        'options': {'queue': 'automation', 'priority': 6}
+    },
+
+}
+
+
+
 
 # Subscriber cleanup
 beat_schedule.update({

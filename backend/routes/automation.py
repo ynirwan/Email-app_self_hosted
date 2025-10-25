@@ -17,6 +17,56 @@ from database import (
     get_audit_collection
 )
 
+# Add to existing schemas
+class AutomationRuleCreate(BaseModel):
+    name: str
+    trigger: str  # welcome, birthday, abandoned_cart, etc.
+    trigger_conditions: Dict[str, Any] = {}
+    target_segments: Optional[List[str]] = []
+    target_lists: Optional[List[str]] = []
+    active: bool = False
+    steps: List[AutomationStepCreate] = []
+    email_config: EmailConfig
+    
+    # ⭐ NEW CRITICAL FIELDS
+    # Timezone Configuration
+    timezone: str = "UTC"  # User-specified timezone for this automation
+    use_subscriber_timezone: bool = False  # Use subscriber's timezone if available
+    
+    # Re-trigger Settings
+    allow_retrigger: bool = False  # Allow automation to trigger multiple times
+    retrigger_delay_hours: int = 24  # Minimum hours between triggers
+    cancel_previous_on_retrigger: bool = True  # Cancel active workflow when retriggering
+    
+    # Exit Conditions
+    exit_on_goal_achieved: bool = True  # Stop workflow if goal achieved
+    exit_on_unsubscribe: bool = True  # Stop workflow if user unsubscribes
+    
+    # Frequency Capping
+    max_emails_per_day: int = 3  # Max emails per subscriber per day (0 = unlimited)
+    respect_quiet_hours: bool = True  # Don't send during quiet hours
+    quiet_hours_start: int = 22  # 10 PM
+    quiet_hours_end: int = 8  # 8 AM
+    
+    # Failure Handling
+    skip_step_on_failure: bool = False  # Skip failed step and continue
+    notify_on_failure: bool = True  # Notify admin on failures
+    
+    @validator('timezone')
+    def validate_timezone(cls, v):
+        try:
+            pytz.timezone(v)
+        except pytz.exceptions.UnknownTimeZoneError:
+            raise ValueError(f'Invalid timezone: {v}. Use format like "America/New_York", "Asia/Kolkata", "UTC"')
+        return v
+    
+    @validator('quiet_hours_start', 'quiet_hours_end')
+    def validate_hours(cls, v):
+        if not 0 <= v <= 23:
+            raise ValueError('Hours must be between 0 and 23')
+        return v
+    
+
 # ===========================
 # PYDANTIC SCHEMAS
 # ===========================

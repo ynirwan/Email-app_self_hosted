@@ -48,17 +48,41 @@ const AutomationBuilder = () => {
         API.get('/automation/segments')
       ]);
 
-      const actualTemplates = templatesRes?.data || templatesRes;
-      const actualSegments = segmentsRes?.data || segmentsRes;
+      console.log('📦 Templates Response:', templatesRes);
+      console.log('📦 Segments Response:', segmentsRes);
 
-      setTemplates(Array.isArray(actualTemplates) ? actualTemplates : []);
-      setSegments(Array.isArray(actualSegments) ? actualSegments : []);
+      // Extract data with multiple fallbacks
+      let templatesData = [];
+      if (templatesRes?.data?.templates) {
+        templatesData = templatesRes.data.templates;
+      } else if (Array.isArray(templatesRes?.data)) {
+        templatesData = templatesRes.data;
+      } else if (Array.isArray(templatesRes)) {
+        templatesData = templatesRes;
+      }
 
-      console.log(`✅ Loaded ${Array.isArray(actualTemplates) ? actualTemplates.length : 0} templates`);
-      console.log(`✅ Loaded ${Array.isArray(actualSegments) ? actualSegments.length : 0} segments`);
+      let segmentsData = [];
+      if (segmentsRes?.data?.segments) {
+        segmentsData = segmentsRes.data.segments;
+      } else if (Array.isArray(segmentsRes?.data)) {
+        segmentsData = segmentsRes.data;
+      } else if (Array.isArray(segmentsRes)) {
+        segmentsData = segmentsRes;
+      }
+
+      setTemplates(Array.isArray(templatesData) ? templatesData : []);
+      setSegments(Array.isArray(segmentsData) ? segmentsData : []);
+
+      console.log(`✅ Loaded ${templatesData.length} templates`);
+      console.log(`✅ Loaded ${segmentsData.length} segments`);
+
+      if (templatesData.length > 0) {
+        console.log('📧 Sample template:', templatesData[0]);
+      }
 
     } catch (error) {
       console.error('❌ Failed to fetch templates/segments:', error);
+      console.error('Error details:', error.response?.data);
       setError(`Failed to load data: ${error.message}`);
       setTemplates([]);
       setSegments([]);
@@ -213,6 +237,47 @@ const AutomationBuilder = () => {
       setSaving(false);
     }
   };
+
+  const [workflow, setWorkflow] = useState({
+    name: '',
+    trigger: 'welcome',
+    trigger_conditions: {},
+    target_segments: [],
+    target_lists: [],
+    steps: [],
+    active: false,
+
+    // ⭐ NEW FIELDS
+    timezone: 'UTC',
+    use_subscriber_timezone: false,
+    allow_retrigger: false,
+    retrigger_delay_hours: 24,
+    cancel_previous_on_retrigger: true,
+    exit_on_goal_achieved: true,
+    exit_on_unsubscribe: true,
+    max_emails_per_day: 3,
+    respect_quiet_hours: true,
+    quiet_hours_start: 22,
+    quiet_hours_end: 8,
+    skip_step_on_failure: false,
+    notify_on_failure: true,
+  });
+
+  // Common timezones
+  const commonTimezones = [
+    { value: 'UTC', label: 'UTC (Coordinated Universal Time)' },
+    { value: 'America/New_York', label: 'Eastern Time (US & Canada)' },
+    { value: 'America/Chicago', label: 'Central Time (US & Canada)' },
+    { value: 'America/Denver', label: 'Mountain Time (US & Canada)' },
+    { value: 'America/Los_Angeles', label: 'Pacific Time (US & Canada)' },
+    { value: 'Europe/London', label: 'London (GMT/BST)' },
+    { value: 'Europe/Paris', label: 'Paris (CET/CEST)' },
+    { value: 'Asia/Kolkata', label: 'India (IST)' },
+    { value: 'Asia/Dubai', label: 'Dubai (GST)' },
+    { value: 'Asia/Singapore', label: 'Singapore (SGT)' },
+    { value: 'Asia/Tokyo', label: 'Tokyo (JST)' },
+    { value: 'Australia/Sydney', label: 'Sydney (AEDT/AEST)' },
+  ];
 
   // Safe array variables
   const safeSteps = Array.isArray(workflow.steps) ? workflow.steps : [];
@@ -380,7 +445,234 @@ const AutomationBuilder = () => {
             <p className="text-xs text-gray-500 mt-1">When should this automation start?</p>
           </div>
         </div>
+        
+        <div className="bg-white rounded-lg shadow-sm border p-6 mb-6">
+          <h2 className="text-xl font-semibold mb-4 flex items-center gap-2">
+            <Clock className="text-blue-600" size={22} />
+            Scheduling & Timing
+          </h2>
 
+          {/* Timezone Selection */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-4">
+            <div>
+              <label className="block text-sm font-medium mb-2">
+                Automation Timezone
+              </label>
+              <select
+                value={workflow.timezone}
+                onChange={(e) => setWorkflow(prev => ({ ...prev, timezone: e.target.value }))}
+                className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-blue-500"
+              >
+                {commonTimezones.map(tz => (
+                  <option key={tz.value} value={tz.value}>{tz.label}</option>
+                ))}
+              </select>
+              <p className="text-xs text-gray-500 mt-1">
+                All emails will be scheduled in this timezone
+              </p>
+            </div>
+
+            <div>
+              <label className="flex items-center space-x-3 cursor-pointer mt-8">
+                <input
+                  type="checkbox"
+                  checked={workflow.use_subscriber_timezone}
+                  onChange={(e) => setWorkflow(prev => ({ ...prev, use_subscriber_timezone: e.target.checked }))}
+                  className="w-5 h-5 rounded text-blue-600"
+                />
+                <div>
+                  <div className="font-medium text-gray-900">Use Subscriber's Timezone</div>
+                  <div className="text-sm text-gray-600">
+                    If subscriber has timezone, use it instead
+                  </div>
+                </div>
+              </label>
+            </div>
+          </div>
+
+          {/* Quiet Hours */}
+          <div className="border-t pt-4">
+            <label className="flex items-center space-x-3 cursor-pointer mb-4">
+              <input
+                type="checkbox"
+                checked={workflow.respect_quiet_hours}
+                onChange={(e) => setWorkflow(prev => ({ ...prev, respect_quiet_hours: e.target.checked }))}
+                className="w-5 h-5 rounded text-blue-600"
+              />
+              <div>
+                <div className="font-medium text-gray-900">Respect Quiet Hours</div>
+                <div className="text-sm text-gray-600">
+                  Don't send emails during specified hours
+                </div>
+              </div>
+            </label>
+
+            {workflow.respect_quiet_hours && (
+              <div className="grid grid-cols-2 gap-4 ml-8">
+                <div>
+                  <label className="block text-sm font-medium mb-2">Start (Evening)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    max="23"
+                    value={workflow.quiet_hours_start}
+                    onChange={(e) => setWorkflow(prev => ({ ...prev, quiet_hours_start: parseInt(e.target.value) }))}
+                    className="w-full p-2 border rounded"
+                  />
+                  <p className="text-xs text-gray-500">Hour (0-23)</p>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-2">End (Morning)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    max="23"
+                    value={workflow.quiet_hours_end}
+                    onChange={(e) => setWorkflow(prev => ({ ...prev, quiet_hours_end: parseInt(e.target.value) }))}
+                    className="w-full p-2 border rounded"
+                  />
+                  <p className="text-xs text-gray-500">Hour (0-23)</p>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Advanced Settings */}
+        <div className="bg-white rounded-lg shadow-sm border p-6 mb-6">
+          <h2 className="text-xl font-semibold mb-4 flex items-center gap-2">
+            <Settings className="text-purple-600" size={22} />
+            Advanced Settings
+          </h2>
+
+          {/* Re-trigger Settings */}
+          <div className="mb-4">
+            <label className="flex items-center space-x-3 cursor-pointer mb-2">
+              <input
+                type="checkbox"
+                checked={workflow.allow_retrigger}
+                onChange={(e) => setWorkflow(prev => ({ ...prev, allow_retrigger: e.target.checked }))}
+                className="w-5 h-5 rounded text-blue-600"
+              />
+              <div>
+                <div className="font-medium text-gray-900">Allow Re-triggering</div>
+                <div className="text-sm text-gray-600">
+                  Allow this automation to run multiple times for the same subscriber
+                </div>
+              </div>
+            </label>
+
+            {workflow.allow_retrigger && (
+              <div className="ml-8 grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium mb-2">Minimum Hours Between Triggers</label>
+                  <input
+                    type="number"
+                    min="1"
+                    value={workflow.retrigger_delay_hours}
+                    onChange={(e) => setWorkflow(prev => ({ ...prev, retrigger_delay_hours: parseInt(e.target.value) }))}
+                    className="w-full p-2 border rounded"
+                  />
+                </div>
+                <div>
+                  <label className="flex items-center space-x-2 mt-7">
+                    <input
+                      type="checkbox"
+                      checked={workflow.cancel_previous_on_retrigger}
+                      onChange={(e) => setWorkflow(prev => ({ ...prev, cancel_previous_on_retrigger: e.target.checked }))}
+                      className="rounded text-blue-600"
+                    />
+                    <span className="text-sm">Cancel previous workflow</span>
+                  </label>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Frequency Cap */}
+          <div className="border-t pt-4 mb-4">
+            <label className="block text-sm font-medium mb-2">Maximum Emails Per Day</label>
+            <input
+              type="number"
+              min="0"
+              max="10"
+              value={workflow.max_emails_per_day}
+              onChange={(e) => setWorkflow(prev => ({ ...prev, max_emails_per_day: parseInt(e.target.value) }))}
+              className="w-full p-2 border rounded"
+            />
+            <p className="text-xs text-gray-500 mt-1">
+              Set to 0 for unlimited (0 = no cap)
+            </p>
+          </div>
+
+          {/* Exit Conditions */}
+          <div className="border-t pt-4 space-y-2">
+            <label className="flex items-center space-x-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={workflow.exit_on_unsubscribe}
+                onChange={(e) => setWorkflow(prev => ({ ...prev, exit_on_unsubscribe: e.target.checked }))}
+                className="w-5 h-5 rounded text-blue-600"
+              />
+              <div>
+                <div className="font-medium text-gray-900">Cancel on Unsubscribe</div>
+                <div className="text-sm text-gray-600">
+                  Stop workflow if subscriber unsubscribes
+                </div>
+              </div>
+            </label>
+
+            <label className="flex items-center space-x-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={workflow.exit_on_goal_achieved}
+                onChange={(e) => setWorkflow(prev => ({ ...prev, exit_on_goal_achieved: e.target.checked }))}
+                className="w-5 h-5 rounded text-blue-600"
+              />
+              <div>
+                <div className="font-medium text-gray-900">Cancel on Goal Achievement</div>
+                <div className="text-sm text-gray-600">
+                  Stop workflow when goal is reached (e.g., purchase made)
+                </div>
+              </div>
+            </label>
+          </div>
+
+          {/* Failure Handling */}
+          <div className="border-t pt-4 mt-4 space-y-2">
+            <label className="flex items-center space-x-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={workflow.skip_step_on_failure}
+                onChange={(e) => setWorkflow(prev => ({ ...prev, skip_step_on_failure: e.target.checked }))}
+                className="w-5 h-5 rounded text-blue-600"
+              />
+              <div>
+                <div className="font-medium text-gray-900">Skip Failed Steps</div>
+                <div className="text-sm text-gray-600">
+                  Continue to next step if email fails to send
+                </div>
+              </div>
+            </label>
+
+            <label className="flex items-center space-x-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={workflow.notify_on_failure}
+                onChange={(e) => setWorkflow(prev => ({ ...prev, notify_on_failure: e.target.checked }))}
+                className="w-5 h-5 rounded text-blue-600"
+              />
+              <div>
+                <div className="font-medium text-gray-900">Notify on Failure</div>
+                <div className="text-sm text-gray-600">
+                  Send notification to admin when automation fails
+                </div>
+              </div>
+            </label>
+          </div>
+        </div>
+
+        
         {/* Status Toggle */}
         <div className="border-t pt-6">
           <label className="flex items-center space-x-3 cursor-pointer">

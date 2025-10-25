@@ -117,13 +117,11 @@ def initialize_sync_client() -> MongoClient:
 # ============================================
 # ASYNC DATABASE & COLLECTION GETTERS
 # ============================================
-
 def get_async_database() -> AsyncIOMotorDatabase:
     """Get async database instance"""
     if async_database is None:
         initialize_async_client()
     return async_database
-
 
 # Core Collections
 def get_users_collection():
@@ -133,6 +131,15 @@ def get_users_collection():
 def get_subscribers_collection():
     """Subscribers/contacts collection"""
     return get_async_database().subscribers
+
+# Add to existing collections
+def get_events_collection():
+    """Events tracking collection"""
+    return get_async_database().events
+
+def get_sync_events_collection():
+    """Sync events collection"""
+    return get_sync_database().events
 
 def get_campaigns_collection():
     """Email campaigns collection"""
@@ -251,6 +258,15 @@ def get_campaign_flags_collection():
 def get_rate_limits_collection():
     """Rate limiting data collection"""
     return get_async_database().rate_limits
+
+# Add to existing collections
+def get_workflow_instances_collection():
+    """Workflow execution instances collection"""
+    return get_async_database().workflow_instances
+
+def get_sync_workflow_instances_collection():
+    """Sync workflow instances collection"""
+    return get_sync_database().workflow_instances
 
 
 # ============================================
