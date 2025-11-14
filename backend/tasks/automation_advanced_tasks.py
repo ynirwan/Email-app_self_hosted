@@ -76,22 +76,98 @@ def execute_conditional_step(
             # Check if subscriber is in specific segment
             subscribers_collection = get_sync_subscribers_collection()
             subscriber = subscribers_collection.find_one({"_id": ObjectId(subscriber_id)})
-            
-            required_segments = conditional_config.get("condition_value", [])
-            subscriber_segments = subscriber.get("segments", [])
-            condition_met = any(seg in subscriber_segments for seg in required_segments)
+            if not subscriber:
+                logger.error(f"Subscriber not found: {subscriber_id}")
+                condition_met = False
+            else:   
+                required_segments = conditional_config.get("condition_value", [])
+                subscriber_segments = subscriber.get("segments", [])
+                if not subscriber_segments:
+                    condition_met = any(seg in subscriber_segments for seg in required_segments)
+                if isinstance(required_segments, list):
+                    condition_met = any(seg in subscriber_segments for seg in required_segments)
+                else:
+                # Single segment string
+                    condition_met = required_segments in subscriber_segments
         
+                logger.info(f"Segment match check: subscriber_segments={subscriber_segments}, "
+                    f"required={required_segments}, met={condition_met}")
+                
         elif condition_type == "field_equals":
+            from database import get_sync_subscribers_collection
+
             # Check if field equals value
             subscribers_collection = get_sync_subscribers_collection()
             subscriber = subscribers_collection.find_one({"_id": ObjectId(subscriber_id)})
+            if not subscriber:
+                logger.error(f"Subscriber not found: {subscriber_id}")
+                condition_met = False
+            else:
+
+                field_name = conditional_config.get("field_name")
+                field_config = conditional_config.get("field_config", {})
+                field_tier = field_config.get("field_tier", "custom")  # standard or custom
+                expected_value = conditional_config.get("condition_value")
+
+                if not field_name or expected_value is None:
+                    logger.error(f"Invalid field_equals config: {field_config}")
+                    condition_met = False
+                else:
+                    
+                    # Get actual value from subscriber
+                    if field_tier == "standard":
+                        actual_value = subscriber.get("standard_fields", {}).get(field_name)
+                    else:
+                        actual_value = subscriber.get("custom_fields", {}).get(field_name)
             
-            field_name = conditional_config.get("field_name")
-            expected_value = conditional_config.get("condition_value")
+            # Compare values (case-insensitive for strings)
+                    if isinstance(actual_value, str) and isinstance(expected_value, str):
+                        condition_met = actual_value.lower() == expected_value.lower()
+                    else:
+                        condition_met = actual_value == expected_value
             
-            subscriber_value = subscriber.get(field_name)
-            condition_met = subscriber_value == expected_value
+                    logger.info(f"Field equals check: {field_name}={actual_value}, "
+                       f"expected={expected_value}, met={condition_met}")
+
+
+
+        # ⭐ FIX: Implement field contains condition
+        elif condition_type == "field_contains":
+            from database import get_sync_subscribers_collection
+    
+            subscribers_collection = get_sync_subscribers_collection()
+            subscriber = subscribers_collection.find_one({"_id": ObjectId(subscriber_id)})
+    
+            if not subscriber:
+                logger.error(f"Subscriber not found: {subscriber_id}")
+                condition_met = False
+            else:
+        # Get field configuration
+                field_config = conditional_config.get("field_config", {})
+                field_name = field_config.get("field_name")
+                search_text = field_config.get("search_text", "")
+                field_tier = field_config.get("field_tier", "custom")
         
+                if not field_name or not search_text:
+                    logger.error(f"Invalid field_contains config: {field_config}")
+                    condition_met = False
+                else:
+            # Get actual value
+                    if field_tier == "standard":
+                       actual_value = subscriber.get("standard_fields", {}).get(field_name, "")
+                    else:
+                       actual_value = subscriber.get("custom_fields", {}).get(field_name, "")
+            
+            # Check if search text is in actual value (case-insensitive)
+                    if isinstance(actual_value, str):
+                        condition_met = search_text.lower() in actual_value.lower()
+                    else:
+                # Convert to string and search
+                        condition_met = search_text.lower() in str(actual_value).lower()
+            
+                    logger.info(f"Field contains check: {field_name} contains '{search_text}', "
+                        f"actual='{actual_value}', met={condition_met}")
+                    
         # Record condition result
         executions_collection.insert_one({
             "_id": ObjectId(),
@@ -177,10 +253,15 @@ def execute_ab_test_step(
         if not subscriber or not template:
             return {"status": "subscriber_or_template_not_found"}
         
+        variant_key = f"variant_{variant.lower()}_subject"
+        ab_subject = ab_config.get(variant_key)  # Check for variant_a_subject or variant_b_subject
+        final_subject = ab_subject if ab_subject else template.get("subject", "")
+
+        
         # Prepare email data
         email_data = {
             "to_email": subscriber.get("email"),
-            "subject": template.get("subject", ""),
+            "subject": final_subject,  # ✅ Use A/B variant subject if provided
             "html_content": template.get("content_html", ""),
             "subscriber_id": subscriber_id,
             "automation_rule_id": automation_rule_id,

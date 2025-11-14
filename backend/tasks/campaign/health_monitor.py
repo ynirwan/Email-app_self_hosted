@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Any, Optional, Tuple
 from enum import Enum
 from celery_app import celery_app
-from database import initialize_sync_client
+from database import ping_sync_database, initialize_sync_client, ping_sync_database
 from core.config import settings, get_redis_key
 from .resource_manager import resource_manager
 from .metrics_collector import metrics_collector
@@ -174,7 +174,7 @@ class HealthMonitor:
         """Check database connectivity and performance"""
         try:
             start_time = time.time()
-            client = initialize_sync_client()
+            client = ping_sync_database()
             result = client.admin.command("ping")
             ping_time = (time.time() - start_time) * 1000  # milliseconds
             

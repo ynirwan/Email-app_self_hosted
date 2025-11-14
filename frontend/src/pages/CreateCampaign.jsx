@@ -210,7 +210,8 @@ export default function CreateCampaign() {
   };
 
   const handleFieldChange = (field, value) => {
-    setFieldMap((prev) => ({ ...prev, [field]: value }));
+    setFieldMap((prev) => ({ ...prev, [field.trim()]: value }));  // ✅ Add .trim()
+
   };
 
   // Get columns from both lists and segments
@@ -244,6 +245,14 @@ export default function CreateCampaign() {
     }
     setIsSaving(true);
     try {
+      // ✅ Clean field_map keys (remove spaces)
+      const cleanFieldMap = Object.fromEntries(
+        Object.entries(fieldMap).map(([k, v]) => [k.trim(), v])
+      );
+      const cleanFallbackValues = Object.fromEntries(
+        Object.entries(fallbackValues).map(([k, v]) => [k.trim(), v])
+      );
+
       await API.post('/campaigns', {
         title,
         subject,
@@ -253,8 +262,8 @@ export default function CreateCampaign() {
         target_lists: selectedLists,
         target_segments: selectedSegments,
         template_id: selectedTemplate._id || selectedTemplate.id,
-        field_map: fieldMap,
-        fallback_values: fallbackValues,
+        field_map: cleanFieldMap,  // ✅ Use cleaned version
+        fallback_values: cleanFallbackValues,  // ✅ Use cleaned version
         status: 'draft',
       });
       setSuccessMsg('Campaign created successfully!');
@@ -666,7 +675,7 @@ export default function CreateCampaign() {
                           placeholder="Enter default value for this field"
                           className="w-full px-3 py-2 border rounded border-blue-300 bg-blue-50"
                           value={fallbackValues[field] || ''}
-                          onChange={(e) => setFallbackValues(prev => ({...prev, [field]: e.target.value}))}
+                          onChange={(e) => setFallbackValues(prev => ({ ...prev, [field.trim()]: e.target.value }))}  // ✅ Add .trim()
                         />
                         <p className="text-xs text-blue-600 mt-1">
                           This value will be used when subscriber data is missing

@@ -21,7 +21,7 @@ class TemplateRenderer:
         # Find all {{field_name}} patterns
         pattern = r'\{\{([^}]+)\}\}'
         matches = re.findall(pattern, content)
-        return list(set(matches))
+        return [m.strip() for m in matches]
     
     @staticmethod
     def render_drag_drop_template(blocks: List[Dict], fields_data: Dict = None) -> str:
@@ -140,7 +140,7 @@ async def create_template(template: TemplateCreate):
         html_content = content_json.get("content", "")
         fields = TemplateRenderer.extract_fields_from_content(html_content)
     
-    doc["fields"] = list(set(fields))  # Remove duplicates
+    doc["fields"] = [f.strip() for f in list(set(fields))]  # ✅ Strip spaces from each field
     
     result = await col.insert_one(doc)
     doc["_id"] = str(result.inserted_id)
@@ -204,7 +204,7 @@ async def update_template(template_id: str, template: TemplateCreate):
         html_content = content_json.get("content", "")
         fields = TemplateRenderer.extract_fields_from_content(html_content)
     
-    doc["fields"] = list(set(fields))
+    doc["fields"] = [f.strip() for f in list(set(fields))]  # ✅ Strip spaces from each field
     
     result = await col.update_one(
         {"_id": ObjectId(template_id)}, 

@@ -494,7 +494,7 @@ async def send_campaign(campaign_id: str):
             )
 
         # First batch settings
-        batch_size = 100
+        batch_size = None
         last_id = None
 
         # ✅ Trigger first batch (cursor-based)

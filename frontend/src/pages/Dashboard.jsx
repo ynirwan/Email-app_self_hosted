@@ -19,23 +19,40 @@ export default function Dashboard() {
   const navigate = useNavigate()
 
   useEffect(() => {
+    // ✅ Verify token exists before fetching
+    const token = localStorage.getItem('token')
+    if (!token) {
+      console.log('⚠️  No token found, redirecting to login...')
+      navigate('/login', { replace: true })
+      return
+    }
+
     fetchUserAndStats()
-  }, [])
+  }, [navigate])
 
   const fetchUserAndStats = async () => {
     try {
+      console.log('📊 Fetching dashboard data...')
+
+      // Fetch user info first
       const userResponse = await API.get('/auth/me')
+      console.log('✅ User data loaded:', userResponse.data.email)
       setUser(userResponse.data)
 
+      // Then fetch stats
       const statsResponse = await API.get('/stats/summary')
+      console.log('✅ Stats loaded')
       setStats(statsResponse.data)
+
     } catch (err) {
-      console.error('Error fetching data:', err)
+      console.error('❌ Error fetching dashboard data:', err)
+
       if (err.response?.status === 401) {
+        console.log('🔒 Unauthorized, redirecting to login...')
         localStorage.removeItem('token')
-        navigate('/login')
+        navigate('/login', { replace: true })
       } else {
-        setError('Failed to load dashboard statistics')
+        setError('Failed to load dashboard data')
       }
     } finally {
       setLoading(false)
@@ -53,8 +70,36 @@ export default function Dashboard() {
     }
   }
 
-  if (loading && !stats.total_subscribers) {
-    return <p className="text-center mt-10">Loading...</p>
+  // ✅ Show loading screen while fetching data
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-16 w-16 border-b-4 border-blue-600 mx-auto"></div>
+          <p className="mt-4 text-gray-600 text-lg">Loading dashboard...</p>
+        </div>
+      </div>
+    )
+  }
+
+  // ✅ Show error screen if something went wrong
+  if (error) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <div className="text-center max-w-md">
+          <div className="bg-red-100 border border-red-400 text-red-700 px-6 py-4 rounded-lg">
+            <p className="font-semibold mb-2">⚠️ Error Loading Dashboard</p>
+            <p className="mb-4">{error}</p>
+            <button
+              onClick={refreshStats}
+              className="bg-red-600 text-white px-6 py-2 rounded-lg hover:bg-red-700 transition-colors"
+            >
+              🔄 Try Again
+            </button>
+          </div>
+        </div>
+      </div>
+    )
   }
   
   return (

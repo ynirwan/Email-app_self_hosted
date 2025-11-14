@@ -37,7 +37,7 @@ class DynamicRateLimiter:
         
         # Provider-specific rate limits (emails per minute)
         self.provider_limits = {
-            EmailProvider.DEFAULT: {"base": 100, "max": 500, "min": 10},
+            EmailProvider.DEFAULT: {"base": 10000, "max": 500, "min": 10},
             EmailProvider.SENDGRID: {"base": 200, "max": 1000, "min": 20},
             EmailProvider.SES: {"base": 300, "max": 1500, "min": 30},
             EmailProvider.MAILGUN: {"base": 150, "max": 750, "min": 15},
@@ -354,7 +354,7 @@ class DynamicRateLimiter:
                 current_usage = int(self.redis_client.get(window_key) or 0)
                 
                 provider_stats["current_window_usage"] = current_usage
-                provider_stats["usage_percentage"] = (current_usage / provider_stats["current_rate_limit"]) * 100
+                provider_stats["usage_percentage"] = (current_usage / provider_stats["current_rate_limit"]) * 1000
                 
                 stats["providers"][prov.value] = provider_stats
             

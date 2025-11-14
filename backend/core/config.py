@@ -20,6 +20,10 @@ class Settings:
     JWT_EXP: int = int(os.getenv("JWT_EXP", "3600"))  # 1 hour
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
+    RATE_LIMIT_SUCCESS_THRESHOLD: float = 0.95  # 95% success rate threshold
+    RATE_LIMIT_FAILURE_THRESHOLD: float = 0.50  # 50% failure rate threshold
+    RATE_LIMIT_WINDOW_SECONDS: int = 300       # 5 minute window
+    RATE_LIMIT_MIN_SAMPLES: int = 10            # Minimum samples before rate limiting
     
     # ===== DATABASE CONFIGURATION =====
     MONGODB_URI: str = os.getenv(
@@ -45,7 +49,7 @@ class Settings:
     # ===== EMAIL SENDING CONFIGURATION =====
     EMAIL_SEND_TIMEOUT_SECONDS: int = int(os.getenv("EMAIL_SEND_TIMEOUT_SECONDS", "30"))
     MAX_EMAIL_RETRIES: int = int(os.getenv("MAX_EMAIL_RETRIES", "3"))
-    RETRY_BACKOFF_BASE_SECONDS: int = 60
+    RETRY_BACKOFF_BASE_SECONDS: int = 60000
     RETRY_BACKOFF_MAX_SECONDS: int = 3600
     DEFAULT_SENDER_EMAIL: str = os.getenv("DEFAULT_SENDER_EMAIL", "noreply@example.com")
     DEFAULT_SENDER_NAME: str = os.getenv("DEFAULT_SENDER_NAME", "Email Marketing")
@@ -71,8 +75,8 @@ class Settings:
     PROVIDER_HEALTH_CHECK_INTERVAL_SECONDS: int = 300
     
     # ===== CAMPAIGN PROCESSING =====
-    MAX_BATCH_SIZE: int = int(os.getenv("MAX_BATCH_SIZE", "100"))
-    MIN_BATCH_SIZE: int = int(os.getenv("MIN_BATCH_SIZE", "10"))
+    MAX_BATCH_SIZE: int = int(os.getenv("MAX_BATCH_SIZE", "1000"))
+    MIN_BATCH_SIZE: int = int(os.getenv("MIN_BATCH_SIZE", "1"))
     MAX_CONCURRENT_TASKS: int = int(os.getenv("MAX_CONCURRENT_TASKS", "50"))
     WORKER_MAX_TASKS_PER_CHILD: int = int(os.getenv("WORKER_MAX_TASKS_PER_CHILD", "500"))
     TASK_TIMEOUT_SECONDS: int = int(os.getenv("TASK_TIMEOUT_SECONDS", "30"))
@@ -89,18 +93,18 @@ class Settings:
     
     # ===== RATE LIMITING =====
     ENABLE_RATE_LIMITING: bool = os.getenv("ENABLE_RATE_LIMITING", "true").lower() == "true"
-    BASE_RATE_LIMIT_PER_MINUTE: int = 100
-    MAX_RATE_LIMIT_PER_MINUTE: int = 500
+    BASE_RATE_LIMIT_PER_MINUTE: int = 10000
+    MAX_RATE_LIMIT_PER_MINUTE: int = 50000
     MIN_RATE_LIMIT_PER_MINUTE: int = 10
     RATE_LIMIT_WINDOW_SECONDS: int = 60
     ADAPTIVE_RATE_LIMITING: bool = True
     
     # ===== DEAD LETTER QUEUE (DLQ) =====
     ENABLE_DLQ: bool = os.getenv("ENABLE_DLQ", "true").lower() == "true"
-    DLQ_MAX_RETRY_COUNT: int = int(os.getenv("DLQ_MAX_RETRY_COUNT", "3"))
+    DLQ_MAX_RETRY_COUNT: int = int(os.getenv("DLQ_MAX_RETRY_COUNT", "1"))
     DLQ_RETRY_DELAY_MINUTES: int = int(os.getenv("DLQ_RETRY_DELAY_MINUTES", "15"))
     DLQ_MAX_AGE_HOURS: int = int(os.getenv("DLQ_MAX_AGE_HOURS", "48"))
-    DLQ_PROCESSING_BATCH_SIZE: int = 50
+    DLQ_PROCESSING_BATCH_SIZE: int = 100
     DLQ_AUTO_RETRY_ENABLED: bool = True
     
     # ===== HYBRID RECOVERY =====
@@ -126,6 +130,15 @@ class Settings:
     DISK_THRESHOLD_PERCENT: float = 90.0
     RESOURCE_CHECK_INTERVAL_SECONDS: int = 60
     AUTO_SCALE_ON_RESOURCE_PRESSURE: bool = True
+
+    # ===== HEALTH CHECK THRESHOLDS (ADD THESE) =====
+    MAX_MEMORY_USAGE_PERCENT: float = float(os.getenv("MAX_MEMORY_USAGE_PERCENT", "85.0"))
+    MAX_DISK_USAGE_PERCENT: float = float(os.getenv("MAX_DISK_USAGE_PERCENT", "90.0"))
+    MAX_CPU_USAGE_PERCENT: float = float(os.getenv("MAX_CPU_USAGE_PERCENT", "80.0"))
+    DATABASE_RESPONSE_TIME_THRESHOLD: float = float(os.getenv("DATABASE_RESPONSE_TIME_THRESHOLD", "2.0"))
+    HEALTH_CHECK_STRICT_MODE: bool = os.getenv("HEALTH_CHECK_STRICT_MODE", "false").lower() == "true"
+    ENABLE_HEALTH_CHECK_BLOCKING: bool = os.getenv("ENABLE_HEALTH_CHECK_BLOCKING", "false").lower() == "true"
+    SKIP_HEALTH_CHECKS_FOR_TESTING: bool = os.getenv("SKIP_HEALTH_CHECKS_FOR_TESTING", "false").lower() == "true"
     
     # ===== HEALTH MONITORING =====
     HEALTH_CHECK_ENABLED: bool = True
@@ -149,6 +162,16 @@ class Settings:
     ENABLE_CONTENT_COMPRESSION: bool = True
     TEMPLATE_VALIDATION_ENABLED: bool = True
     PERSONALIZATION_ENABLED: bool = True
+
+    # ===== CORS CONFIGURATION =====
+    CORS_ORIGINS: List[str] = [
+        "http://localhost:3000",
+        "http://localhost:5173",
+        "http://localhost:4173"
+    ]
+    CORS_ALLOW_CREDENTIALS: bool = True
+    CORS_ALLOW_METHODS: List[str] = ["*"]
+    CORS_ALLOW_HEADERS: List[str] = ["*"]
     
     # ===== SECURITY =====
     MASTER_ENCRYPTION_KEY: Optional[str] = os.getenv("MASTER_ENCRYPTION_KEY")
@@ -202,15 +225,6 @@ class Settings:
     CELERY_WORKER_PREFETCH_MULTIPLIER: int = 4
     CELERY_TASK_ACKS_LATE: bool = False
     
-    # ===== CORS CONFIGURATION =====
-    CORS_ORIGINS: List[str] = [
-        "http://localhost:3000",
-        "http://localhost:5173",
-        "http://localhost:4173"
-    ]
-    CORS_ALLOW_CREDENTIALS: bool = True
-    CORS_ALLOW_METHODS: List[str] = ["*"]
-    CORS_ALLOW_HEADERS: List[str] = ["*"]
     
     # ===== ANALYTICS =====
     ENABLE_REAL_TIME_ANALYTICS: bool = True
@@ -240,7 +254,7 @@ class Settings:
     
     def _apply_safety_limits(self):
         """Apply conservative limits in production safety mode"""
-        self.MAX_BATCH_SIZE = min(self.MAX_BATCH_SIZE, 200)
+        self.MAX_BATCH_SIZE = min(self.MAX_BATCH_SIZE, 1000)
         self.MAX_CONCURRENT_TASKS = min(self.MAX_CONCURRENT_TASKS, 50)
         self.DB_MAX_POOL_SIZE = min(self.DB_MAX_POOL_SIZE, 50)
         self.MAX_RECORDS_PER_OPERATION = min(self.MAX_RECORDS_PER_OPERATION, 50000)
@@ -342,7 +356,7 @@ class Settings:
         
         elif operation == "email_sending":
             # Conservative batch size for actual email sending
-            return min(self.MAX_BATCH_SIZE, 100)
+            return min(self.MAX_BATCH_SIZE, 1000)
         
         else:
             # Default batch size
@@ -376,7 +390,7 @@ class Settings:
         provider_limits = {
             "sendgrid": 1000,
             "ses": 200,
-            "smtp": 100,
+            "smtp": 1000,
             "default": self.BASE_RATE_LIMIT_PER_MINUTE
         }
         return provider_limits.get(provider, self.BASE_RATE_LIMIT_PER_MINUTE)

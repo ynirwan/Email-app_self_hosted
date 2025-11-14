@@ -1,45 +1,25 @@
-# routes/subscribers.py - COMPLETE file matching your frontend requirements
-from fastapi import APIRouter, HTTPException, Query, Request, status, File, Form, UploadFile, BackgroundTasks, Depends
-from database import get_subscribers_collection, get_audit_collection, get_jobs_collection
-from typing import List, Dict, Any, Optional
-from pydantic import BaseModel, Field, EmailStr, validator
-from bson import ObjectId
+from fastapi import APIRouter, HTTPException, Query
+from database import get_audit_collection
 from datetime import datetime
 import logging
 from fastapi.responses import StreamingResponse
 import csv
 import io
-import os
-import re
-import uuid
-from schemas.subscriber_schema import SubscriberIn, BulkPayload, SubscriberOut
-import time
-import asyncio
-import json
-import glob
-import math 
-from pymongo import UpdateOne
-from pymongo.errors import BulkWriteError, DuplicateKeyError
-from functools import wraps
-import traceback
-
-
-from datetime import datetime, timedelta
-from pymongo import UpdateOne
 
 router = APIRouter()
-
-
-# ===== LOGGING SETUP =====
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
 
-# Create formatter
-formatter = logging.Formatter(
-    '%(asctime)s - %(name)s - %(levelname)s - [%(funcName)s:%(lineno)d] - %(message)s'
-)
- # ===== RESTORE ORIGINAL AUDIT ENDPOINTS =====
-@router.get("/audit/logs")
+def convert_objectids_to_strings(doc):
+    """Convert ObjectId fields to strings for JSON serialization"""
+    if isinstance(doc, dict):
+        return {k: str(v) if k == '_id' or str(type(v)) == "<class 'bson.objectid.ObjectId'>" else convert_objectids_to_strings(v) for k, v in doc.items()}
+    elif isinstance(doc, list):
+        return [convert_objectids_to_strings(item) for item in doc]
+    else:
+        return doc
+
+
+@router.get("/logs")
 async def get_audit_logs(
     limit: int = Query(50, le=1000),
     skip: int = Query(0),
@@ -48,7 +28,7 @@ async def get_audit_logs(
     start_date: str = Query(None),
     end_date: str = Query(None)
 ):
-    """Get audit trail logs with filtering - FIXED for ObjectId serialization"""
+    """Get audit trail logs with filtering"""
     try:
         audit_collection = get_audit_collection()
         query = {}
@@ -61,9 +41,15 @@ async def get_audit_logs(
         if start_date or end_date:
             date_query = {}
             if start_date:
-                date_query["$gte"] = datetime.fromisoformat(start_date.replace("T", " "))
+                try:
+                    date_query["$gte"] = datetime.fromisoformat(start_date.replace("T", " "))
+                except ValueError:
+                    date_query["$gte"] = datetime.fromisoformat(start_date)
             if end_date:
-                date_query["$lte"] = datetime.fromisoformat(end_date.replace("T", " "))
+                try:
+                    date_query["$lte"] = datetime.fromisoformat(end_date.replace("T", " "))
+                except ValueError:
+                    date_query["$lte"] = datetime.fromisoformat(end_date)
             if date_query:
                 query["timestamp"] = date_query
 
@@ -88,5 +74,74 @@ async def get_audit_logs(
         }
 
     except Exception as e:
-        logger.error(f"Get audit logs failed: {e}")
-        raise HTTPException(status_code=500, detail="Failed to retrieve audit logs")
+        logger.error(f"Get audit logs failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve audit logs: {str(e)}")
+
+
+@router.get("/export")
+async def export_audit_logs(
+    entity_type: str = Query(None),
+    action: str = Query(None),
+    start_date: str = Query(None),
+    end_date: str = Query(None)
+):
+    """Export audit logs as CSV"""
+    try:
+        audit_collection = get_audit_collection()
+        query = {}
+
+        if entity_type:
+            query["entity_type"] = entity_type
+        if action:
+            query["action"] = action
+
+        if start_date or end_date:
+            date_query = {}
+            if start_date:
+                try:
+                    date_query["$gte"] = datetime.fromisoformat(start_date.replace("T", " "))
+                except ValueError:
+                    date_query["$gte"] = datetime.fromisoformat(start_date)
+            if end_date:
+                try:
+                    date_query["$lte"] = datetime.fromisoformat(end_date.replace("T", " "))
+                except ValueError:
+                    date_query["$lte"] = datetime.fromisoformat(end_date)
+            if date_query:
+                query["timestamp"] = date_query
+
+        # Fetch logs
+        cursor = audit_collection.find(query).sort("timestamp", -1).limit(10000)  # Limit exports
+        logs = []
+        async for doc in cursor:
+            logs.append(convert_objectids_to_strings(doc))
+
+        # Create CSV
+        output = io.StringIO()
+        if logs:
+            fieldnames = ['timestamp', 'entity_type', 'entity_id', 'action', 'user_action']
+            writer = csv.DictWriter(output, fieldnames=fieldnames, extrasaction='ignore')
+            writer.writeheader()
+            
+            for log in logs:
+                writer.writerow({
+                    'timestamp': log.get('timestamp', ''),
+                    'entity_type': log.get('entity_type', ''),
+                    'entity_id': log.get('entity_id', ''),
+                    'action': log.get('action', ''),
+                    'user_action': log.get('user_action', '')
+                })
+
+        output.seek(0)
+        
+        return StreamingResponse(
+            iter([output.getvalue()]),
+            media_type="text/csv",
+            headers={
+                "Content-Disposition": f"attachment; filename=audit-logs-{datetime.utcnow().isoformat()}.csv"
+            }
+        )
+
+    except Exception as e:
+        logger.error(f"Export audit logs failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to export audit logs: {str(e)}")

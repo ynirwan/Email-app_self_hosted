@@ -7,6 +7,8 @@ from datetime import datetime, timedelta
 from bson import ObjectId
 import logging
 import pytz
+from typing import Dict
+
 
 from database import (
     get_sync_automation_rules_collection,
@@ -493,34 +495,31 @@ def execute_automation_step(
             return {"status": "template_not_found"}
         
         # Prepare email data
-        email_config = rule.get("email_config", {})
+        email_config_data = rule.get("email_config", {})
         
-        email_data = {
-            "to_email": subscriber_email,
-            "from_email": email_config.get("sender_email"),
-            "from_name": email_config.get("sender_name"),
-            "reply_to": email_config.get("reply_to"),
-            "subject": template.get("subject", ""),
-            "html_content": template.get("content_html", ""),
-            "text_content": template.get("content_text", ""),
-            "subscriber_id": subscriber_id,
-            "automation_rule_id": automation_rule_id,
-            "automation_step_id": step_id,
-            "workflow_instance_id": workflow_instance_id,
-            "template_id": str(template["_id"]),
-            "personalization": {
-                **subscriber.get("standard_fields", {}),
-                **subscriber.get("custom_fields", {}),
-                **(trigger_data or {})
-            }
+        step_subject = step.get("subject_line")
+        template_subject = template.get("subject", "")
+        final_subject = step_subject if step_subject else template_subject
+        
+        email_config_for_send = {
+            "from_email": email_config_data.get("sender_email"),
+            "from_name": email_config_data.get("sender_name"),
+            "reply_to": email_config_data.get("reply_to"),
+            "subject": final_subject
         }
         
-        # Send email via campaign task
-        from tasks.email_campaign_tasks import send_single_campaign_email
+        # Send email via automation email task
+        from tasks.automation_email_tasks import send_automation_email
         
-        result = send_single_campaign_email.delay(
-            campaign_id=f"automation_{automation_rule_id}",
-            subscriber_data=email_data
+        result = send_automation_email.delay(
+            subscriber_id=subscriber_id,
+            template_id=str(template["_id"]),
+            automation_rule_id=automation_rule_id,
+            step_id=step_id,
+            workflow_instance_id=workflow_instance_id,
+            email_config=email_config_for_send,
+            field_map=step.get("field_map", {}),
+            fallback_values=step.get("fallback_values", {})
         )
         
         # Update execution record
@@ -557,7 +556,7 @@ def execute_automation_step(
         
         # Check if workflow completed
         workflow = workflow_instances_collection.find_one({"_id": ObjectId(workflow_instance_id)})
-        if workflow["completed_steps"] >= workflow["total_steps"]:
+        if workflow and workflow["completed_steps"] >= workflow["total_steps"]:
             workflow_instances_collection.update_one(
                 {"_id": ObjectId(workflow_instance_id)},
                 {
@@ -583,22 +582,23 @@ def execute_automation_step(
         logger.error(f"Error executing automation step: {exc}")
         
         # Check if we should retry or skip
-        skip_on_failure = rule.get("skip_step_on_failure", False)
-        
-        if self.request.retries >= self.max_retries:
-            if skip_on_failure:
-                logger.info(f"Skipping failed step and continuing workflow")
-                mark_step_failed(executions_collection, step_id, subscriber_id, str(exc))
-                # Continue to next step
-                # TODO: Implement next step logic
-            else:
-                logger.error(f"Max retries reached, cancelling workflow")
-                mark_step_failed(executions_collection, step_id, subscriber_id, str(exc))
-                cancel_automation_workflow(automation_rule_id, subscriber_id)
-                
-                # Notify admin if enabled
-                if rule.get("notify_on_failure", True):
-                    send_failure_notification(automation_rule_id, subscriber_id, str(exc))
+        try:
+            skip_on_failure = rule.get("skip_step_on_failure", False)
+            
+            if self.request.retries >= self.max_retries:
+                if skip_on_failure:
+                    logger.info(f"Skipping failed step and continuing workflow")
+                    mark_step_failed(executions_collection, step_id, subscriber_id, str(exc))
+                else:
+                    logger.error(f"Max retries reached, cancelling workflow")
+                    mark_step_failed(executions_collection, step_id, subscriber_id, str(exc))
+                    cancel_automation_workflow(automation_rule_id, subscriber_id)
+                    
+                    # Notify admin if enabled
+                    if rule.get("notify_on_failure", True):
+                        send_failure_notification(automation_rule_id, subscriber_id, str(exc))
+        except:
+            pass
         
         raise self.retry(exc=exc)
 
@@ -734,331 +734,593 @@ def cancel_automation_workflow(automation_rule_id: str, subscriber_id: str):
     except Exception as e:
         logger.error(f"Error cancelling automation workflow: {e}")
         return {"status": "error", "error": str(e)}
-    
-@shared_task(name="tasks.check_daily_birthdays")
-def check_daily_birthdays():
-    """
-    Daily task to check for subscribers with birthdays today
-    Respects automation timezone settings
-    """
+
+
+@shared_task(name="tasks.check_welcome_automations", bind=True)
+def check_welcome_automations(self):
+    """Check for new subscribers and trigger welcome automations"""
     try:
+        from database import (
+            get_sync_subscribers_collection,
+            get_sync_automation_rules_collection,
+            get_sync_automation_executions_collection
+        )
+        
         subscribers_collection = get_sync_subscribers_collection()
-        rules_collection = get_sync_automation_rules_collection()
+        automation_rules = get_sync_automation_rules_collection()
+        automation_executions = get_sync_automation_executions_collection()
         
-        # Get today's date
-        today = datetime.utcnow()
-        today_month = today.month
-        today_day = today.day
-        
-        logger.info(f"🎂 Checking birthdays for {today_month}/{today_day}")
-        
-        # Find active birthday automation rules
-        birthday_rules = list(rules_collection.find({
-            "trigger": "birthday",
+        # Get active welcome automations with workflow
+        welcome_rules = list(automation_rules.find({
+            "trigger": "welcome",
             "status": "active",
-            "deleted_at": {"$exists": False}
+            "workflow.steps": {"$exists": True, "$ne": []}
         }))
         
-        if not birthday_rules:
-            logger.info("No active birthday automation rules found")
-            return {"status": "no_rules"}
+        if not welcome_rules:
+            logger.info("No active welcome automations found")
+            return {"message": "No active welcome automations", "triggered": 0}
         
-        # For each rule, check in its timezone
+        logger.info(f"Found {len(welcome_rules)} active welcome automations")
+        
+        # Get new subscribers from last 10 minutes (to catch any missed)
+        ten_minutes_ago = datetime.utcnow() - timedelta(minutes=10)
+        new_subscribers = list(subscribers_collection.find({
+            "created_at": {"$gte": ten_minutes_ago},
+            "status": "active"
+        }))
+        
+        if not new_subscribers:
+            logger.info("No new subscribers found")
+            return {"message": "No new subscribers", "triggered": 0}
+        
+        logger.info(f"Found {len(new_subscribers)} new subscribers")
+        
         triggered_count = 0
         
-        for rule in birthday_rules:
-            rule_timezone = rule.get("timezone", "UTC")
+        for subscriber in new_subscribers:
+            subscriber_id = str(subscriber["_id"])
+            subscriber_email = subscriber.get("email", "unknown")
             
-            try:
-                tz = pytz.timezone(rule_timezone)
-                rule_today = datetime.now(tz)
-                rule_month = rule_today.month
-                rule_day = rule_today.day
-            except:
-                rule_month = today_month
-                rule_day = today_day
-            
-            logger.info(f"Checking rule '{rule['name']}' in timezone {rule_timezone} ({rule_month}/{rule_day})")
-            
-            # Find subscribers with birthday today in this timezone
-            # Assuming birthday stored as "YYYY-MM-DD" in standard_fields.birthday
-            subscribers = list(subscribers_collection.find({
-                "status": "active",
-                "$or": [
-                    {
-                        "$expr": {
-                            "$and": [
-                                {"$eq": [{"$month": {"$toDate": "$standard_fields.birthday"}}, rule_month]},
-                                {"$eq": [{"$dayOfMonth": {"$toDate": "$standard_fields.birthday"}}, rule_day]}
-                            ]
-                        }
-                    },
-                    {
-                        # Fallback for string format "MM-DD"
-                        "standard_fields.birthday": f"{rule_month:02d}-{rule_day:02d}"
-                    }
-                ]
-            }))
-            
-            logger.info(f"Found {len(subscribers)} subscribers with birthdays today in {rule_timezone}")
-            
-            for subscriber in subscribers:
-                subscriber_id = str(subscriber["_id"])
+            for rule in welcome_rules:
+                rule_id = str(rule["_id"])
+                rule_name = rule.get("name", "Unnamed")
                 
-                # Trigger birthday automation
-                result = process_automation_trigger.delay(
-                    trigger_type="birthday",
-                    subscriber_id=subscriber_id,
-                    trigger_data={
-                        "trigger_type": "birthday",
-                        "birthday_date": subscriber.get("standard_fields", {}).get("birthday"),
-                        "year": rule_today.year
-                    }
-                )
+                # Check if already triggered
+                existing = automation_executions.find_one({
+                    "automation_rule_id": rule_id,
+                    "subscriber_id": subscriber_id
+                })
+                
+                if existing:
+                    logger.debug(f"Welcome automation {rule_id} already triggered for {subscriber_email}")
+                    continue
+                
+                # Check segment matching
+                if not check_subscriber_matches_rule(subscriber_id, rule):
+                    continue
+                
+                # Trigger the automation
+                try:
+                    logger.info(f"🚀 Triggering welcome automation '{rule_name}' ({rule_id}) for {subscriber_email}")
+                    
+                    process_automation_trigger.delay("welcome", subscriber_id, {
+                        "subscriber_email": subscriber_email,
+                        "trigger_time": datetime.utcnow().isoformat()
+                    })
+                    
+                    triggered_count += 1
+                    
+                except Exception as e:
+                    logger.error(f"Failed to trigger automation {rule_id} for {subscriber_id}: {e}")
+        
+        result = {
+            "checked_rules": len(welcome_rules),
+            "checked_subscribers": len(new_subscribers),
+            "triggered_count": triggered_count
+        }
+        
+        logger.info(f"✅ Welcome automation check complete: {result}")
+        return result
+        
+    except Exception as e:
+        logger.error(f"Welcome automation check failed: {e}", exc_info=True)
+        return {"error": str(e), "triggered": 0}
+
+
+@shared_task(name="tasks.check_abandoned_cart_automations", bind=True)
+def check_abandoned_cart_automations(self):
+    """Check for abandoned carts and trigger automations"""
+    try:
+        from database import get_sync_automation_rules_collection
+        
+        automation_rules = get_sync_automation_rules_collection()
+        
+        abandoned_cart_rules = list(automation_rules.find({
+            "trigger": "abandoned_cart",
+            "status": "active",
+            "workflow.steps": {"$exists": True, "$ne": []}
+        }))
+        
+        if not abandoned_cart_rules:
+            return {"message": "No active abandoned cart automations", "triggered": 0}
+        
+        logger.info(f"Checked {len(abandoned_cart_rules)} abandoned cart automations")
+        
+        return {
+            "checked_rules": len(abandoned_cart_rules),
+            "triggered_count": 0,
+            "message": "Abandoned cart integration pending"
+        }
+        
+    except Exception as e:
+        logger.error(f"Abandoned cart automation check failed: {e}")
+        return {"error": str(e), "triggered": 0}
+
+
+@shared_task(name="tasks.check_inactive_subscriber_automations", bind=True)
+def check_inactive_subscriber_automations(self):
+    """Check for inactive subscribers and trigger re-engagement automations"""
+    try:
+        from database import (
+            get_sync_subscribers_collection,
+            get_sync_automation_rules_collection,
+            get_sync_automation_executions_collection,
+            get_sync_email_logs_collection
+        )
+        
+        subscribers_collection = get_sync_subscribers_collection()
+        automation_rules = get_sync_automation_rules_collection()
+        automation_executions = get_sync_automation_executions_collection()
+        email_logs = get_sync_email_logs_collection()
+        
+        # Get active inactive subscriber automations
+        inactive_rules = list(automation_rules.find({
+            "trigger": "inactive",
+            "status": "active",
+            "workflow.steps": {"$exists": True, "$ne": []}
+        }))
+        
+        if not inactive_rules:
+            return {"message": "No active inactive subscriber automations", "triggered": 0}
+        
+        triggered_count = 0
+        
+        for rule in inactive_rules:
+            rule_id = str(rule["_id"])
+            
+            # Get inactivity threshold (default 30 days)
+            trigger_conditions = rule.get("trigger_conditions", {})
+            inactive_days = trigger_conditions.get("inactive_days", 30)
+            
+            cutoff_date = datetime.utcnow() - timedelta(days=inactive_days)
+            
+            # Find subscribers who haven't opened/clicked any email since cutoff
+            active_subscribers = email_logs.distinct("subscriber_id", {
+                "created_at": {"$gte": cutoff_date},
+                "latest_status": {"$in": ["opened", "clicked"]}
+            })
+            
+            # Get all active subscribers
+            all_subscribers = list(subscribers_collection.find({
+                "status": "active"
+            }, {"_id": 1}))
+            
+            # Find inactive subscribers (not in active list)
+            inactive_subscribers = [
+                str(sub["_id"]) for sub in all_subscribers
+                if str(sub["_id"]) not in active_subscribers
+            ]
+            
+            for subscriber_id in inactive_subscribers:
+                # Check if already triggered
+                existing = automation_executions.find_one({
+                    "automation_rule_id": rule_id,
+                    "subscriber_id": subscriber_id,
+                    "started_at": {"$gte": cutoff_date}
+                })
+                
+                if existing:
+                    continue
+                
+                # Trigger re-engagement automation
+                process_automation_trigger.delay("inactive", subscriber_id, {
+                    "inactive_days": inactive_days,
+                    "last_activity": None
+                })
                 
                 triggered_count += 1
         
         return {
-            "status": "success",
-            "rules_checked": len(birthday_rules),
-            "automations_triggered": triggered_count,
-            "date": f"{today_month}/{today_day}/{today.year}"
+            "checked_rules": len(inactive_rules),
+            "triggered_count": triggered_count
         }
         
     except Exception as e:
-        logger.error(f"Error checking daily birthdays: {e}")
-        return {"status": "error", "error": str(e)}
+        logger.error(f"Inactive subscriber automation check failed: {e}")
+        return {"error": str(e), "triggered": 0}
 
-@shared_task(name="tasks.cleanup_old_events")
-def cleanup_old_events(days_to_keep: int = 90):
+
+def evaluate_trigger_conditions(conditions: Dict, subscriber: Dict, trigger_data: Dict = None) -> bool:
     """
-    Clean up old events to prevent database bloat
-    Keeps events for specified days (default 90 days)
+    Evaluate if subscriber meets trigger conditions
+    """
+    if not conditions:
+        return True
+    
+    try:
+        # Check subscriber status
+        if conditions.get("status") and subscriber.get("status") != conditions["status"]:
+            return False
+        
+        # Check custom field conditions
+        custom_conditions = conditions.get("custom_fields", {})
+        subscriber_custom = subscriber.get("custom_fields", {})
+        
+        for field, expected_value in custom_conditions.items():
+            actual_value = subscriber_custom.get(field)
+            
+            if isinstance(expected_value, dict):
+                # Operator-based comparison
+                if "$eq" in expected_value and actual_value != expected_value["$eq"]:
+                    return False
+                if "$ne" in expected_value and actual_value == expected_value["$ne"]:
+                    return False
+                if "$in" in expected_value and actual_value not in expected_value["$in"]:
+                    return False
+                if "$gt" in expected_value and not (actual_value and actual_value > expected_value["$gt"]):
+                    return False
+                if "$gte" in expected_value and not (actual_value and actual_value >= expected_value["$gte"]):
+                    return False
+                if "$lt" in expected_value and not (actual_value and actual_value < expected_value["$lt"]):
+                    return False
+                if "$lte" in expected_value and not (actual_value and actual_value <= expected_value["$lte"]):
+                    return False
+            else:
+                if actual_value != expected_value:
+                    return False
+        
+        # Check standard field conditions
+        standard_conditions = conditions.get("standard_fields", {})
+        subscriber_standard = subscriber.get("standard_fields", {})
+        
+        for field, expected_value in standard_conditions.items():
+            if subscriber_standard.get(field) != expected_value:
+                return False
+        
+        # Check trigger data conditions
+        if trigger_data:
+            trigger_conditions = conditions.get("trigger_data", {})
+            for field, expected_value in trigger_conditions.items():
+                if trigger_data.get(field) != expected_value:
+                    return False
+        
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error evaluating trigger conditions: {e}")
+        return False
+
+
+def check_subscriber_matches_rule(subscriber_id: str, rule: Dict) -> bool:
+    """
+    Check if subscriber matches automation rule's target segments and lists
     """
     try:
-        events_collection = get_sync_events_collection()
+        from database import get_sync_subscribers_collection
         
-        cutoff_date = datetime.utcnow() - timedelta(days=days_to_keep)
+        subscribers_collection = get_sync_subscribers_collection()
+        subscriber = subscribers_collection.find_one({"_id": ObjectId(subscriber_id)})
         
-        result = events_collection.delete_many({
-            "created_at": {"$lt": cutoff_date},
-            "processed": True
-        })
+        if not subscriber:
+            logger.warning(f"Subscriber {subscriber_id} not found")
+            return False
         
-        logger.info(f"🧹 Cleaned up {result.deleted_count} old events (older than {days_to_keep} days)")
+        # Check status
+        if subscriber.get("status") != "active":
+            logger.debug(f"Subscriber {subscriber_id} is not active")
+            return False
+        
+        # Get target segments and lists from rule
+        target_segments = rule.get("target_segments", [])
+        target_lists = rule.get("target_lists", [])
+        
+        # If no targets specified, match all active subscribers
+        if not target_segments and not target_lists:
+            logger.debug(f"Rule has no target restrictions, subscriber matches")
+            return True
+        
+        # Check segment matching
+        subscriber_segments = subscriber.get("segments", [])
+        if target_segments:
+            target_segments_str = [str(seg) for seg in target_segments]
+            subscriber_segments_str = [str(seg) for seg in subscriber_segments]
+            
+            matches_segment = any(seg in subscriber_segments_str for seg in target_segments_str)
+            
+            if not matches_segment:
+                logger.debug(f"Subscriber {subscriber_id} not in target segments")
+                return False
+        
+        # Check list matching
+        subscriber_lists = subscriber.get("lists", [])
+        if target_lists:
+            target_lists_str = [str(lst) for lst in target_lists]
+            subscriber_lists_str = [str(lst) for lst in subscriber_lists]
+            
+            matches_list = any(lst in subscriber_lists_str for lst in target_lists_str)
+            
+            if not matches_list:
+                logger.debug(f"Subscriber {subscriber_id} not in target lists")
+                return False
+        
+        logger.debug(f"Subscriber {subscriber_id} matches rule targeting")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error checking subscriber rule match: {e}")
+        return False
+
+
+def get_subscriber_timezone(subscriber: Dict) -> str:
+    """
+    Get subscriber's timezone, with fallback to UTC
+    """
+    try:
+        timezone = subscriber.get("custom_fields", {}).get("timezone")
+        if timezone:
+            return timezone
+        
+        country = subscriber.get("custom_fields", {}).get("country")
+        if country:
+            country_timezones = {
+                "US": "America/New_York",
+                "UK": "Europe/London",
+                "FR": "Europe/Paris",
+                "DE": "Europe/Berlin",
+                "JP": "Asia/Tokyo",
+                "AU": "Australia/Sydney",
+                "CA": "America/Toronto",
+                "IN": "Asia/Kolkata",
+                "BR": "America/Sao_Paulo",
+                "MX": "America/Mexico_City",
+            }
+            return country_timezones.get(country, "UTC")
+        
+        return "UTC"
+        
+    except Exception as e:
+        logger.error(f"Error getting subscriber timezone: {e}")
+        return "UTC"
+
+
+@shared_task(name="tasks.process_scheduled_automations", bind=True)
+def process_scheduled_automations(self):
+    """
+    Process scheduled automation steps that are due for execution
+    """
+    try:
+        from database import get_sync_automation_executions_collection
+        
+        automation_executions = get_sync_automation_executions_collection()
+        
+        now = datetime.utcnow()
+        
+        pending_executions = list(automation_executions.find({
+            "status": "scheduled",
+            "scheduled_for": {"$lte": now}
+        }))
+        
+        if not pending_executions:
+            logger.info("No scheduled automation steps due for execution")
+            return {"message": "No pending steps", "processed": 0}
+        
+        logger.info(f"Found {len(pending_executions)} automation steps due for execution")
+        
+        processed_count = 0
+        
+        for execution in pending_executions:
+            try:
+                execution_id = str(execution["_id"])
+                automation_rule_id = execution.get("automation_rule_id")
+                subscriber_id = execution.get("subscriber_id")
+                step_id = execution.get("automation_step_id")
+                workflow_instance_id = execution.get("workflow_instance_id")
+                
+                logger.info(f"Processing automation execution {execution_id}")
+                
+                # Execute the step
+                execute_automation_step.delay(
+                    automation_rule_id,
+                    step_id,
+                    subscriber_id,
+                    workflow_instance_id,
+                    execution.get("trigger_data", {})
+                )
+                
+                processed_count += 1
+                
+            except Exception as e:
+                logger.error(f"Failed to process execution {execution.get('_id')}: {e}")
+        
+        result = {
+            "processed": processed_count,
+            "total_pending": len(pending_executions)
+        }
+        
+        logger.info(f"✅ Processed {processed_count} scheduled automation steps")
+        return result
+        
+    except Exception as e:
+        logger.error(f"Failed to process scheduled automations: {e}")
+        return {"error": str(e), "processed": 0}
+
+
+@shared_task(name="tasks.check_daily_birthdays", bind=True)
+def check_daily_birthdays(self):
+    """Check for subscribers with birthdays today and trigger birthday automations"""
+    try:
+        from database import (
+            get_sync_subscribers_collection,
+            get_sync_automation_rules_collection,
+            get_sync_automation_executions_collection
+        )
+        
+        subscribers_collection = get_sync_subscribers_collection()
+        automation_rules = get_sync_automation_rules_collection()
+        automation_executions = get_sync_automation_executions_collection()
+        
+        birthday_rules = list(automation_rules.find({
+            "trigger": "birthday",
+            "status": "active",
+            "workflow.steps": {"$exists": True, "$ne": []}
+        }))
+        
+        if not birthday_rules:
+            return {"message": "No active birthday automations", "triggered": 0}
+        
+        today = datetime.utcnow()
+        today_month = today.month
+        today_day = today.day
+        
+        birthday_subscribers = list(subscribers_collection.find({
+            "status": "active",
+            "custom_fields.birthday": {"$exists": True}
+        }))
+        
+        triggered_count = 0
+        
+        for subscriber in birthday_subscribers:
+            birthday_str = subscriber.get("custom_fields", {}).get("birthday")
+            if not birthday_str:
+                continue
+            
+            try:
+                if len(birthday_str) == 10:
+                    birthday_date = datetime.strptime(birthday_str, "%Y-%m-%d")
+                elif len(birthday_str) == 5:
+                    birthday_date = datetime.strptime(f"2000-{birthday_str}", "%Y-%m-%d")
+                else:
+                    continue
+                
+                if birthday_date.month != today_month or birthday_date.day != today_day:
+                    continue
+                
+                subscriber_id = str(subscriber["_id"])
+                
+                for rule in birthday_rules:
+                    rule_id = str(rule["_id"])
+                    
+                    if not check_subscriber_matches_rule(subscriber_id, rule):
+                        continue
+                    
+                    start_of_year = datetime(today.year, 1, 1)
+                    existing = automation_executions.find_one({
+                        "automation_rule_id": rule_id,
+                        "subscriber_id": subscriber_id,
+                        "started_at": {"$gte": start_of_year}
+                    })
+                    
+                    if existing:
+                        continue
+                    
+                    process_automation_trigger.delay("birthday", subscriber_id, {
+                        "birthday": birthday_str,
+                        "age": today.year - birthday_date.year if len(birthday_str) == 10 else None
+                    })
+                    
+                    triggered_count += 1
+                
+            except Exception as e:
+                logger.error(f"Failed to process birthday for {subscriber.get('email')}: {e}")
         
         return {
-            "status": "success",
+            "checked_rules": len(birthday_rules),
+            "checked_subscribers": len(birthday_subscribers),
+            "triggered_count": triggered_count
+        }
+        
+    except Exception as e:
+        logger.error(f"Birthday automation check failed: {e}")
+        return {"error": str(e), "triggered": 0}
+
+
+@shared_task(name="tasks.detect_at_risk_subscribers", bind=True)
+def detect_at_risk_subscribers(self):
+    """Detect subscribers at risk of churning"""
+    try:
+        from database import (
+            get_sync_subscribers_collection,
+            get_sync_email_logs_collection
+        )
+        
+        subscribers_collection = get_sync_subscribers_collection()
+        email_logs = get_sync_email_logs_collection()
+        
+        days_threshold = 14
+        cutoff_date = datetime.utcnow() - timedelta(days=days_threshold)
+        
+        recently_sent = email_logs.distinct("subscriber_id", {
+            "created_at": {"$gte": cutoff_date},
+            "latest_status": {"$in": ["sent", "delivered"]}
+        })
+        
+        recently_opened = email_logs.distinct("subscriber_id", {
+            "created_at": {"$gte": cutoff_date},
+            "latest_status": {"$in": ["opened", "clicked"]}
+        })
+        
+        at_risk_ids = [sid for sid in recently_sent if sid not in recently_opened]
+        
+        if at_risk_ids:
+            subscribers_collection.update_many(
+                {"_id": {"$in": [ObjectId(sid) for sid in at_risk_ids]}},
+                {"$set": {
+                    "custom_fields.at_risk": True,
+                    "custom_fields.at_risk_since": datetime.utcnow()
+                }}
+            )
+        
+        if recently_opened:
+            subscribers_collection.update_many(
+                {"_id": {"$in": [ObjectId(sid) for sid in recently_opened]}},
+                {"$unset": {
+                    "custom_fields.at_risk": "",
+                    "custom_fields.at_risk_since": ""
+                }}
+            )
+        
+        return {
+            "at_risk_count": len(at_risk_ids),
+            "engaged_count": len(recently_opened),
+            "days_threshold": days_threshold
+        }
+        
+    except Exception as e:
+        logger.error(f"At-risk detection failed: {e}")
+        return {"error": str(e)}
+
+
+@shared_task(name="tasks.cleanup_old_events", bind=True)
+def cleanup_old_events(self):
+    """Cleanup old automation events and executions"""
+    try:
+        from database import get_sync_automation_executions_collection
+        
+        automation_executions = get_sync_automation_executions_collection()
+        
+        cutoff_date = datetime.utcnow() - timedelta(days=90)
+        
+        result = automation_executions.delete_many({
+            "created_at": {"$lt": cutoff_date},
+            "status": {"$in": ["completed", "cancelled", "failed"]}
+        })
+        
+        return {
             "deleted_count": result.deleted_count,
             "cutoff_date": cutoff_date.isoformat()
         }
         
     except Exception as e:
         logger.error(f"Event cleanup failed: {e}")
-        return {"status": "error", "error": str(e)}   
-
-@shared_task(name="tasks.check_inactive_subscribers")
-def check_inactive_subscribers():
-    """
-    Daily task to detect inactive subscribers and trigger re-engagement automations
-    Checks for subscribers who haven't opened/clicked emails in X days
-    """
-    try:
-        subscribers_collection = get_sync_subscribers_collection()
-        rules_collection = get_sync_automation_rules_collection()
-        email_events_collection = get_sync_email_events_collection()
-        
-        logger.info("🔍 Checking for inactive subscribers...")
-        
-        # Find active automation rules for inactive triggers
-        inactive_rules = list(rules_collection.find({
-            "trigger": {"$in": ["inactive_30_days", "inactive_60_days", "inactive_90_days"]},
-            "status": "active",
-            "deleted_at": {"$exists": False}
-        }))
-        
-        if not inactive_rules:
-            logger.info("No active inactive subscriber automation rules found")
-            return {"status": "no_rules"}
-        
-        triggered_count = 0
-        
-        for rule in inactive_rules:
-            rule_id = str(rule["_id"])
-            trigger = rule["trigger"]
-            
-            # Extract days from trigger name
-            days_map = {
-                "inactive_30_days": 30,
-                "inactive_60_days": 60,
-                "inactive_90_days": 90
-            }
-            
-            inactive_days = days_map.get(trigger, 30)
-            cutoff_date = datetime.utcnow() - timedelta(days=inactive_days)
-            
-            logger.info(f"Checking rule '{rule['name']}' for {inactive_days} days inactivity")
-            
-            # Find subscribers who:
-            # 1. Are active
-            # 2. Haven't had any email events (open/click) since cutoff date
-            # 3. Match target segments (if specified)
-            
-            target_segments = rule.get("target_segments", [])
-            target_lists = rule.get("target_lists", [])
-            
-            # Build base query
-            query = {
-                "status": "active",
-                "created_at": {"$lt": cutoff_date}  # Account older than inactive period
-            }
-            
-            if target_segments:
-                query["segments"] = {"$in": target_segments}
-            
-            if target_lists:
-                query["list"] = {"$in": target_lists}
-            
-            # Find all potentially inactive subscribers
-            potential_inactive = list(subscribers_collection.find(query))
-            
-            logger.info(f"Found {len(potential_inactive)} potential inactive subscribers")
-            
-            # Check each subscriber's email activity
-            for subscriber in potential_inactive:
-                subscriber_id = str(subscriber["_id"])
-                
-                # Check for recent email events
-                recent_activity = email_events_collection.find_one({
-                    "subscriber_id": subscriber_id,
-                    "event_type": {"$in": ["opened", "clicked"]},
-                    "timestamp": {"$gte": cutoff_date}
-                })
-                
-                if recent_activity:
-                    # Subscriber is active, skip
-                    continue
-                
-                # Check if automation already triggered for this subscriber
-                from database import get_sync_workflow_instances_collection
-                workflow_instances = get_sync_workflow_instances_collection()
-                
-                # Check if already triggered in the last 30 days
-                recent_trigger = workflow_instances.find_one({
-                    "automation_rule_id": rule_id,
-                    "subscriber_id": subscriber_id,
-                    "started_at": {"$gte": datetime.utcnow() - timedelta(days=30)}
-                })
-                
-                if recent_trigger:
-                    logger.info(f"Inactive automation recently triggered for {subscriber_id}")
-                    continue
-                
-                # Trigger inactive automation
-                logger.info(f"📧 Triggering inactive automation for subscriber {subscriber_id}")
-                
-                result = process_automation_trigger.delay(
-                    trigger_type=trigger,
-                    subscriber_id=subscriber_id,
-                    trigger_data={
-                        "trigger_type": trigger,
-                        "inactive_days": inactive_days,
-                        "last_activity": cutoff_date.isoformat(),
-                        "subscriber_email": subscriber.get("email")
-                    }
-                )
-                
-                triggered_count += 1
-        
-        logger.info(f"✅ Inactive check complete. Triggered {triggered_count} automations")
-        
-        return {
-            "status": "success",
-            "rules_checked": len(inactive_rules),
-            "automations_triggered": triggered_count,
-            "timestamp": datetime.utcnow().isoformat()
-        }
-        
-    except Exception as e:
-        logger.error(f"Error checking inactive subscribers: {e}")
-        return {"status": "error", "error": str(e)}
-
-
-@shared_task(name="tasks.detect_at_risk_subscribers")
-def detect_at_risk_subscribers():
-    """
-    Detect subscribers at risk of becoming inactive
-    Marks subscribers who haven't engaged in 15-20 days
-    """
-    try:
-        subscribers_collection = get_sync_subscribers_collection()
-        email_events_collection = get_sync_email_events_collection()
-        
-        logger.info("⚠️ Detecting at-risk subscribers...")
-        
-        # Find subscribers with no engagement in 15-20 days
-        warning_start = datetime.utcnow() - timedelta(days=20)
-        warning_end = datetime.utcnow() - timedelta(days=15)
-        
-        active_subscribers = list(subscribers_collection.find({
-            "status": "active",
-            "created_at": {"$lt": warning_start}
-        }))
-        
-        at_risk_count = 0
-        
-        for subscriber in active_subscribers:
-            subscriber_id = str(subscriber["_id"])
-            
-            # Check last engagement
-            last_engagement = email_events_collection.find_one(
-                {
-                    "subscriber_id": subscriber_id,
-                    "event_type": {"$in": ["opened", "clicked"]}
-                },
-                sort=[("timestamp", -1)]
-            )
-            
-            if last_engagement:
-                last_activity = last_engagement["timestamp"]
-                
-                # Check if in at-risk window
-                if warning_start >= last_activity >= warning_end:
-                    # Mark as at-risk
-                    subscribers_collection.update_one(
-                        {"_id": ObjectId(subscriber_id)},
-                        {
-                            "$set": {
-                                "at_risk": True,
-                                "at_risk_since": datetime.utcnow(),
-                                "last_engagement": last_activity
-                            }
-                        }
-                    )
-                    at_risk_count += 1
-            else:
-                # No engagement ever - mark as at-risk
-                if (datetime.utcnow() - subscriber["created_at"]).days >= 15:
-                    subscribers_collection.update_one(
-                        {"_id": ObjectId(subscriber_id)},
-                        {
-                            "$set": {
-                                "at_risk": True,
-                                "at_risk_since": datetime.utcnow(),
-                                "last_engagement": None
-                            }
-                        }
-                    )
-                    at_risk_count += 1
-        
-        logger.info(f"✅ Marked {at_risk_count} subscribers as at-risk")
-        
-        return {
-            "status": "success",
-            "at_risk_count": at_risk_count,
-            "timestamp": datetime.utcnow().isoformat()
-        }
-        
-    except Exception as e:
-        logger.error(f"Error detecting at-risk subscribers: {e}")
-        return {"status": "error", "error": str(e)}     
+        return {"error": str(e), "deleted_count": 0}

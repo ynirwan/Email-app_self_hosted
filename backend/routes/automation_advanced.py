@@ -65,6 +65,10 @@ class ABTestConfig(BaseModel):
     variant_b_percentage: int = Field(50, ge=0, le=100)
     variant_a_template_id: str
     variant_b_template_id: str
+
+    variant_a_subject: Optional[str] = None
+    variant_b_subject: Optional[str] = None
+
     winning_metric: Literal["open_rate", "click_rate", "conversion_rate"] = "open_rate"
     test_duration_hours: int = Field(24, ge=1)
     

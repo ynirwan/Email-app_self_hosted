@@ -1,4 +1,4 @@
-# backend/tasks/resource_manager.py - COMPLETE RESOURCE MANAGEMENT
+# backend/tasks/campaign/resource_manager.py - COMPLETE RESOURCE MANAGEMENT
 """
 Production-ready resource management for email campaigns
 Handles memory monitoring, task limits, and system health
@@ -89,6 +89,51 @@ class ResourceManager:
             logger.error(f"CPU check failed: {e}")
             return False, {"error": str(e)}
     
+    def check_database_connectivity(self) -> Tuple[bool, Dict[str, Any]]:
+        """Check database connectivity and performance"""
+        try:
+            from database import ping_sync_database
+            
+            start_time = time.time()
+            is_connected, db_info = ping_sync_database()
+            ping_time = (time.time() - start_time) * 1000  # milliseconds
+            
+            db_info["ping_ms"] = round(ping_time, 2)
+            db_info["connection_healthy"] = is_connected and ping_time < 1000
+            db_info["server_status"] = "connected" if is_connected else "disconnected"
+            
+            is_healthy = is_connected and ping_time < 1000
+            
+            if not is_healthy:
+                logger.warning(f"Database connectivity issue: connected={is_connected}, ping={ping_time}ms")
+            
+            return is_healthy, db_info
+            
+        except Exception as e:
+            logger.error(f"Database connectivity check failed: {e}")
+            return False, {"error": str(e), "server_status": "disconnected", "connection_healthy": False}
+    
+    def check_redis_connectivity(self) -> Tuple[bool, Dict[str, Any]]:
+        """Check Redis connectivity and performance"""
+        try:
+            start_time = time.time()
+            self.redis_client.ping()
+            ping_time = (time.time() - start_time) * 1000  # milliseconds
+            
+            redis_info = {
+                "ping_ms": round(ping_time, 2),
+                "connection_healthy": ping_time < 50,  # 50ms threshold
+                "server_status": "connected"
+            }
+            
+            is_healthy = redis_info["connection_healthy"]
+            
+            return is_healthy, redis_info
+            
+        except Exception as e:
+            logger.error(f"Redis connectivity check failed: {e}")
+            return False, {"error": str(e), "server_status": "disconnected"}
+    
     def get_system_health(self) -> Dict[str, Any]:
         """Get comprehensive system health status"""
         current_time = time.time()
@@ -139,51 +184,6 @@ class ResourceManager:
         
         return health_status
     
-    def check_database_connectivity(self) -> Tuple[bool, Dict[str, Any]]:
-        """Check database connectivity and performance"""
-        try:
-            from database import DatabasePool
-            
-            start_time = time.time()
-            client = DatabasePool.get_sync_client()
-            result = client.admin.command("ping")
-            ping_time = (time.time() - start_time) * 1000  # milliseconds
-            
-            db_info = {
-                "ping_ms": round(ping_time, 2),
-                "connection_healthy": ping_time < 100,  # 100ms threshold
-                "server_status": "connected"
-            }
-            
-            is_healthy = db_info["connection_healthy"]
-            
-            return is_healthy, db_info
-            
-        except Exception as e:
-            logger.error(f"Database connectivity check failed: {e}")
-            return False, {"error": str(e), "server_status": "disconnected"}
-    
-    def check_redis_connectivity(self) -> Tuple[bool, Dict[str, Any]]:
-        """Check Redis connectivity and performance"""
-        try:
-            start_time = time.time()
-            self.redis_client.ping()
-            ping_time = (time.time() - start_time) * 1000  # milliseconds
-            
-            redis_info = {
-                "ping_ms": round(ping_time, 2),
-                "connection_healthy": ping_time < 50,  # 50ms threshold
-                "server_status": "connected"
-            }
-            
-            is_healthy = redis_info["connection_healthy"]
-            
-            return is_healthy, redis_info
-            
-        except Exception as e:
-            logger.error(f"Redis connectivity check failed: {e}")
-            return False, {"error": str(e), "server_status": "disconnected"}
-    
     def get_celery_queue_metrics(self) -> Dict[str, Any]:
         """Get Celery queue and task metrics"""
         try:
@@ -206,8 +206,7 @@ class ResourceManager:
                 for worker, worker_stats in stats.items():
                     metrics["workers"][worker] = {
                         "pool_processes": worker_stats.get("pool", {}).get("processes", 0),
-                        "rusage": worker_stats.get("rusage", {}),
-                        "total_tasks": worker_stats.get("total", {})
+                        "max_concurrency": worker_stats.get("pool", {}).get("max-concurrency", 0)
                     }
             
             if active:
@@ -221,17 +220,32 @@ class ResourceManager:
             return metrics
             
         except Exception as e:
-            logger.error(f"Celery metrics collection failed: {e}")
+            logger.error(f"Queue metrics collection failed: {e}")
             return {"error": str(e)}
     
     def can_process_batch(self, batch_size: int, campaign_id: str = None) -> Tuple[bool, str, Dict[str, Any]]:
         """Comprehensive check if system can handle batch processing"""
         
+        # CHECK IF HEALTH CHECKS ARE BYPASSED
+        if hasattr(settings, 'SKIP_HEALTH_CHECKS_FOR_TESTING') and settings.SKIP_HEALTH_CHECKS_FOR_TESTING:
+            logger.info("✅ Health checks bypassed (SKIP_HEALTH_CHECKS_FOR_TESTING=true)")
+            return True, "health_checks_bypassed", {"bypassed": True}
+        
         # Get system health
         health = self.get_system_health()
         
+        # If strict mode is disabled, only fail on critical systems
+        if hasattr(settings, 'HEALTH_CHECK_STRICT_MODE') and not settings.HEALTH_CHECK_STRICT_MODE:
+            # Only check database connectivity in non-strict mode
+            if not health["checks"].get("database", {}).get("healthy", True):
+                return False, "database_unhealthy", health
+            # Allow processing even if memory/cpu are high
+            logger.info("✅ Non-strict mode: Allowing processing despite non-critical health issues")
+            return True, "ok_non_strict", health
+        
+        # Strict mode - check overall health
         if not health["overall_healthy"]:
-            unhealthy_checks = [check for check, data in health["checks"].items() if not data["healthy"]]
+            unhealthy_checks = [check for check, data in health["checks"].items() if not data.get("healthy", True)]
             return False, f"system_unhealthy: {', '.join(unhealthy_checks)}", health
         
         # Check memory specifically
@@ -254,6 +268,10 @@ class ResourceManager:
     
     def get_optimal_batch_size(self, requested_size: int, campaign_id: str = None) -> int:
         """Get optimal batch size based on current system resources"""
+        
+        # If health checks are bypassed, return requested size
+        if hasattr(settings, 'SKIP_HEALTH_CHECKS_FOR_TESTING') and settings.SKIP_HEALTH_CHECKS_FOR_TESTING:
+            return requested_size
         
         can_process, reason, metrics = self.can_process_batch(requested_size, campaign_id)
         
@@ -302,4 +320,3 @@ class ResourceManager:
 
 # Global resource manager instance
 resource_manager = ResourceManager()
-

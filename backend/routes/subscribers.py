@@ -1,6 +1,6 @@
 # routes/subscribers.py - COMPLETE file matching your frontend requirements
 from fastapi import APIRouter, HTTPException, Query, Request, status, File, Form, UploadFile, BackgroundTasks, Depends
-from database import get_subscribers_collection, get_audit_collection, get_jobs_collection
+from database import get_subscribers_collection, get_audit_collection, get_jobs_collection, get_segments_collection
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel, Field, EmailStr, validator
 from bson import ObjectId
@@ -2116,22 +2116,75 @@ def build_optimized_search_query(search_term: str, specificity: str):
 
 @router.post("/analyze-fields")
 async def analyze_fields(request: dict):
-    """Analyze subscriber data to find available fields for field mapping"""
+    """
+    Analyze subscriber data to find available fields for field mapping.
+    Supports both lists and segments.
+    """
     list_ids = request.get("listIds", [])
-    if not list_ids:
+    segment_ids = request.get("segmentIds", [])
+    
+    # Return empty if no lists or segments provided
+    if not list_ids and not segment_ids:
         return {"universal": ["email"], "standard": [], "custom": []}
     
     try:
         subscribers_collection = get_subscribers_collection()
+        segments_collection = get_segments_collection()
+        
+        # Build the query to match subscribers
+        match_conditions = []
+        
+        # Add list-based matching
+        if list_ids:
+            match_conditions.append({"list": {"$in": list_ids}})
+        
+        # Add segment-based matching
+        if segment_ids:
+            # Get segment criteria and build queries for each segment
+            from bson import ObjectId
+            for segment_id in segment_ids:
+                try:
+                    segment = await segments_collection.find_one({"_id": ObjectId(segment_id)})
+                    if segment and segment.get("criteria"):
+                        # Import the segment query builder
+                        from routes.segments import build_segment_query, SegmentCriteria
+                        segment_query = build_segment_query(SegmentCriteria(**segment["criteria"]))
+                        match_conditions.append(segment_query)
+                except Exception as e:
+                    logger.warning(f"Failed to process segment {segment_id}: {e}")
+                    continue
+        
+        # If we have no valid conditions, return defaults
+        if not match_conditions:
+            return {"universal": ["email"], "standard": [], "custom": []}
+        
+        # Combine all conditions with $or
+        final_query = {"$or": match_conditions} if len(match_conditions) > 1 else match_conditions[0]
         
         # Analyze actual subscriber data to find available fields
         pipeline = [
-            {"$match": {"list": {"$in": list_ids}}},
+            {"$match": final_query},
             {
                 "$group": {
                     "_id": None,
-                    "standard_field_keys": {"$addToSet": {"$map": {"input": {"$objectToArray": "$standard_fields"}, "as": "field", "in": "$$field.k"}}},
-                    "custom_field_keys": {"$addToSet": {"$map": {"input": {"$objectToArray": "$custom_fields"}, "as": "field", "in": "$$field.k"}}}
+                    "standard_field_keys": {
+                        "$addToSet": {
+                            "$map": {
+                                "input": {"$objectToArray": "$standard_fields"}, 
+                                "as": "field", 
+                                "in": "$$field.k"
+                            }
+                        }
+                    },
+                    "custom_field_keys": {
+                        "$addToSet": {
+                            "$map": {
+                                "input": {"$objectToArray": "$custom_fields"}, 
+                                "as": "field", 
+                                "in": "$$field.k"
+                            }
+                        }
+                    }
                 }
             }
         ]
@@ -2153,15 +2206,23 @@ async def analyze_fields(request: dict):
             if cust_array:  # Check if array is not None
                 custom_fields.update(cust_array)
         
+        logger.info(f"📊 Field Analysis - Lists: {len(list_ids)}, Segments: {len(segment_ids)}")
+        logger.info(f"📊 Found fields - Standard: {len(standard_fields)}, Custom: {len(custom_fields)}")
+        
         return {
-            "universal": ["email"],  # Email is always universal
-            "standard": list(standard_fields), 
-            "custom": list(custom_fields)
+            "universal": ["email"],  # Always available
+            "standard": sorted(list(standard_fields)),
+            "custom": sorted(list(custom_fields))
         }
         
     except Exception as e:
-        logger.error(f"Field analysis failed: {e}")
-        raise HTTPException(status_code=500, detail=f"Field analysis failed: {str(e)}")
+        logger.error(f"Failed to analyze fields: {e}", exc_info=True)
+        # Return safe defaults on error
+        return {
+            "universal": ["email"],
+            "standard": ["first_name", "last_name", "phone", "company", "country", "city", "job_title"],
+            "custom": []
+        }
 
 # ===== ADD THIS MISSING ENDPOINT =====
 @router.post("/recovery/manual-retry")

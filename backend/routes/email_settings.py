@@ -19,7 +19,8 @@ print(f"🔍 DEBUG: ENCRYPTION_KEY length: {len(ENCRYPTION_KEY) if ENCRYPTION_KE
 
 
 # Make sure you have a consistent key in env
-#ENCRYPTION_KEY = os.getenv("MASTER_ENCRYPTION_KEY")
+ENCRYPTION_KEY = os.getenv("MASTER_ENCRYPTION_KEY")
+#ENCRYPTION_KEY = "lUuIwsIeBDEArb4N_KpDb7Ax8IVVJ-nAvHYCZYGg4RU="
 fernet = Fernet(ENCRYPTION_KEY)
 
 def encrypt_password(password: str) -> str:

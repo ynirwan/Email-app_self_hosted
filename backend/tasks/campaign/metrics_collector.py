@@ -13,7 +13,7 @@ from bson import ObjectId
 from celery_app import celery_app
 from database import (
     get_sync_campaigns_collection, get_sync_email_logs_collection,
-    get_sync_subscribers_collection, get_sync_analytics_collection
+    get_sync_subscribers_collection, get_sync_analytics_collection, initialize_sync_client, get_sync_database
 )
 from core.config import settings, get_redis_key
 import redis
@@ -267,10 +267,10 @@ class MetricsCollector:
     def collect_database_metrics(self) -> Dict[str, Any]:
         """Collect database performance metrics"""
         try:
-            from database import DatabasePool
+            from database import initialize_sync_client
             
             # Get database connection
-            client = DatabasePool.get_sync_client()
+            client = initialize_sync_client.get_sync_client()
             db = client.email_marketing
             
             db_metrics = {

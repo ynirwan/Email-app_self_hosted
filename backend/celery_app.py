@@ -62,8 +62,8 @@ celery_app = Celery(
     backend=REDIS_URL,
     include=[
         # Core email campaign tasks (always included)
-        "tasks.email_campaign_tasks",
-        "tasks.startup_recovery",
+        "tasks.campaign.email_campaign_tasks",
+    #    "tasks.startup_recovery",
     ]
 )
 
@@ -81,15 +81,15 @@ production_tasks = [
     "tasks.analytics_tasks",
     "tasks.cleanup_tasks",
     "tasks.suppression_tasks",
-    "tasks.resource_manager",
-    "tasks.rate_limiter",
-    "tasks.dlq_manager",
-    "tasks.campaign_control",
-    "tasks.metrics_collector",
-    "tasks.health_monitor",
-    "tasks.template_cache",
-    "tasks.audit_logger",
-    "tasks.provider_manager",
+    "tasks.campaign.resource_manager",
+    "tasks.campaign.rate_limiter",
+    "tasks.campaign.dlq_manager",
+    "tasks.campaign.campaign_control",
+    "tasks.campaign.metrics_collector",
+    "tasks.campaign.health_monitor",
+    "tasks.campaign.template_cache",
+    "tasks.campaign.audit_logger",
+    "tasks.campaign.provider_manager",
 ]
 
 included_tasks = []
@@ -196,6 +196,16 @@ celery_app.conf.update(
         'tasks.cleanup_automation_executions': {'queue': 'automation', 'priority': 2},
         'tasks.process_scheduled_automations': {'queue': 'automation', 'priority': 5},
         
+        # ✅ NEW: Automation trigger checkers
+        'tasks.check_welcome_automations': {'queue': 'automation', 'priority': 7},
+        'tasks.check_birthday_automations': {'queue': 'automation', 'priority': 6},
+        'tasks.check_abandoned_cart_automations': {'queue': 'automation', 'priority': 6},
+        'tasks.check_inactive_subscriber_automations': {'queue': 'automation', 'priority': 5},
+        'tasks.check_daily_birthdays': {'queue': 'automation', 'priority': 8},
+        'tasks.check_inactive_subscribers': {'queue': 'automation', 'priority': 7},
+        'tasks.detect_at_risk_subscribers': {'queue': 'automation', 'priority': 6},
+        'tasks.cleanup_old_events': {'queue': 'automation', 'priority': 3},
+        
         # ===== SES/WEBHOOK TASKS =====
         'tasks.process_ses_events_batch': {'queue': 'ses_events', 'priority': 6},
         'tasks.process_critical_ses_events': {'queue': 'ses_critical', 'priority': 9},
@@ -275,6 +285,16 @@ celery_app.conf.update(
             'rate_limit': '100/s',
             'max_retries': 3,
             'default_retry_delay': 300,
+        },
+        
+        # ✅ NEW: Automation trigger checkers rate limits
+        'tasks.check_welcome_automations': {
+            'rate_limit': '10/m',
+            'max_retries': 2,
+        },
+        'tasks.check_birthday_automations': {
+            'rate_limit': '5/h',
+            'max_retries': 2,
         },
         
         # Webhook processing
@@ -399,7 +419,7 @@ beat_schedule.update({
     },
 })
 
-# Automation processing
+# ✅ UPDATED: Automation processing with trigger checkers
 beat_schedule.update({
     # ===== AUTOMATION PROCESSING =====
     'process-scheduled-automations': {
@@ -412,14 +432,15 @@ beat_schedule.update({
         'schedule': timedelta(days=7),
         'options': {'queue': 'automation', 'priority': 1}
     },
-})
-
-
-
-# Add to beat_schedule
-celery_app.conf.beat_schedule = {
     
-    # ⭐ Check birthdays daily at multiple times for different timezones
+    # ✅ NEW: Welcome automation trigger checker
+    'check-welcome-automations': {
+        'task': 'tasks.check_welcome_automations',
+        'schedule': crontab(minute='*/5'),  # Every 5 minutes
+        'options': {'queue': 'automation', 'priority': 7}
+    },
+    
+    # ✅ NEW: Birthday automation checker (multiple times for timezone coverage)
     'check-birthdays-midnight-utc': {
         'task': 'tasks.check_daily_birthdays',
         'schedule': crontab(hour=0, minute=0),  # Midnight UTC
@@ -435,31 +456,35 @@ celery_app.conf.beat_schedule = {
         'schedule': crontab(hour=12, minute=0),  # Noon UTC
         'options': {'queue': 'automation', 'priority': 8}
     },
-
-        # Clean old events monthly
+    
+    # ✅ NEW: Abandoned cart checker
+    'check-abandoned-cart-automations': {
+        'task': 'tasks.check_abandoned_cart_automations',
+        'schedule': crontab(minute='*/15'),  # Every 15 minutes
+        'options': {'queue': 'automation', 'priority': 6}
+    },
+    
+    # ✅ NEW: Inactive subscriber checker
+    'check-inactive-subscribers': {
+        'task': 'tasks.check_inactive_subscriber_automations',
+        'schedule': crontab(hour=3, minute=0),  # Daily at 3 AM
+        'options': {'queue': 'automation', 'priority': 7}
+    },
+    
+    # ✅ NEW: At-risk subscriber detector
+    'detect-at-risk-subscribers': {
+        'task': 'tasks.detect_at_risk_subscribers',
+        'schedule': crontab(hour=4, minute=0),  # Daily at 4 AM
+        'options': {'queue': 'automation', 'priority': 6}
+    },
+    
+    # ✅ NEW: Event cleanup
     'cleanup-old-events': {
         'task': 'tasks.cleanup_old_events',
         'schedule': crontab(day_of_month=1, hour=2, minute=0),  # 1st of month at 2 AM
         'options': {'queue': 'automation', 'priority': 3}
     },
-    
-    'check-inactive-subscribers': {
-        'task': 'tasks.check_inactive_subscribers',
-        'schedule': crontab(hour=3, minute=0),
-        'options': {'queue': 'automation', 'priority': 7}
-    },
-    
-    # Detect at-risk subscribers daily at 4 AM
-    'detect-at-risk-subscribers': {
-        'task': 'tasks.detect_at_risk_subscribers',
-        'schedule': crontab(hour=4, minute=0),
-        'options': {'queue': 'automation', 'priority': 6}
-    },
-
-}
-
-
-
+})
 
 # Subscriber cleanup
 beat_schedule.update({
@@ -637,6 +662,7 @@ def setup_celery_logger(logger_instance, *args, **kwargs):
                            f"{MAX_CONCURRENT_TASKS} concurrent tasks")
         logger_instance.info(f"📈 Monitoring enabled: {ENABLE_METRICS_COLLECTION}")
         logger_instance.info(f"📝 Audit logging enabled: {ENABLE_AUDIT_LOGGING}")
+        logger_instance.info(f"🤖 Automation triggers: welcome, birthday, abandoned_cart, inactive")
         
     except Exception as e:
         logger.error(f"❌ Celery logger setup error: {e}")
