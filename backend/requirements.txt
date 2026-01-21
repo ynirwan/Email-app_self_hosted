@@ -20,7 +20,7 @@ python-dotenv==1.0.0
 httpx==0.25.2
 
 # Redis & Caching
-redis==5.0.1
+redis>=4.5.2,<5.0.0
 hiredis==2.2.3  # For better Redis performance
 
 # Task Queue
