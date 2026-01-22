@@ -166,8 +166,10 @@ class Settings:
     # ===== CORS CONFIGURATION =====
     CORS_ORIGINS: List[str] = [
         "http://localhost:3000",
+        "http://localhost:5000",
         "http://localhost:5173",
-        "http://localhost:4173"
+        "http://localhost:4173",
+        "*"
     ]
     CORS_ALLOW_CREDENTIALS: bool = True
     CORS_ALLOW_METHODS: List[str] = ["*"]
