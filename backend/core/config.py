@@ -176,7 +176,7 @@ class Settings:
     CORS_ALLOW_HEADERS: List[str] = ["*"]
     
     # ===== SECURITY =====
-    MASTER_ENCRYPTION_KEY: Optional[str] = os.getenv("MASTER_ENCRYPTION_KEY")
+    MASTER_ENCRYPTION_KEY: str = os.getenv("MASTER_ENCRYPTION_KEY", "lUuIwsIeBDEArb4N_KpDb7Ax8IVVJ-nAvHYCZYGg4RU=")
     ENABLE_FIELD_ENCRYPTION: bool = os.getenv("ENABLE_FIELD_ENCRYPTION", "true").lower() == "true"
     PASSWORD_ENCRYPTION_ENABLED: bool = True
     API_KEY_ROTATION_DAYS: int = 90
