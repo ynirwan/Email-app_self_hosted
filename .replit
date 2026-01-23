@@ -57,3 +57,8 @@ externalPort = 8000
 deploymentTarget = "autoscale"
 run = ["bash", "-c", "uvicorn backend.main:app --host 0.0.0.0 --port $PORT & npm run serve --prefix frontend"]
 build = ["npm install --prefix frontend && npm run build --prefix frontend && pip install -r backend/requirements.txt"]
+
+[userenv]
+
+[userenv.shared]
+REDIS_URL = "redis://default:5jrup6bv5dfHkhz9HhbnIanUkJRoCYth@redis-16194.crce179.ap-south-1-1.ec2.cloud.redislabs.com:16194/0"
