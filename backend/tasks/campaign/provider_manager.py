@@ -424,8 +424,9 @@ class EmailProviderManager:
 
                 logger.info(f"✅ Loaded {len(self.providers)} email provider(s): {list(self.providers.keys())}")
             else:
-                logger.error("❌ No email provider configuration found in database!")
-                raise Exception("No email provider configured. Please configure SMTP settings.")
+                logger.warning("⚠️ No email provider configuration found in database. Backend will start in degraded mode.")
+                # We don't raise here to allow the backend to start
+                # raise Exception("No email provider configured. Please configure SMTP settings.")
 
         except Exception as e:
             logger.error(f"Failed to load provider configurations: {e}", exc_info=True)

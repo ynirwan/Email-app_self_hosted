@@ -21,12 +21,21 @@ print(f"🔍 DEBUG: ENCRYPTION_KEY length: {len(ENCRYPTION_KEY) if ENCRYPTION_KE
 # Make sure you have a consistent key in env
 ENCRYPTION_KEY = os.getenv("MASTER_ENCRYPTION_KEY")
 #ENCRYPTION_KEY = "lUuIwsIeBDEArb4N_KpDb7Ax8IVVJ-nAvHYCZYGg4RU="
-fernet = Fernet(ENCRYPTION_KEY)
+try:
+    fernet = Fernet(ENCRYPTION_KEY.encode() if isinstance(ENCRYPTION_KEY, str) else ENCRYPTION_KEY)
+except Exception as e:
+    logger.error(f"Failed to initialize Fernet in email_settings: {e}")
+    # Fallback for startup to prevent crash
+    fernet = None
 
 def encrypt_password(password: str) -> str:
+    if not fernet:
+        return password
     return fernet.encrypt(password.encode()).decode()
 
 def decrypt_password(token: str) -> str:
+    if not fernet:
+        return token
     return fernet.decrypt(token.encode()).decode()
 
 
