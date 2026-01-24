@@ -14,6 +14,11 @@ Preferred communication style: Simple, everyday language.
 
 **Core Framework**: FastAPI with async/await patterns throughout. The application uses Motor (async MongoDB driver) for database operations and supports both sync and async database access patterns for different use cases (API routes use async, Celery tasks use sync).
 
+**Celery Integration**:
+- The platform uses Celery for background tasks (email sending, automation, analytics).
+- **Current Setup**: Celery workers are NOT running by default in the Replit environment. You must start them manually or add a new workflow to run `celery -A celery_app worker --loglevel=info`.
+- **Redis**: Connected to an external Redis instance for brokering and results.
+
 **API Structure**: Routes are organized by feature domain in `backend/routes/`:
 - `campaigns.py` - Campaign CRUD and sending operations
 - `subscribers.py` - Subscriber management with bulk upload support
@@ -70,6 +75,11 @@ Preferred communication style: Simple, everyday language.
 - Delay steps (hours, days, weeks)
 - Conditional branching based on engagement
 - Timezone-aware scheduling
+
+**Trigger Logic**:
+- **Subscription**: Triggered via `routes/subscribers.py` when a user is added.
+- **Events**: Triggered via `routes/events.py` for e-commerce actions like `cart-abandoned`.
+- **Processing**: Logic resides in `tasks/automation_tasks.py`, checking subscriber status, suppression lists, and frequency caps before execution.
 
 **Event Tracking**: Dedicated events system for tracking user actions that can trigger automations.
 
