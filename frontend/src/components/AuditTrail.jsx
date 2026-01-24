@@ -457,7 +457,7 @@ export default function AuditTrail() {
 
                       <td className="p-4">
                         <span className={`px-3 py-1 rounded-full text-xs font-bold border ${getActionBadge(log.action)}`}>
-                          {log.action.toUpperCase()}
+                          {log.action?.toUpperCase() || 'UNKNOWN'}
                         </span>
                       </td>
 
