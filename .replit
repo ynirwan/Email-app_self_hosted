@@ -21,6 +21,10 @@ args = "Frontend"
 task = "workflow.run"
 args = "Backend"
 
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "Celery Worker"
+
 [[workflows.workflow]]
 name = "Frontend"
 author = "agent"
@@ -41,6 +45,17 @@ author = "agent"
 task = "shell.exec"
 args = "cd backend && uvicorn main:app --host 0.0.0.0 --port 8000"
 waitForPort = 8000
+
+[workflows.workflow.metadata]
+outputType = "console"
+
+[[workflows.workflow]]
+name = "Celery Worker"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "cd backend && celery -A celery_app worker --loglevel=info --queues=campaigns,automation,recovery,ses_events,webhooks,subscribers,suppressions,dlq,monitoring,analytics,templates,cleanup"
 
 [workflows.workflow.metadata]
 outputType = "console"
