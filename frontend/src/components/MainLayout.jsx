@@ -3,9 +3,11 @@ import { useLocation } from 'react-router-dom';
 export default function MainLayout({ children }) {
   const location = useLocation();
   
+  const isTemplateCreation = location.pathname.includes('/templates/create') || location.pathname.includes('/templates/edit');
+
   // Pages that should have sidebar spacing
   const pagesWithSidebar = ['/campaigns', '/analytics', '/subscribers', '/templates'];
-  const needsSidebarSpacing = pagesWithSidebar.some(path => 
+  const needsSidebarSpacing = !isTemplateCreation && pagesWithSidebar.some(path => 
     location.pathname.startsWith(path)
   );
 
