@@ -91,9 +91,12 @@ export default function Sidebar() {
     return colors[first] || "bg-gray-500";
   };
 
-  const isTemplateCreation = pathname.includes('/templates/create') || pathname.includes('/templates/edit');
+  const isEditorPage = pathname.includes('/templates/create') || 
+                       pathname.includes('/templates/edit') || 
+                       pathname.includes('/campaigns/create') || 
+                       pathname.includes('/campaigns/edit');
 
-  if (isTemplateCreation) return null;
+  if (isEditorPage) return null;
 
   return (
     <>
