@@ -125,6 +125,30 @@ export default function Subscribers() {
     }
   };
 
+  const [notifications, setNotifications] = useState([]);
+
+  const showToast = useCallback((message, type = 'info') => {
+    const id = Date.now();
+    setNotifications(prev => [...prev, { id, message, type }]);
+    setTimeout(() => {
+      setNotifications(prev => prev.filter(n => n.id !== id));
+    }, 5000);
+  }, []);
+
+  const ToastContainer = () => (
+    <div className="fixed top-4 right-4 z-50 space-y-2">
+      {notifications.map(n => (
+        <div key={n.id} className={`p-4 rounded-lg shadow-lg border ${
+          n.type === 'error' ? 'bg-red-50 border-red-200 text-red-800' :
+          n.type === 'success' ? 'bg-green-50 border-green-200 text-green-800' :
+          'bg-blue-50 border-blue-200 text-blue-800'
+        }`}>
+          {n.message}
+        </div>
+      ))}
+    </div>
+  );
+
   // ✅ ENHANCED Job Status Polling with Performance Metrics
   const pollJobStatus = async (jobId) => {
     try {
@@ -140,21 +164,11 @@ export default function Subscribers() {
         setUploadProgress(0);
 
         const failureMessage = job.error_message || 'Upload processing failed';
-        const canRecover = job.recovery_available;
         const failedAt = job.failed_at_record || 0;
         const total = job.total_records || 0;
-        const recoveryInfo = job.recovery_info || {};
 
-        alert(`❌ UPLOAD FAILED\n\n` +
-          `📊 Progress: ${failedAt.toLocaleString()} / ${total.toLocaleString()} processed\n` +
-          `❌ Error: ${failureMessage}\n\n` +
-          `🔧 Recovery Options:\n` +
-          `${canRecover ? '• Manual retry available\n' : ''}` +
-          `${recoveryInfo.optimization_available ? '• Optimized processing available\n' : ''}` +
-          `${recoveryInfo.estimated_recovery_time_minutes ? `• Estimated recovery time: ${recoveryInfo.estimated_recovery_time_minutes} minutes\n` : ''}` +
-          `\n💡 Check the main page for retry options or auto-recovery will handle this.`);
-
-        return; // Stop polling
+        showToast(`Upload failed: ${failureMessage}. Processed ${failedAt}/${total}`, 'error');
+        return; 
       }
 
       // ✅ HANDLE SUCCESSFUL COMPLETION with performance info
@@ -163,17 +177,11 @@ export default function Subscribers() {
         setUploadProgress(100);
 
         const speed = job.records_per_second || 0;
-        const processingTime = job.processing_time_seconds || 0;
-        const optimized = job.optimization_used ? ' (Optimized)' : '';
+        const count = job.final_processed?.toLocaleString() || job.processed;
 
-        alert(`✅ UPLOAD COMPLETE!${optimized}\n\n` +
-          `📊 ${job.final_processed?.toLocaleString() || job.processed} subscribers processed\n` +
-          `⚡ Speed: ${speed.toLocaleString()} records/sec\n` +
-          `⏱️ Time: ${processingTime.toFixed(1)} seconds\n` +
-          `🔧 Method: ${job.performance_display?.method_text || 'Standard'}`);
-
+        showToast(`Upload complete! ${count} subscribers processed at ${speed.toLocaleString()} rec/sec`, 'success');
         fetchLists();
-        return; // Stop polling
+        return;
       }
 
       // ✅ HANDLE ONGOING PROCESSING with enhanced progress
@@ -196,14 +204,7 @@ export default function Subscribers() {
 
       // ✅ HANDLE STUCK JOBS
       if (job.is_stuck) {
-        alert(`⚠️ JOB APPEARS STUCK\n\n` +
-          `Job: ${job.list_name}\n` +
-          `Status: No activity for 5+ minutes\n\n` +
-          `🔧 Recommended Actions:\n` +
-          `• Wait a few more minutes\n` +
-          `• Check system resources\n` +
-          `• Manual retry may be needed`);
-
+        showToast(`Job for ${job.list_name} appears stuck`, 'warning');
         setTimeout(() => pollJobStatus(jobId), 2000);
       }
 
@@ -367,14 +368,14 @@ export default function Subscribers() {
                   try {
                     const response = await API.delete('/subscribers/jobs/clear-all');
                     if (response.status === 200) {
-                      alert(`✅ Cleared ${failedJobs.length} failed jobs!`);
+                      showToast(`Successfully cleared ${failedJobs.length} failed jobs!`, 'success');
                       setProcessingJobs(new Map());
                       setShowProcessingBanner(false);
                     } else {
-                      alert('❌ Failed to clear jobs');
+                      showToast('Failed to clear jobs', 'error');
                     }
                   } catch (error) {
-                    alert('❌ Error: ' + error.message);
+                    showToast('Error: ' + error.message, 'error');
                   }
                 }}
                 className="text-xs bg-red-600 text-white px-2 py-1 rounded hover:bg-red-700"
@@ -390,11 +391,11 @@ export default function Subscribers() {
                   if (confirm('⚠️ Force cleanup stuck jobs? This will mark them as failed.')) {
                     try {
                       const response = await API.post('/subscribers/jobs/cleanup-stuck');
-                      alert(`🧹 Cleanup result: ${response.data.message}`);
+                      showToast(`Cleanup result: ${response.data.message}`, 'success');
                       // Refresh after cleanup
                       setTimeout(() => window.location.reload(), 1000);
                     } catch (error) {
-                      alert(`❌ Cleanup failed: ${error.message}`);
+                      showToast(`Cleanup failed: ${error.message}`, 'error');
                     }
                   }
                 }}
@@ -504,12 +505,12 @@ export default function Subscribers() {
                     onClick={async () => {
                       if (confirm(`Retry failed job for "${job.list_name}"?`)) {
                         try {
-                          const response = await API.post(`/subscribers/jobs/${job.job_id}/force-retry`);
-                          alert(`✅ Retry initiated for ${job.list_name}`);
+                          await API.post(`/subscribers/jobs/${job.job_id}/force-retry`);
+                          showToast(`Retry initiated for ${job.list_name}`, 'success');
                           // Refresh status
                           setTimeout(() => window.location.reload(), 1000);
                         } catch (error) {
-                          alert(`❌ Retry failed: ${error.message}`);
+                          showToast(`Retry failed: ${error.message}`, 'error');
                         }
                       }
                     }}
@@ -521,11 +522,11 @@ export default function Subscribers() {
                     onClick={async () => {
                       try {
                         await API.delete(`/subscribers/jobs/${job.job_id}`);
-                        alert(`✅ Cleared failed job: ${job.list_name}`);
+                        showToast(`Cleared failed job: ${job.list_name}`, 'success');
                         // Refresh
                         setTimeout(() => window.location.reload(), 1000);
                       } catch (error) {
-                        alert(`❌ Clear failed: ${error.message}`);
+                        showToast(`Clear failed: ${error.message}`, 'error');
                       }
                     }}
                     className="text-xs bg-gray-600 text-white px-2 py-1 rounded hover:bg-gray-700"
@@ -1349,6 +1350,7 @@ export default function Subscribers() {
   // Main render
   return (
     <div className="space-y-6">
+      <ToastContainer />
       <h1 className="text-2xl font-bold mb-4">📧 Enhanced Subscriber Management</h1>
 
       {/* ✅ ENHANCED Processing Banner */}
