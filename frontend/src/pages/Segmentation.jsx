@@ -150,17 +150,15 @@ export default function Segmentation() {
 
   if (loading && segments.length === 0) {
     return (
-      <div className="max-w-7xl mx-auto mt-10 p-4">
-        <div className="text-center">
-          <div className="text-4xl mb-4">🔄</div>
-          <p className="text-lg">Loading segments...</p>
-        </div>
+      <div className="text-center py-20">
+        <div className="text-4xl mb-4">🔄</div>
+        <p className="text-lg">Loading segments...</p>
       </div>
     );
   }
 
   return (
-    <div className="max-w-7xl mx-auto mt-10">
+    <div className="space-y-6">
       {/* Header */}
       <div className="flex justify-between items-center mb-6">
         <div>
