@@ -8,7 +8,7 @@ import { useNavigate } from 'react-router-dom';
 
 export default function CampaignAnalytics() {
   const { campaignId } = useParams();
-  const navigate = useNavigate();	
+  const navigate = useNavigate();       
   const [analyticsData, setAnalyticsData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -42,217 +42,211 @@ export default function CampaignAnalytics() {
   const { campaign, analytics, recent_events, top_links } = analyticsData || {};
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <div className="max-w-7xl mx-auto px-4 py-6">
-        {/* Clean Header */}
-        <div className="bg-white rounded-lg shadow-sm border mb-6">
-          <div className="px-6 py-5">
-            <div className="flex flex-col lg:flex-row lg:justify-between lg:items-center space-y-4 lg:space-y-0">
-              <div>
-                <div className="flex items-center space-x-3 mb-2">
-                  <div className="w-10 h-10 bg-blue-600 rounded-lg flex items-center justify-center">
-                    <span className="text-white text-xl">📊</span>
-                  </div>
-                  <div>
-                    <h1 className="text-2xl font-bold text-gray-900">Campaign Analytics</h1>
-                    <div className="flex items-center space-x-3 mt-1">
-                      <p className="text-gray-600">{campaign?.title}</p>
-                      <CampaignStatusBadge status={campaign?.status} />
-                    </div>
+    <div className="space-y-6">
+      {/* Clean Header */}
+      <div className="bg-white rounded-lg shadow-sm border mb-6">
+        <div className="px-6 py-5">
+          <div className="flex flex-col lg:flex-row lg:justify-between lg:items-center space-y-4 lg:space-y-0">
+            <div>
+              <div className="flex items-center space-x-3 mb-2">
+                <div className="w-10 h-10 bg-blue-600 rounded-lg flex items-center justify-center">
+                  <span className="text-white text-xl">📊</span>
+                </div>
+                <div>
+                  <h1 className="text-2xl font-bold text-gray-900">Campaign Analytics</h1>
+                  <div className="flex items-center space-x-3 mt-1">
+                    <p className="text-gray-600">{campaign?.title}</p>
+                    <CampaignStatusBadge status={campaign?.status} />
                   </div>
                 </div>
               </div>
-              <div className="flex space-x-3">
-                <button 
-                  onClick={fetchCampaignAnalytics}
-                  className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors flex items-center space-x-2"
-                >
-                  <span>🔄</span>
-                  <span>Refresh</span>
-                </button>
-                    <button
-                        onClick={() => navigate(-1)}
-                            className="px-4 py-2 bg-blue-600 rounded hover:bg-blue-300"
-                    >        
-
-                  <span>←</span>
-                  <span>Back</span>
-	      </button>
-              </div>
+            </div>
+            <div className="flex space-x-3">
+              <button 
+                onClick={fetchCampaignAnalytics}
+                className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors flex items-center space-x-2"
+              >
+                <span>🔄</span>
+                <span>Refresh</span>
+              </button>
+              <button
+                onClick={() => navigate(-1)}
+                className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+              >        
+                <span>←</span>
+                <span>Back</span>
+              </button>
             </div>
           </div>
         </div>
-
-        {/* Campaign Progress - Simplified */}
-        <div className="bg-white rounded-lg shadow-sm border mb-6">
-          <div className="px-6 py-5 border-b border-gray-200">
-            <div className="flex items-center space-x-2">
-              <span className="text-lg">📤</span>
-              <h2 className="text-lg font-semibold text-gray-900">Campaign Progress</h2>
-            </div>
-          </div>
-          
-          <div className="p-6">
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-              <ProgressCard
-                title="Target Subscribers"
-                value={campaign?.target_list_count || 0}
-                subtitle="Total to send to"
-                icon="🎯"
-                color="bg-blue-50 text-blue-700 border-blue-200"
-              />
-              <ProgressCard
-                title="Processed"
-                value={campaign?.processed_count || 0}
-                subtitle="Emails processed"
-                icon="⚙️"
-                color="bg-green-50 text-green-700 border-green-200"
-              />
-              <ProgressCard
-                title="Sent Successfully"
-                value={campaign?.sent_count || 0}
-                subtitle="Successfully sent"
-                icon="✅"
-                color="bg-purple-50 text-purple-700 border-purple-200"
-              />
-              <ProgressCard
-                title="In Queue"
-                value={campaign?.queued_count || 0}
-                subtitle="Waiting to send"
-                icon="⏳"
-                color="bg-orange-50 text-orange-700 border-orange-200"
-              />
-            </div>
-
-            {/* Simple Progress Bar */}
-            <div className="mb-4">
-              <div className="flex justify-between items-center mb-2">
-                <span className="text-sm font-medium text-gray-700">Progress</span>
-                <span className="text-sm text-gray-600">
-                  {campaign?.target_list_count > 0 
-                    ? `${Math.round((campaign?.sent_count / campaign?.target_list_count) * 100)}%`
-                    : '0%'
-                  }
-                </span>
-              </div>
-              <div className="bg-gray-200 rounded-full h-2">
-                <div 
-                  className="bg-blue-600 h-2 rounded-full transition-all duration-500"
-                  style={{ 
-                    width: `${campaign?.target_list_count > 0 ? (campaign?.sent_count / campaign?.target_list_count) * 100 : 0}%` 
-                  }}
-                ></div>
-              </div>
-            </div>
-
-            {/* Simple Timeline */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-4 border-t border-gray-200">
-              <TimelineItem
-                label="Started"
-                value={campaign?.started_at ? new Date(campaign.started_at).toLocaleString() : 'Not started'}
-              />
-              <TimelineItem
-                label="Last Batch"
-                value={campaign?.last_batch_at ? new Date(campaign.last_batch_at).toLocaleString() : 'N/A'}
-              />
-              <TimelineItem
-                label="Completed"
-                value={campaign?.completed_at ? new Date(campaign.completed_at).toLocaleString() : 'In progress'}
-              />
-            </div>
-          </div>
-        </div>
-
-
-         {/* Engagement Metrics - Clean */}
-<div className="mb-6">
-  <div className="flex items-center space-x-2 mb-4">
-    <span className="text-lg">📈</span>
-    <h2 className="text-lg font-semibold text-gray-900">Engagement Metrics</h2>
-  </div>
-  
-  {/* Positive Metrics */}
-  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-    <MetricCard
-      title="Total Sent"
-      value={analytics?.total_sent || 0}
-      subtitle="From campaign data"
-      icon="📧"
-      color="text-blue-600"
-      bgColor="bg-blue-50"
-    />
-    <MetricCard
-      title="Opens"
-      value={analytics?.total_opened || 0}
-      subtitle={`${analytics?.open_rate || 0}% open rate`}
-      icon="👁️"
-      color="text-green-600"
-      bgColor="bg-green-50"
-    />
-    <MetricCard
-      title="Clicks"
-      value={analytics?.total_clicked || 0}
-      subtitle={`${analytics?.click_rate || 0}% click rate`}
-      icon="👆"
-      color="text-purple-600"
-      bgColor="bg-purple-50"
-    />
-    <MetricCard
-      title="Delivered"
-      value={analytics?.total_delivered || (analytics?.total_sent - analytics?.total_bounced) || 0}
-      subtitle={`${analytics?.delivery_rate || 0}% delivery rate`}
-      icon="✅"
-      color="text-teal-600"
-      bgColor="bg-teal-50"
-    />
-  </div>
-
-  {/* Negative Metrics grouped */}
-  <div className="bg-red-50 border border-red-100 rounded-lg p-5">
-    <h3 className="text-md font-semibold text-red-800 mb-4 flex items-center space-x-2">
-      <span>⚠️</span>
-      <span>Issues & Failures</span>
-    </h3>
-    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-      <MetricCard
-        title="Bounces"
-        value={analytics?.total_bounced || 0}
-        subtitle={`${analytics?.bounce_rate || 0}% bounce rate`}
-        icon="⚠️"
-        color="text-red-600"
-        bgColor="bg-red-100"
-      />
-      <MetricCard
-        title="Unsubscribes"
-        value={analytics?.total_unsubscribed || 0}
-        subtitle={`${analytics?.unsubscribe_rate || 0}% unsubscribe rate`}
-        icon="🚫"
-        color="text-orange-600"
-        bgColor="bg-orange-100"
-      />
-      <MetricCard
-        title="Spam Reports"
-        value={analytics?.total_spam_reports || 0}
-        subtitle="Marked as spam"
-        icon="🚨"
-        color="text-red-700"
-        bgColor="bg-red-100"
-      />
-    </div>
-  </div>
-</div>
-
-        
-
-        {/* Performance Overview - Clean */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-          <TopClickedLinks links={top_links} />
-          <RecentActivity events={recent_events} />
-        </div>
-
-        {/* Campaign Details - Clean */}
-        <CampaignDetails campaign={campaign} />
       </div>
+
+      {/* Campaign Progress - Simplified */}
+      <div className="bg-white rounded-lg shadow-sm border mb-6">
+        <div className="px-6 py-5 border-b border-gray-200">
+          <div className="flex items-center space-x-2">
+            <span className="text-lg">📤</span>
+            <h2 className="text-lg font-semibold text-gray-900">Campaign Progress</h2>
+          </div>
+        </div>
+        
+        <div className="p-6">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+            <ProgressCard
+              title="Target Subscribers"
+              value={campaign?.target_list_count || 0}
+              subtitle="Total to send to"
+              icon="🎯"
+              color="bg-blue-50 text-blue-700 border-blue-200"
+            />
+            <ProgressCard
+              title="Processed"
+              value={campaign?.processed_count || 0}
+              subtitle="Emails processed"
+              icon="⚙️"
+              color="bg-green-50 text-green-700 border-green-200"
+            />
+            <ProgressCard
+              title="Sent Successfully"
+              value={campaign?.sent_count || 0}
+              subtitle="Successfully sent"
+              icon="✅"
+              color="bg-purple-50 text-purple-700 border-purple-200"
+            />
+            <ProgressCard
+              title="In Queue"
+              value={campaign?.queued_count || 0}
+              subtitle="Waiting to send"
+              icon="⏳"
+              color="bg-orange-50 text-orange-700 border-orange-200"
+            />
+          </div>
+
+          {/* Simple Progress Bar */}
+          <div className="mb-4">
+            <div className="flex justify-between items-center mb-2">
+              <span className="text-sm font-medium text-gray-700">Progress</span>
+              <span className="text-sm text-gray-600">
+                {campaign?.target_list_count > 0 
+                  ? `${Math.round((campaign?.sent_count / campaign?.target_list_count) * 100)}%`
+                  : '0%'
+                }
+              </span>
+            </div>
+            <div className="bg-gray-200 rounded-full h-2">
+              <div 
+                className="bg-blue-600 h-2 rounded-full transition-all duration-500"
+                style={{ 
+                  width: `${campaign?.target_list_count > 0 ? (campaign?.sent_count / campaign?.target_list_count) * 100 : 0}%` 
+                }}
+              ></div>
+            </div>
+          </div>
+
+          {/* Simple Timeline */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-4 border-t border-gray-200">
+            <TimelineItem
+              label="Started"
+              value={campaign?.started_at ? new Date(campaign.started_at).toLocaleString() : 'Not started'}
+            />
+            <TimelineItem
+              label="Last Batch"
+              value={campaign?.last_batch_at ? new Date(campaign.last_batch_at).toLocaleString() : 'N/A'}
+            />
+            <TimelineItem
+              label="Completed"
+              value={campaign?.completed_at ? new Date(campaign.completed_at).toLocaleString() : 'In progress'}
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* Engagement Metrics - Clean */}
+      <div className="mb-6">
+        <div className="flex items-center space-x-2 mb-4">
+          <span className="text-lg">📈</span>
+          <h2 className="text-lg font-semibold text-gray-900">Engagement Metrics</h2>
+        </div>
+        
+        {/* Positive Metrics */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+          <MetricCard
+            title="Total Sent"
+            value={analytics?.total_sent || 0}
+            subtitle="From campaign data"
+            icon="📧"
+            color="text-blue-600"
+            bgColor="bg-blue-50"
+          />
+          <MetricCard
+            title="Opens"
+            value={analytics?.total_opened || 0}
+            subtitle={`${analytics?.open_rate || 0}% open rate`}
+            icon="👁️"
+            color="text-green-600"
+            bgColor="bg-green-50"
+          />
+          <MetricCard
+            title="Clicks"
+            value={analytics?.total_clicked || 0}
+            subtitle={`${analytics?.click_rate || 0}% click rate`}
+            icon="👆"
+            color="text-purple-600"
+            bgColor="bg-purple-50"
+          />
+          <MetricCard
+            title="Delivered"
+            value={analytics?.total_delivered || (analytics?.total_sent - analytics?.total_bounced) || 0}
+            subtitle={`${analytics?.delivery_rate || 0}% delivery rate`}
+            icon="✅"
+            color="text-teal-600"
+            bgColor="bg-teal-50"
+          />
+        </div>
+
+        {/* Negative Metrics grouped */}
+        <div className="bg-red-50 border border-red-100 rounded-lg p-5">
+          <h3 className="text-md font-semibold text-red-800 mb-4 flex items-center space-x-2">
+            <span>⚠️</span>
+            <span>Issues & Failures</span>
+          </h3>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <MetricCard
+              title="Bounces"
+              value={analytics?.total_bounced || 0}
+              subtitle={`${analytics?.bounce_rate || 0}% bounce rate`}
+              icon="⚠️"
+              color="text-red-600"
+              bgColor="bg-red-100"
+            />
+            <MetricCard
+              title="Unsubscribes"
+              value={analytics?.total_unsubscribed || 0}
+              subtitle={`${analytics?.unsubscribe_rate || 0}% unsubscribe rate`}
+              icon="🚫"
+              color="text-orange-600"
+              bgColor="bg-orange-100"
+            />
+            <MetricCard
+              title="Spam Reports"
+              value={analytics?.total_spam_reports || 0}
+              subtitle="Marked as spam"
+              icon="🚨"
+              color="text-red-700"
+              bgColor="bg-red-100"
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* Performance Overview - Clean */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+        <TopClickedLinks links={top_links} />
+        <RecentActivity events={recent_events} />
+      </div>
+
+      {/* Campaign Details - Clean */}
+      <CampaignDetails campaign={campaign} />
     </div>
   );
 }
