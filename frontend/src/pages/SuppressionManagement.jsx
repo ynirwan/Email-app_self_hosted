@@ -322,8 +322,157 @@ const SuppressionManagement = () => {
     return scope === 'global' ? <Shield className="h-4 w-4" /> : <Mail className="h-4 w-4" />;
   };
 
+  const [bulkEmails, setBulkEmails] = useState('');
+  const [bulkChecking, setBulkChecking] = useState(false);
+  const [bulkResults, setBulkResults] = useState(null);
+
+  const handleBulkCheck = async () => {
+    if (!bulkEmails.trim()) {
+      showToast('Please enter at least one email', 'error');
+      return;
+    }
+
+    setBulkChecking(true);
+    try {
+      const emails = bulkEmails.split(/[\n,]+/).map(e => e.trim()).filter(e => e);
+      const response = await API.post('/suppressions/check-bulk', { emails });
+      setBulkResults(response.data);
+      showToast('Bulk check completed', 'success');
+    } catch (err) {
+      showToast('Failed to perform bulk check', 'error');
+    } finally {
+      setBulkChecking(false);
+    }
+  };
+
+  const [importing, setImporting] = useState(false);
+  const handleImportCSV = async (file) => {
+    if (!file) return;
+    setImporting(true);
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      const response = await API.post('/suppressions/import', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      });
+      showToast(`Imported ${response.data.imported || 0} suppressions`, 'success');
+      setShowImportModal(false);
+      fetchSuppressions();
+      fetchStats();
+    } catch (err) {
+      showToast('Failed to import CSV', 'error');
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const BulkCheckModal = () => (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-lg max-w-2xl w-full p-6">
+        <div className="flex justify-between items-center mb-4">
+          <h3 className="text-xl font-bold">Bulk Suppression Check</h3>
+          <button onClick={() => { setShowBulkCheckModal(false); setBulkResults(null); }} className="text-gray-500 hover:text-gray-700">
+            <XCircle className="h-6 w-6" />
+          </button>
+        </div>
+        <div className="mb-4">
+          <label className="block text-sm font-medium text-gray-700 mb-2">
+            Enter emails (one per line or comma separated)
+          </label>
+          <textarea
+            className="w-full h-40 border rounded-lg p-3 focus:ring-2 focus:ring-blue-500"
+            placeholder="email1@example.com&#10;email2@example.com"
+            value={bulkEmails}
+            onChange={(e) => setBulkEmails(e.target.value)}
+          />
+        </div>
+        <div className="flex justify-end gap-3">
+          <button
+            onClick={() => { setShowBulkCheckModal(false); setBulkResults(null); }}
+            className="px-4 py-2 border rounded-lg hover:bg-gray-50"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleBulkCheck}
+            disabled={bulkChecking}
+            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+          >
+            {bulkChecking ? 'Checking...' : 'Check Emails'}
+          </button>
+        </div>
+        {bulkResults && (
+          <div className="mt-6 border-t pt-4">
+            <h4 className="font-semibold mb-2">Results:</h4>
+            <div className="max-h-60 overflow-y-auto bg-gray-50 rounded-lg p-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="p-3 bg-white border rounded">
+                  <p className="text-sm text-gray-500">Suppressed</p>
+                  <p className="text-xl font-bold text-red-600">{bulkResults.suppressed?.length || 0}</p>
+                </div>
+                <div className="p-3 bg-white border rounded">
+                  <p className="text-sm text-gray-500">Not Suppressed</p>
+                  <p className="text-xl font-bold text-green-600">{bulkResults.not_suppressed?.length || 0}</p>
+                </div>
+              </div>
+              {bulkResults.suppressed?.length > 0 && (
+                <div className="mt-4">
+                  <p className="text-sm font-medium text-red-800 mb-1">Suppressed Emails:</p>
+                  <ul className="text-sm text-red-600 list-disc pl-5">
+                    {bulkResults.suppressed.map(email => <li key={email}>{email}</li>)}
+                  </ul>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
+  const ImportModal = () => (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-lg max-w-md w-full p-6">
+        <div className="flex justify-between items-center mb-4">
+          <h3 className="text-xl font-bold">Import Suppression CSV</h3>
+          <button onClick={() => setShowImportModal(false)} className="text-gray-500 hover:text-gray-700">
+            <XCircle className="h-6 w-6" />
+          </button>
+        </div>
+        <div className="mb-6">
+          <p className="text-sm text-gray-600 mb-4">
+            Upload a CSV file containing an "email" column. You can also include optional columns like "reason" and "scope".
+          </p>
+          <div className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center hover:border-blue-500 transition-colors cursor-pointer"
+               onClick={() => document.getElementById('csvImport').click()}>
+            <Upload className="h-10 w-10 text-gray-400 mx-auto mb-2" />
+            <p className="text-sm text-gray-600">Click to select CSV file</p>
+            <input
+              id="csvImport"
+              type="file"
+              accept=".csv"
+              className="hidden"
+              onChange={(e) => handleImportCSV(e.target.files[0])}
+            />
+          </div>
+        </div>
+        <div className="flex justify-end">
+          <button
+            onClick={() => setShowImportModal(false)}
+            className="px-4 py-2 border rounded-lg hover:bg-gray-50"
+            disabled={importing}
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
   return (
     <div className="space-y-8">
+      {showBulkCheckModal && <BulkCheckModal />}
+      {showImportModal && <ImportModal />}
       {/* Toast Notifications */}
       <div className="fixed top-4 right-4 z-50 space-y-2">
         {notifications.map(notification => (
