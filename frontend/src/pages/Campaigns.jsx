@@ -97,7 +97,7 @@ export default function Campaigns() {
   if (loading) return <p className="text-center mt-10">Loading campaigns…</p>;
 
   return (
-    <div className="max-w-4xl mx-auto mt-10">
+    <div className="space-y-6">
       {/* header */}
       <div className="flex justify-between items-center mb-6">
         <h2 className="text-2xl font-bold">📢 Campaigns</h2>
@@ -151,7 +151,7 @@ export default function Campaigns() {
                         c.status === 'sent'    ? 'bg-green-100 text-green-800' :
                         c.status === 'sending' ? 'bg-blue-100  text-blue-800'  :
                         c.status === 'stopped' ? 'bg-gray-200 text-gray-700'  :
-		        c.status === 'failed' ? 'bg-red-200 text-red-700'  :		      
+                        c.status === 'failed' ? 'bg-red-200 text-red-700'  :                  
                                                   'bg-yellow-100 text-yellow-800'
                       }`}>{c.status || 'draft'}</span>
                     </Td>
@@ -182,7 +182,7 @@ export default function Campaigns() {
                         <Link to={`/analytics/campaign/${c._id}`}
                               className="text-purple-600 hover:text-purple-800 hover:underline">📊 Report</Link>
 
-			{c.status === 'draft' &&
+                        {c.status === 'draft' &&
                         <button onClick={() => handleDelete(c._id)}
                                 className="text-red-600 hover:text-red-800 hover:underline">🗑️ Delete</button>}
                       </div>

@@ -1348,7 +1348,7 @@ export default function Subscribers() {
 
   // Main render
   return (
-    <div className="container mx-auto p-4">
+    <div className="space-y-6">
       <h1 className="text-2xl font-bold mb-4">📧 Enhanced Subscriber Management</h1>
 
       {/* ✅ ENHANCED Processing Banner */}

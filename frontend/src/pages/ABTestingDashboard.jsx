@@ -117,7 +117,7 @@ const ABTestingDashboard = () => {
   }
 
   return (
-    <div className="max-w-6xl mx-auto mt-10 p-6">
+    <div className="space-y-8">
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-3xl font-bold">🧪 A/B Testing Dashboard</h1>
         <button

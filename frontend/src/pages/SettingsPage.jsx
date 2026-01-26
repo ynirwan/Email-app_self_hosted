@@ -11,7 +11,7 @@ export default function SettingsPage() {
   ];
 
   return (
-    <div className="p-6">
+    <div className="space-y-6">
       <div className="flex space-x-4 border-b mb-4">
         {tabs.map(tab => (
           <Link

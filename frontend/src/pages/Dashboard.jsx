@@ -103,7 +103,7 @@ export default function Dashboard() {
   }
   
   return (
-    <div className="max-w-5xl mx-auto mt-10 space-y-10">
+    <div className="space-y-10">
       {/* User Welcome Section */}
       {user && (
       <div>
