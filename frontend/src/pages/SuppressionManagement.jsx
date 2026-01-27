@@ -751,19 +751,16 @@ const SuppressionManagement = () => {
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
-                  {suppressions.map((suppression) => {
-                    const isValidId = suppression.id && !suppression.id.toString().startsWith('temp-');
-                    
                     return (
                       <tr
                         key={suppression.id || `row-${suppression.email}`}
-                        className={`hover:bg-gray-50 ${selectedItems.includes(suppression.id) ? 'bg-blue-50' : ''} ${!isValidId ? 'bg-red-50' : ''}`}
+                        className={`hover:bg-gray-50 transition-colors ${!isValidId ? 'opacity-50' : ''}`}
                       >
                         <td className="px-6 py-4">
                           <input
                             type="checkbox"
-                            checked={selectedItems.includes(suppression.id)}
-                            onChange={() => handleSelectItem(suppression.id)}
+                            checked={isValidId && selectedItems.includes(suppression.id)}
+                            onChange={() => isValidId && handleSelectItem(suppression.id)}
                             disabled={!isValidId}
                             className="rounded"
                           />
@@ -903,7 +900,7 @@ const SuppressionManagement = () => {
       )}
 
       {showImportModal && (
-        <ImportSuppressionModal
+        <setShowImportModal
           onClose={() => setShowImportModal(false)}
           onImportComplete={() => {
             setShowImportModal(false);

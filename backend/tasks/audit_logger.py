@@ -51,20 +51,6 @@ class AuditEventType(Enum):
     WORKER_STOPPED = "worker_stopped"
     DATABASE_MIGRATION = "database_migration"
     
-    # Admin events
-    USER_LOGIN = "user_login"
-    USER_LOGOUT = "user_logout"
-    SETTINGS_CHANGED = "settings_changed"
-    TEMPLATE_CREATED = "template_created"
-    TEMPLATE_UPDATED = "template_updated"
-    TEMPLATE_DELETED = "template_deleted"
-    
-    # Security events
-    AUTHENTICATION_FAILED = "authentication_failed"
-    UNAUTHORIZED_ACCESS = "unauthorized_access"
-    RATE_LIMIT_EXCEEDED = "rate_limit_exceeded"
-    SUSPICIOUS_ACTIVITY = "suspicious_activity"
-    
     # Compliance events
     GDPR_DATA_EXPORT = "gdpr_data_export"
     GDPR_DATA_DELETION = "gdpr_data_deletion"
