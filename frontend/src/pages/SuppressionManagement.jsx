@@ -335,7 +335,7 @@ const SuppressionManagement = () => {
     setBulkChecking(true);
     try {
       const emails = bulkEmails.split(/[\n,]+/).map(e => e.trim()).filter(e => e);
-      const response = await API.post('/suppressions/check-bulk', { emails });
+      const response = await API.post('/suppressions/bulk-check', { emails });
       setBulkResults(response.data);
       showToast('Bulk check completed', 'success');
     } catch (err) {

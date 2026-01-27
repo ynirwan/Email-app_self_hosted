@@ -38,8 +38,8 @@ export default function Login() {
       
       console.log('✅ Token verified, navigating to dashboard...')
       
-      // ✅ Use replace to prevent back button issues
-      navigate('/', { replace: true })
+      // ✅ Force a hard refresh to ensure all context and state is clean
+      window.location.assign('/');
       
     } catch (err) {
       console.error('❌ Login failed:', err)
