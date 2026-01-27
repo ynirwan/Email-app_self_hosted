@@ -751,6 +751,9 @@ const SuppressionManagement = () => {
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
+                  {suppressions.map((suppression) => {
+                    const isValidId = suppression.id && !suppression.id.toString().startsWith('temp-');
+                    
                     return (
                       <tr
                         key={suppression.id || `row-${suppression.email}`}
