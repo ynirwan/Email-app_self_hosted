@@ -349,12 +349,6 @@ const EnhancedSegmentTable = ({ data, height = 400, onPreview, onEdit, onDelete 
                       Preview
                     </button>
                     <button
-                      onClick={() => onEdit(segment)}
-                      className="text-orange-600 hover:underline text-sm"
-                    >
-                      Edit
-                    </button>
-                    <button
                       onClick={() => onDelete(segment._id, segment.name)}
                       className="text-red-600 hover:underline text-sm"
                     >
@@ -462,16 +456,22 @@ const EnhancedSegmentModal = ({
       <div className="bg-white p-6 rounded-lg shadow-xl w-full max-w-6xl max-h-[95vh] overflow-y-auto">
         <div className="flex justify-between items-center mb-6">
           <h3 className="text-xl font-bold">
-            {isEditing ? '✏️ Edit Segment' : '➕ Create New Segment'}
+            {isEditing ? '✏️ View Segment Details' : '➕ Create New Segment'}
             <span className="text-sm font-normal text-gray-600 ml-2">(8 Segmentation Types Available)</span>
           </h3>
           <button onClick={onClose} className="text-gray-600 hover:text-black text-xl">✖</button>
         </div>
+        {isEditing && (
+          <div className="mb-4 p-3 bg-orange-50 border border-orange-200 text-orange-800 rounded-lg text-sm flex items-center gap-2">
+            <span>⚠️</span>
+            <span>Segments cannot be modified once created. You are viewing the current configuration.</span>
+          </div>
+        )}
 
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
           {/* Left Column - Basic Info & Preview */}
           <div className="lg:col-span-1">
-            <div className="space-y-4">
+            <div className={`space-y-4 ${isEditing ? 'pointer-events-none opacity-80' : ''}`}>
               <div>
                 <label className="block font-semibold mb-2">Segment Name *</label>
                 <input
@@ -480,6 +480,7 @@ const EnhancedSegmentModal = ({
                   onChange={(e) => setSegmentForm({...segmentForm, name: e.target.value})}
                   className="w-full border rounded p-2"
                   placeholder="e.g., High Value Tech Users"
+                  disabled={isEditing}
                 />
               </div>
 
@@ -490,19 +491,22 @@ const EnhancedSegmentModal = ({
                   onChange={(e) => setSegmentForm({...segmentForm, description: e.target.value})}
                   className="w-full border rounded p-2 h-20"
                   placeholder="Describe this segment..."
+                  disabled={isEditing}
                 />
               </div>
 
               <div className="bg-blue-50 p-4 rounded">
                 <div className="flex items-center justify-between mb-2">
                   <span className="font-semibold">Preview Count</span>
-                  <button
-                    onClick={handlePreviewCount}
-                    disabled={previewLoading}
-                    className="text-sm bg-blue-600 text-white px-3 py-1 rounded hover:bg-blue-700 disabled:opacity-50"
-                  >
-                    {previewLoading ? '⏳' : '🔄'} Count
-                  </button>
+                  {!isEditing && (
+                    <button
+                      onClick={handlePreviewCount}
+                      disabled={previewLoading}
+                      className="text-sm bg-blue-600 text-white px-3 py-1 rounded hover:bg-blue-700 disabled:opacity-50"
+                    >
+                      {previewLoading ? '⏳' : '🔄'} Count
+                    </button>
+                  )}
                 </div>
                 <div className="text-2xl font-bold text-blue-600">
                   {previewCount.toLocaleString()} subscribers
@@ -512,7 +516,7 @@ const EnhancedSegmentModal = ({
           </div>
 
           {/* Right Column - 8 Segmentation Types */}
-          <div className="lg:col-span-3">
+          <div className={`lg:col-span-3 ${isEditing ? 'pointer-events-none opacity-80' : ''}`}>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               
               {/* 1. 📊 Subscriber Status */}
