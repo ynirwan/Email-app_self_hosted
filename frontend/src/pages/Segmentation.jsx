@@ -462,9 +462,12 @@ const EnhancedSegmentModal = ({
           <button onClick={onClose} className="text-gray-600 hover:text-black text-xl">✖</button>
         </div>
         {isEditing && (
-          <div className="mb-4 p-3 bg-orange-50 border border-orange-200 text-orange-800 rounded-lg text-sm flex items-center gap-2">
-            <span>⚠️</span>
-            <span>Segments cannot be modified once created. You are viewing the current configuration.</span>
+          <div className="mb-4 p-4 bg-orange-100 border-l-4 border-orange-500 text-orange-900 rounded shadow-sm flex items-start gap-3">
+            <span className="text-xl">⚠️</span>
+            <div>
+              <p className="font-bold">Immutable Segment</p>
+              <p className="text-sm">Segments cannot be modified once created to maintain data integrity. You are viewing the current configuration.</p>
+            </div>
           </div>
         )}
 

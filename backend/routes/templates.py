@@ -24,7 +24,7 @@ class TemplateRenderer:
         return [m.strip() for m in matches]
     
     @staticmethod
-    def render_drag_drop_template(blocks: List[Dict], fields_data: Dict = None) -> str:
+    def render_drag_drop_template(blocks: List[Dict], fields_data: Dict = {}) -> str:
         """Render drag-drop template blocks to HTML"""
         if not blocks:
             return ""
@@ -101,7 +101,7 @@ class TemplateRenderer:
         return ''.join(html_parts)
     
     @staticmethod
-    def render_html_template(html_content: str, fields_data: Dict = None) -> str:
+    def render_html_template(html_content: str, fields_data: Dict = {}) -> str:
         """Render HTML template with field replacements"""
         if not html_content:
             return ""
@@ -248,7 +248,7 @@ async def get_template_fields(template_id: str):
     return doc.get("fields", [])
 
 @router.post("/{template_id}/render")
-async def render_template(template_id: str, fields_data: Dict[str, Any] = None):
+async def render_template(template_id: str, fields_data: Dict[str, Any] = {}):
     """Render template to HTML with optional field data"""
     col = get_templates_collection()
     
