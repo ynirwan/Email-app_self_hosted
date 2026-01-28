@@ -182,6 +182,9 @@ async def bulk_check_suppressions_optimized(emails: List[str], target_lists: Lis
         if email not in suppressions or suppression["scope"] == "global":
             suppressions[email] = suppression
 
+    # Log found suppressions for debugging
+    logger.info(f"Bulk check: Found {len(suppressions)} active suppressions for {len(emails)} emails")
+
     # Build results for all emails
     for email in emails:
         if email in suppressions:

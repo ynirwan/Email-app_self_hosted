@@ -840,18 +840,18 @@ const SuppressionManagement = () => {
                           <div className="flex space-x-2">
                             <button
                               onClick={() => {
-                                // 🔥 DEBUG: Log the suppression object to identify ID issues
-                                console.log('Delete button clicked - Suppression object:', suppression);
-                                console.log('Delete button clicked - ID:', suppression.id);
-                                console.log('Delete button clicked - _id:', suppression._id);
-                                
-                                handleDeleteSuppression(suppression.id);
+                                // Only allow delete if suppression is inactive
+                                if (!suppression.is_active) {
+                                  handleDeleteSuppression(suppression.id);
+                                } else {
+                                  showToast('Only inactive suppressions can be deleted', 'error');
+                                }
                               }}
-                              disabled={!isValidId}
+                              disabled={suppression.is_active}
                               className={`text-red-600 hover:text-red-900 transition-colors ${
-                                !isValidId ? 'opacity-50 cursor-not-allowed' : ''
+                                suppression.is_active ? 'opacity-50 cursor-not-allowed' : ''
                               }`}
-                              title={isValidId ? 'Delete suppression' : 'Cannot delete - Invalid ID'}
+                              title={!suppression.is_active ? 'Delete suppression' : 'Cannot delete active suppression'}
                             >
                               <Trash2 className="h-4 w-4" />
                             </button>
