@@ -610,13 +610,13 @@ async def queue_status():
 @app.get("/", tags=["Root"])
 async def root():
     """API root endpoint"""
+    # Root endpoint
     return {
         "message": f"Welcome to {settings.APP_NAME}",
         "version": settings.APP_VERSION,
         "environment": settings.ENVIRONMENT,
         "status": "operational",
-        "documentation": "/docs"
-        if settings.DEBUG_MODE else "Contact support for API documentation",
+        "documentation": "/docs" if getattr(settings, 'DEBUG_MODE', True) else "Contact support for API documentation",
         "health_check": "/health",
         "endpoints": {
             "authentication": "/api/auth",

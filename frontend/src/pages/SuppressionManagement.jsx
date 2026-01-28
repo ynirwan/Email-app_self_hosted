@@ -408,19 +408,33 @@ const SuppressionManagement = () => {
               <div className="grid grid-cols-2 gap-4">
                 <div className="p-3 bg-white border rounded">
                   <p className="text-sm text-gray-500">Suppressed</p>
-                  <p className="text-xl font-bold text-red-600">{bulkResults.suppressed?.length || 0}</p>
+                  <p className="text-xl font-bold text-red-600">
+                    {Object.values(bulkResults.results || {}).filter(r => r.is_suppressed).length}
+                  </p>
                 </div>
                 <div className="p-3 bg-white border rounded">
                   <p className="text-sm text-gray-500">Not Suppressed</p>
-                  <p className="text-xl font-bold text-green-600">{bulkResults.not_suppressed?.length || 0}</p>
+                  <p className="text-xl font-bold text-green-600">
+                    {Object.values(bulkResults.results || {}).filter(r => !r.is_suppressed).length}
+                  </p>
                 </div>
               </div>
-              {bulkResults.suppressed?.length > 0 && (
+              
+              {Object.values(bulkResults.results || {}).filter(r => r.is_suppressed).length > 0 && (
                 <div className="mt-4">
-                  <p className="text-sm font-medium text-red-800 mb-1">Suppressed Emails:</p>
-                  <ul className="text-sm text-red-600 list-disc pl-5">
-                    {bulkResults.suppressed.map(email => <li key={email}>{email}</li>)}
-                  </ul>
+                  <p className="text-sm font-medium text-red-800 mb-1">Suppressed Emails & Reasons:</p>
+                  <div className="space-y-2">
+                    {Object.values(bulkResults.results)
+                      .filter(r => r.is_suppressed)
+                      .map(result => (
+                        <div key={result.email} className="bg-red-50 p-2 rounded border border-red-100 flex justify-between items-center">
+                          <span className="text-sm font-medium text-red-700">{result.email}</span>
+                          <span className="text-xs bg-red-100 text-red-800 px-2 py-0.5 rounded uppercase font-bold">
+                            {result.reason || 'Suppressed'}
+                          </span>
+                        </div>
+                      ))}
+                  </div>
                 </div>
               )}
             </div>
@@ -838,23 +852,7 @@ const SuppressionManagement = () => {
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                           <div className="flex space-x-2">
-                            <button
-                              onClick={() => {
-                                // Only allow delete if suppression is inactive
-                                if (!suppression.is_active) {
-                                  handleDeleteSuppression(suppression.id);
-                                } else {
-                                  showToast('Only inactive suppressions can be deleted', 'error');
-                                }
-                              }}
-                              disabled={suppression.is_active}
-                              className={`text-red-600 hover:text-red-900 transition-colors ${
-                                suppression.is_active ? 'opacity-50 cursor-not-allowed' : ''
-                              }`}
-                              title={!suppression.is_active ? 'Delete suppression' : 'Cannot delete active suppression'}
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </button>
+                            {/* Deletion removed completely for inactive records as requested */}
                           </div>
                         </td>
                       </tr>
