@@ -6,10 +6,11 @@ const API = axios.create({
     "https://5474f674-6074-4eb8-8818-15946bef35a1-00-1y8lhfj74gqcq.pike.replit.dev:8000/api",
 });
 
-// Fix 307 Redirects by ensuring trailing slashes for POST/PUT requests
+// Fix 307 Redirects by ensuring trailing slashes for ALL requests (GET, POST, PUT, DELETE)
 API.interceptors.request.use(
   (config) => {
-    if ((config.method === 'post' || config.method === 'put') && !config.url.endsWith('/')) {
+    // Only append trailing slash if it doesn't have one and isn't a file path (has extension)
+    if (!config.url.endsWith('/') && !config.url.split('/').pop().includes('.')) {
       config.url += '/';
     }
     const token = localStorage.getItem("token");
