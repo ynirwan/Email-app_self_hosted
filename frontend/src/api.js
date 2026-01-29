@@ -6,22 +6,20 @@ const API = axios.create({
     "https://5474f674-6074-4eb8-8818-15946bef35a1-00-1y8lhfj74gqcq.pike.replit.dev:8000/api",
 });
 
-// Request interceptor to add token
+// Fix 307 Redirects by ensuring trailing slashes for POST/PUT requests
 API.interceptors.request.use(
-  (req) => {
+  (config) => {
+    if ((config.method === 'post' || config.method === 'put') && !config.url.endsWith('/')) {
+      config.url += '/';
+    }
     const token = localStorage.getItem("token");
     if (token) {
-      req.headers.Authorization = `Bearer ${token}`;
-      console.log("🔑 Token attached to request:", req.url);
-    } else {
-      console.warn("⚠️  No token found for request:", req.url);
+      config.headers.Authorization = `Bearer ${token}`;
+      console.log("🔑 Token attached to request:", config.url);
     }
-    return req;
+    return config;
   },
-  (error) => {
-    console.error("❌ Request interceptor error:", error);
-    return Promise.reject(error);
-  },
+  (error) => Promise.reject(error)
 );
 
 // Response interceptor to handle 401 errors
