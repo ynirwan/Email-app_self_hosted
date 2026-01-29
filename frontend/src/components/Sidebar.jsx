@@ -125,10 +125,9 @@ export default function Sidebar() {
         transition-transform duration-300 ease-in-out
       `}>
         {/* Header with Animated Logo */}
-          {/* Header with Animated Logo */}
 <div className="h-24 flex items-center justify-center">
-  <div className="flex items-center justify-center w-full h-full bg-gradient-to-r from-blue-800 to-blue-600">
-    <ZeniPostLogo size={64} variant="animated" />
+  <div className="flex items-center justify-center w-full h-full bg-slate-900 border-b border-slate-800">
+    <ZeniPostLogo size={32} variant="animated" />
   </div>
 </div>
 
