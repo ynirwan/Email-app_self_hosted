@@ -6,23 +6,9 @@ const API = axios.create({
     "https://5474f674-6074-4eb8-8818-15946bef35a1-00-1y8lhfj74gqcq.pike.replit.dev:8000/api",
 });
 
-// Fix 307 Redirects by ensuring trailing slashes for ALL requests (GET, POST, PUT, DELETE)
+// ✅ SIMPLIFIED - REMOVED all slash manipulation logic
 API.interceptors.request.use(
   (config) => {
-    // Check if the URL already has a trailing slash or is an absolute URL with a path that looks like a file
-    const hasTrailingSlash = config.url.endsWith('/');
-    const isFilePath = config.url.split('/').pop().includes('.');
-    
-    // TEMPLATE EXCEPTION: The templates endpoint MUST have a trailing slash due to backend routing structure
-    const isTemplatesEndpoint = config.url.includes('/templates');
-
-    if (isTemplatesEndpoint && !hasTrailingSlash) {
-        config.url += '/';
-    } else if (!isTemplatesEndpoint && hasTrailingSlash && config.url !== '/') {
-        // REMOVE trailing slash for non-template endpoints to avoid 307 redirects on standard routes
-        config.url = config.url.slice(0, -1);
-    }
-    
     const token = localStorage.getItem("token");
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
@@ -30,7 +16,7 @@ API.interceptors.request.use(
     }
     return config;
   },
-  (error) => Promise.reject(error)
+  (error) => Promise.reject(error),
 );
 
 // Response interceptor to handle 401 errors
