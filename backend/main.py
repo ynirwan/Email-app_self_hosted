@@ -97,7 +97,7 @@ except ImportError:
     dlq_manager = None
 
 # Import your existing routes
-from routes import (auth, subscribers, campaigns, stats, setting, templates,
+from routes import (auth, subscribers, campaigns, stats, templates, setting,
                     domains, analytics, email_settings, webhooks, suppressions,
                     segments, ab_testing, automation, events,
                     automation_analytics, audit)
@@ -206,6 +206,7 @@ app = FastAPI(
     docs_url="/docs" if settings.DEBUG_MODE else None,
     redoc_url="/redoc" if settings.DEBUG_MODE else None,
     lifespan=lifespan,
+    redirect_slashes=False,
     # OpenAPI customization
     contact={
         "name": "API Support",
@@ -616,7 +617,8 @@ async def root():
         "version": settings.APP_VERSION,
         "environment": settings.ENVIRONMENT,
         "status": "operational",
-        "documentation": "/docs" if getattr(settings, 'DEBUG_MODE', True) else "Contact support for API documentation",
+        "documentation": "/docs" if getattr(settings, 'DEBUG_MODE', True) else
+        "Contact support for API documentation",
         "health_check": "/health",
         "endpoints": {
             "authentication": "/api/auth",
@@ -635,6 +637,11 @@ async def root():
 # REGISTER APPLICATION ROUTES
 # ============================================
 
+# Templates
+app.include_router(templates.router,
+                   prefix="/api/templates",
+                   tags=["Templates"])
+
 # Authentication
 app.include_router(auth.router, prefix="/api/auth", tags=["Authentication"])
 
@@ -643,19 +650,11 @@ app.include_router(subscribers.router,
                    prefix="/api/subscribers",
                    tags=["Subscribers"])
 
-# Campaigns
-app.include_router(campaigns.router, prefix="/api", tags=["Campaigns"])
-
 # Dashboard Stats
 app.include_router(stats.router, prefix="/api/stats", tags=["Statistics"])
 
 # Settings
 app.include_router(setting.router, prefix="/api/settings", tags=["Settings"])
-
-# Templates
-app.include_router(templates.router,
-                   prefix="/api/templates",
-                   tags=["Templates"])
 
 # Domains
 app.include_router(domains.router, prefix="/api/domains", tags=["Domains"])
@@ -670,9 +669,6 @@ app.include_router(email_settings.router,
                    prefix="/api/email",
                    tags=["Email Settings"])
 
-# Webhooks
-app.include_router(webhooks.router, prefix="/api", tags=["Webhooks"])
-
 # Suppressions
 app.include_router(suppressions.router,
                    prefix="/api/suppressions",
@@ -680,6 +676,12 @@ app.include_router(suppressions.router,
 
 # Segments
 app.include_router(segments.router, prefix="/api/segments", tags=["Segments"])
+
+# Campaigns
+app.include_router(campaigns.router, prefix="/api", tags=["Campaigns"])
+
+# Webhooks
+app.include_router(webhooks.router, prefix="/api", tags=["Webhooks"])
 
 # A/B Testing
 app.include_router(ab_testing.router, prefix="/api", tags=["A/B Testing"])
