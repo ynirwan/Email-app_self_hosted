@@ -163,7 +163,7 @@ async def create_template(template: TemplateCreate):
     return doc
 
 
-@router.get("/", response_model=List[TemplateOut])
+@router.get("", response_model=List[TemplateOut])
 async def list_templates(mode: Optional[str] = None):
     """List all templates, optionally filtered by mode"""
     col = get_templates_collection()
