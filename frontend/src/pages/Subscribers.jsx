@@ -1009,30 +1009,30 @@ export default function Subscribers() {
     const isCompleted = job && job.status === 'completed';
   
     return (
-      <tr key={`${list._id}-${index}`} className="border-t hover:bg-gray-50" style={{ height: 40 }}>
-        <td className="p-2 font-medium">
-          <div className="flex items-center space-x-2">
-            <span>{list._id}</span>
+      <tr key={`${list._id}-${index}`} className="border-t hover:bg-gray-50">
+        <td className="p-2 font-medium max-w-xs">
+          <div className="flex flex-col gap-1">
+            <span className="truncate block" title={list._id}>{list._id}</span>
             
             {isProcessing && (
-              <div className="flex items-center space-x-1">
-                <div className="animate-spin h-3 w-3 border border-blue-600 border-t-transparent rounded-full"></div>
-                <span className="text-xs text-blue-600 bg-blue-50 px-2 py-1 rounded">
+              <div className="flex items-center gap-1 flex-wrap">
+                <div className="animate-spin h-3 w-3 border border-blue-600 border-t-transparent rounded-full flex-shrink-0"></div>
+                <span className="text-xs text-blue-600 bg-blue-50 px-2 py-0.5 rounded whitespace-nowrap">
                   {job.status === 'pending' ? 'Queued' : 'Processing'}
                 </span>
                 {job.optimization_used && (
-                  <span className="text-xs text-green-600 bg-green-50 px-1 py-1 rounded">⚡</span>
+                  <span className="text-xs text-green-600 bg-green-50 px-1 py-0.5 rounded">⚡</span>
                 )}
               </div>
             )}
             
             {isCompleted && (
-              <div className="flex items-center space-x-1">
-                <span className="text-xs text-green-600 bg-green-50 px-2 py-1 rounded">
+              <div className="flex items-center gap-1 flex-wrap">
+                <span className="text-xs text-green-600 bg-green-50 px-2 py-0.5 rounded whitespace-nowrap">
                   ✅ Completed
                 </span>
                 {job.records_per_second > 0 && (
-                  <span className="text-xs text-gray-500">
+                  <span className="text-xs text-gray-500 whitespace-nowrap">
                     {job.records_per_second.toLocaleString()}/sec
                   </span>
                 )}
@@ -1040,12 +1040,12 @@ export default function Subscribers() {
             )}
             
             {isFailed && (
-              <div className="flex items-center space-x-1">
-                <span className="text-xs text-red-600 bg-red-50 px-2 py-1 rounded">
+              <div className="flex items-center gap-1 flex-wrap">
+                <span className="text-xs text-red-600 bg-red-50 px-2 py-0.5 rounded whitespace-nowrap">
                   ❌ Failed
                 </span>
                 {job.recovery_available && (
-                  <span className="text-xs text-orange-600 bg-orange-50 px-1 py-1 rounded">
+                  <span className="text-xs text-orange-600 bg-orange-50 px-1 py-0.5 rounded whitespace-nowrap">
                     🔧 Recoverable
                   </span>
                 )}

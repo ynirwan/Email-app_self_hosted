@@ -281,7 +281,7 @@ class TemplateProcessor:
             return content
 
     def _build_nested_context(self, context: Dict[str, Any]) -> Dict[str, Any]:
-        """Build nested objects from dot notation keys"""
+        """Build nested objects from dot notation keys and parse string arrays"""
         nested = dict(context)  # Start with flat context
 
         for key, value in context.items():
@@ -296,6 +296,55 @@ class TemplateProcessor:
                     current = current[part]
                 # Set the final value
                 current[parts[-1]] = value
+        
+        # Parse string arrays into actual lists for Jinja2 for loops
+        for key, value in list(nested.items()):
+            if isinstance(value, str) and ';' in value and '|' in value:
+                # Format: "name|price|on_sale|description; name2|price2|..."
+                try:
+                    parsed_items = []
+                    items_str = value.strip()
+                    if items_str:
+                        for item_str in items_str.split(';'):
+                            item_str = item_str.strip()
+                            if item_str and '|' in item_str:
+                                parts = item_str.split('|')
+                                if len(parts) >= 2:
+                                    item_obj = {
+                                        'name': parts[0].strip() if len(parts) > 0 else '',
+                                        'price': parts[1].strip() if len(parts) > 1 else '',
+                                        'on_sale': parts[2].strip().lower() in ('true', '1', 'yes') if len(parts) > 2 else False,
+                                        'description': parts[3].strip() if len(parts) > 3 else ''
+                                    }
+                                    parsed_items.append(item_obj)
+                    if parsed_items:
+                        nested[key] = parsed_items
+                        logger.info(f"✅ Parsed '{key}' from string to {len(parsed_items)} items for Jinja2 loop")
+                except Exception as e:
+                    logger.warning(f"Failed to parse string array for '{key}': {e}")
+            
+            # Also handle promo object format: "code|description|expires_at"
+            elif isinstance(value, str) and '|' in value and ';' not in value and key == 'promo':
+                try:
+                    parts = value.split('|')
+                    if len(parts) >= 2:
+                        nested[key] = {
+                            'code': parts[0].strip() if len(parts) > 0 else '',
+                            'description': parts[1].strip() if len(parts) > 1 else '',
+                            'expires_at': parts[2].strip() if len(parts) > 2 else ''
+                        }
+                        logger.info(f"✅ Parsed 'promo' from string to object")
+                except Exception as e:
+                    logger.warning(f"Failed to parse promo object: {e}")
+        
+        logger.info(f"🔍 Nested context keys: {list(nested.keys())[:15]}")
+        if 'items' in nested:
+            logger.info(f"🔍 Items type: {type(nested['items'])}")
+            if isinstance(nested['items'], list):
+                logger.info(f"🔍 Items count: {len(nested['items'])}")
+            else:
+                logger.info(f"🔍 Items value: {str(nested['items'])[:100]}")
+        
         return nested
 
     def _process_conditionals(self, content: str, context: Dict[str, Any]) -> str:
