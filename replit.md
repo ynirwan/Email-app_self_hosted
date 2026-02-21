@@ -109,3 +109,20 @@ Preferred communication style: Simple, everyday language.
 ### HTTP/Async
 - **httpx/aiohttp**: Async HTTP clients for external API calls.
 - **aioredis**: Async Redis operations.
+
+### Logging
+- **Centralized file logging** in `var/log/` directory with rotating file handlers:
+  - `app.log` - All application logs from every module (routes, tasks, database, middleware, uvicorn)
+  - `error.log` - Error-level logs only for quick troubleshooting
+  - `access.log` - HTTP request/response access logs
+  - `celery.log` - Celery worker task logs
+  - `celery_error.log` - Celery error-only logs
+- Log rotation: 10MB per file, 5 backups kept
+- Console output also preserved for live monitoring
+
+## Recent Changes (2026-02-21)
+- Added list dropdown with dynamic field loading to Add Subscriber modal
+- Fixed horizontal scrolling in SubscriberListView (sidebar-aware layout constraints)
+- Auto-cleanup of completed upload jobs (5-min server-side cleanup, frontend filters completed)
+- Comprehensive file-based logging to var/log/ with app, error, access, and celery logs
+- Backend endpoint: GET /subscribers/lists/{list_name}/fields for per-list field discovery
