@@ -28,6 +28,7 @@ Preferred communication style: Simple, everyday language.
 - `analytics.py` & `stats.py` - Campaign performance metrics
 - `webhooks.py` - AWS SES webhook handling for bounces/complaints
 - `suppressions.py` - Email suppression list management
+- `ab_testing.py` - Independent A/B testing system (separated from campaigns)
 
 **Background Tasks**: Celery handles long-running operations:
 - Email campaign batch sending
