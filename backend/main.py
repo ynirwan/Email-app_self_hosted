@@ -109,40 +109,55 @@ from routes import (auth, subscribers, campaigns, stats, templates, setting,
 LOG_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "var", "log")
 os.makedirs(LOG_DIR, exist_ok=True)
 
-log_format = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-log_level = getattr(logging, settings.LOG_LEVEL, logging.INFO)
-
 from logging.handlers import RotatingFileHandler
 
-root_logger = logging.getLogger()
-root_logger.setLevel(log_level)
+log_format = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+access_log_format = '%(asctime)s - %(message)s'
+log_level = getattr(logging, settings.LOG_LEVEL, logging.INFO)
 
-if not any(isinstance(h, RotatingFileHandler) for h in root_logger.handlers):
+def _setup_file_logging():
+    root_logger = logging.getLogger()
+    if any(isinstance(h, RotatingFileHandler) for h in root_logger.handlers):
+        return
+    root_logger.setLevel(log_level)
+
+    formatter = logging.Formatter(log_format)
+
     console_handler = logging.StreamHandler()
     console_handler.setLevel(log_level)
-    console_handler.setFormatter(logging.Formatter(log_format))
-
-    app_file_handler = RotatingFileHandler(
-        os.path.join(LOG_DIR, "app.log"),
-        maxBytes=10 * 1024 * 1024,
-        backupCount=5
-    )
-    app_file_handler.setLevel(log_level)
-    app_file_handler.setFormatter(logging.Formatter(log_format))
-
-    error_file_handler = RotatingFileHandler(
-        os.path.join(LOG_DIR, "error.log"),
-        maxBytes=10 * 1024 * 1024,
-        backupCount=5
-    )
-    error_file_handler.setLevel(logging.ERROR)
-    error_file_handler.setFormatter(logging.Formatter(log_format))
-
+    console_handler.setFormatter(formatter)
     root_logger.addHandler(console_handler)
-    root_logger.addHandler(app_file_handler)
-    root_logger.addHandler(error_file_handler)
 
-logger.info(f"Logging configured at {settings.LOG_LEVEL} level - files in {LOG_DIR}")
+    app_handler = RotatingFileHandler(
+        os.path.join(LOG_DIR, "app.log"), maxBytes=10*1024*1024, backupCount=5)
+    app_handler.setLevel(log_level)
+    app_handler.setFormatter(formatter)
+    root_logger.addHandler(app_handler)
+
+    error_handler = RotatingFileHandler(
+        os.path.join(LOG_DIR, "error.log"), maxBytes=10*1024*1024, backupCount=5)
+    error_handler.setLevel(logging.ERROR)
+    error_handler.setFormatter(formatter)
+    root_logger.addHandler(error_handler)
+
+    access_handler = RotatingFileHandler(
+        os.path.join(LOG_DIR, "access.log"), maxBytes=10*1024*1024, backupCount=5)
+    access_handler.setLevel(logging.INFO)
+    access_handler.setFormatter(logging.Formatter(access_log_format))
+
+    for uvi_name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
+        uvi_logger = logging.getLogger(uvi_name)
+        uvi_logger.handlers = []
+        uvi_logger.propagate = True
+    logging.getLogger("uvicorn.access").addHandler(access_handler)
+
+    for mod_name in ("routes", "tasks", "database", "core", "celery",
+                      "motor", "pymongo", "fastapi", "httpx", "aiohttp"):
+        logging.getLogger(mod_name).setLevel(log_level)
+
+_setup_file_logging()
+logger.info(f"Logging configured at {settings.LOG_LEVEL} level")
+logger.info(f"Log files: {LOG_DIR}/app.log, error.log, access.log")
 
 # ============================================
 # APPLICATION LIFESPAN MANAGEMENT

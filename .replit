@@ -41,24 +41,24 @@ outputType = "webview"
 name = "Backend"
 author = "agent"
 
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "cd backend && uvicorn main:app --host 0.0.0.0 --port 8000"
-waitForPort = 8000
-
 [workflows.workflow.metadata]
 outputType = "console"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "cd backend && uvicorn main:app --host 0.0.0.0 --port 8000 --access-log"
+waitForPort = 8000
 
 [[workflows.workflow]]
 name = "Celery Worker"
 author = "agent"
 
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "cd backend && celery -A celery_app worker --loglevel=info --queues=campaigns,automation,recovery,ses_events,webhooks,subscribers,suppressions,dlq,monitoring,analytics,templates,cleanup"
-
 [workflows.workflow.metadata]
 outputType = "console"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "cd backend && celery -A celery_app worker --loglevel=info --logfile=../var/log/celery.log --queues=campaigns,automation,recovery,ses_events,webhooks,subscribers,suppressions,dlq,monitoring,analytics,templates,cleanup"
 
 [[ports]]
 localPort = 5000

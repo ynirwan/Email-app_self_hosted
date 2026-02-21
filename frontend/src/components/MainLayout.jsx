@@ -14,11 +14,9 @@ export default function MainLayout({ children }) {
   );
 
   return (
-    <div className={needsSidebarSpacing ? 'ml-64' : ''}>
-      <div className="min-h-screen bg-gray-50 flex flex-col">
-        <div className="flex-1">
-          {children}
-        </div>
+    <div className={`${needsSidebarSpacing ? 'ml-64' : ''} min-h-screen bg-gray-50`}>
+      <div className="min-w-0 w-full">
+        {children}
       </div>
     </div>
   );
