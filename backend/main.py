@@ -106,10 +106,43 @@ from routes import (auth, subscribers, campaigns, stats, templates, setting,
 # LOGGING CONFIGURATION
 # ============================================
 
-logging.basicConfig(
-    level=getattr(logging, settings.LOG_LEVEL, 'INFO'),
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger.info(f"Logging configured at {settings.LOG_LEVEL} level")
+LOG_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "var", "log")
+os.makedirs(LOG_DIR, exist_ok=True)
+
+log_format = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+log_level = getattr(logging, settings.LOG_LEVEL, logging.INFO)
+
+from logging.handlers import RotatingFileHandler
+
+root_logger = logging.getLogger()
+root_logger.setLevel(log_level)
+
+if not any(isinstance(h, RotatingFileHandler) for h in root_logger.handlers):
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(log_level)
+    console_handler.setFormatter(logging.Formatter(log_format))
+
+    app_file_handler = RotatingFileHandler(
+        os.path.join(LOG_DIR, "app.log"),
+        maxBytes=10 * 1024 * 1024,
+        backupCount=5
+    )
+    app_file_handler.setLevel(log_level)
+    app_file_handler.setFormatter(logging.Formatter(log_format))
+
+    error_file_handler = RotatingFileHandler(
+        os.path.join(LOG_DIR, "error.log"),
+        maxBytes=10 * 1024 * 1024,
+        backupCount=5
+    )
+    error_file_handler.setLevel(logging.ERROR)
+    error_file_handler.setFormatter(logging.Formatter(log_format))
+
+    root_logger.addHandler(console_handler)
+    root_logger.addHandler(app_file_handler)
+    root_logger.addHandler(error_file_handler)
+
+logger.info(f"Logging configured at {settings.LOG_LEVEL} level - files in {LOG_DIR}")
 
 # ============================================
 # APPLICATION LIFESPAN MANAGEMENT
