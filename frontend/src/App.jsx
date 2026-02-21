@@ -17,7 +17,8 @@ import DomainSettings from './pages/DomainSettings';
 import TemplatesPage from './pages/TemplatesPage';
 import SuppressionManagement from './pages/SuppressionManagement';
 import Segmentation from './pages/Segmentation';
-import ABTestingDashboard from './pages/ABTestingDashboard'; // ✅ Add this import
+import ABTestingDashboard from './pages/ABTestingDashboard';
+import ABTestCreator from './pages/ABTestCreator';
 import ABTestResults from './pages/ABTestResults';
 
 
@@ -55,7 +56,8 @@ const App = () => {
             <Route path="audit" element={<AuditTrail />} />
             <Route path="suppressions" element={<SuppressionManagement />} />
             <Route path="/segmentation" element={<Segmentation />} />
-            <Route path="ab-testing" element={<ABTestingDashboard />} /> 
+            <Route path="ab-testing" element={<ABTestingDashboard />} />
+            <Route path="ab-testing/create" element={<ABTestCreator />} />
             <Route path="ab-tests/:testId/results" element={<ABTestResults />} />
                 
 
