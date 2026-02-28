@@ -270,6 +270,16 @@ def send_single_campaign_email(self, campaign_id: str, subscriber_id: str):
             if key not in personalization_context:
                 personalization_context[key] = value
         
+        # ✅ Generate unsubscribe token and URL
+        try:
+            from routes.unsubscribe import generate_unsubscribe_token, build_unsubscribe_url
+            unsub_token = generate_unsubscribe_token(campaign_id, subscriber_id, recipient_email)
+            unsub_url = build_unsubscribe_url(unsub_token)
+            personalization_context["unsubscribe_url"] = unsub_url
+        except Exception as unsub_err:
+            logger.warning(f"Failed to generate unsubscribe token: {unsub_err}")
+            personalization_context["unsubscribe_url"] = "#"
+        
         # ✅ Add system fields
         personalization_context.update({
             "subscriber_id": str(subscriber.get("_id", "")),
@@ -316,7 +326,8 @@ def send_single_campaign_email(self, campaign_id: str, subscriber_id: str):
                 text_content=personalized.get("text_content"),
                 campaign_id=campaign_id,
                 reply_to=reply_to,
-                timeout=settings.EMAIL_SEND_TIMEOUT_SECONDS
+                timeout=settings.EMAIL_SEND_TIMEOUT_SECONDS,
+                unsubscribe_url=personalization_context.get("unsubscribe_url", "")
             )
             
             # ===== STEP 7: RESULT PROCESSING =====
@@ -819,4 +830,41 @@ def start_campaign(self, campaign_id: str):
         
     except Exception as e:
         logger.error(f"Campaign start failed for {campaign_id}: {e}")
+        return {"error": str(e)}
+
+@celery_app.task(bind=True, queue="campaigns", name="tasks.check_scheduled_campaigns")
+def check_scheduled_campaigns(self):
+    try:
+        campaigns_collection = get_sync_campaigns_collection()
+        now = datetime.utcnow()
+
+        triggered = []
+        while True:
+            campaign = campaigns_collection.find_one_and_update(
+                {"status": "scheduled", "scheduled_time": {"$lte": now}},
+                {"$set": {"status": "queued", "queued_at": now}},
+            )
+            if not campaign:
+                break
+            campaign_id = str(campaign["_id"])
+            try:
+                task = start_campaign.delay(campaign_id)
+                triggered.append({"campaign_id": campaign_id, "task_id": task.id})
+                logger.info(f"Triggered scheduled campaign {campaign_id}, task_id={task.id}")
+            except Exception as e:
+                campaigns_collection.update_one(
+                    {"_id": campaign["_id"]},
+                    {"$set": {"status": "scheduled"}}
+                )
+                logger.error(f"Failed to trigger scheduled campaign {campaign_id}: {e}")
+
+        return {
+            "status": "completed",
+            "checked_at": now.isoformat(),
+            "triggered_count": len(triggered),
+            "triggered_campaigns": triggered
+        }
+
+    except Exception as e:
+        logger.error(f"check_scheduled_campaigns failed: {e}")
         return {"error": str(e)}

@@ -100,7 +100,7 @@ except ImportError:
 from routes import (auth, subscribers, campaigns, stats, templates, setting,
                     domains, analytics, email_settings, webhooks, suppressions,
                     segments, ab_testing, automation, events,
-                    automation_analytics, audit)
+                    automation_analytics, audit, unsubscribe)
 
 # ============================================
 # LOGGING CONFIGURATION
@@ -747,6 +747,8 @@ app.include_router(automation_analytics.router,
 
 #Audit
 app.include_router(audit.router, prefix="/api/audit", tags=["audit"])
+
+app.include_router(unsubscribe.router, prefix="/api", tags=["Unsubscribe"])
 
 logger.info(f"✅ {len(app.routes)} routes registered")
 

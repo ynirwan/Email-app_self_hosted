@@ -1564,7 +1564,7 @@ const EmailEditor = forwardRef((props, ref) => {
         Personalization Tags
       </h4>
       <div className="space-y-2">
-        {personalizationTags.map((tag, i) => (
+        {personalizationTags.filter(t => t.tag !== '{{unsubscribe_url}}').map((tag, i) => (
           <button
             key={i}
             onClick={() => insertPersonalizationTag(tag.tag)}
@@ -1575,6 +1575,18 @@ const EmailEditor = forwardRef((props, ref) => {
             <span className="text-xs text-gray-600 truncate ml-2">{tag.description}</span>
           </button>
         ))}
+      </div>
+      <div className="mt-4 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+        <h5 className="text-sm font-semibold text-amber-800 mb-2">🔗 Unsubscribe Link</h5>
+        <p className="text-xs text-amber-700 mb-2">Required by law (CAN-SPAM, GDPR). Inserts a unique unsubscribe URL for each recipient.</p>
+        <button
+          onClick={() => insertPersonalizationTag('{{unsubscribe_url}}')}
+          className="w-full text-left px-3 py-2 text-sm bg-amber-100 rounded hover:bg-amber-200 transition-colors border border-amber-300 flex justify-between items-center font-medium"
+          title="Insert unsubscribe link URL"
+        >
+          <span className="font-mono text-amber-800">{'{{unsubscribe_url}}'}</span>
+          <span className="text-xs text-amber-600">Insert</span>
+        </button>
       </div>
     </div>
   );
@@ -1886,6 +1898,9 @@ const EmailEditor = forwardRef((props, ref) => {
                   {blockType.id === 'image' && (
                     <span className="ml-auto text-xs bg-green-600 text-white px-2 py-1 rounded">Upload Ready</span>
                   )}
+                  {blockType.id === 'unsubscribe' && (
+                    <span className="ml-auto text-xs bg-amber-500 text-white px-2 py-1 rounded">Required</span>
+                  )}
                 </div>
               ))}
             </div>
@@ -1994,9 +2009,9 @@ const EmailEditor = forwardRef((props, ref) => {
                   </div>
 
                   {/* Personalization Quick Insert */}
-                  <div className="border-b p-2 bg-blue-50 flex flex-wrap gap-2">
+                  <div className="border-b p-2 bg-blue-50 flex flex-wrap gap-2 items-center">
                     <span className="text-sm font-medium text-blue-800">Quick Insert:</span>
-                    {personalizationTags.slice(0, 4).map((tag, i) => (
+                    {personalizationTags.filter(t => t.tag !== '{{unsubscribe_url}}').map((tag, i) => (
                       <button
                         key={i}
                         onClick={() => insertPersonalizationTag(tag.tag)}
@@ -2006,6 +2021,15 @@ const EmailEditor = forwardRef((props, ref) => {
                         {tag.tag}
                       </button>
                     ))}
+                    <div className="border-l pl-2 ml-1">
+                      <button
+                        onClick={() => insertPersonalizationTag('{{unsubscribe_url}}')}
+                        className="px-3 py-1 text-xs bg-amber-200 hover:bg-amber-300 text-amber-900 rounded transition-colors font-medium border border-amber-300"
+                        title="Insert unsubscribe link URL - required by law"
+                      >
+                        🔗 Unsubscribe Link
+                      </button>
+                    </div>
                   </div>
 
                   {/* Editor Content */}
@@ -2223,9 +2247,9 @@ const EmailEditor = forwardRef((props, ref) => {
                   </div>
 
                   {/* Personalization Quick Insert for HTML Mode */}
-                  <div className="border-b p-2 bg-blue-50 flex flex-wrap gap-2">
+                  <div className="border-b p-2 bg-blue-50 flex flex-wrap gap-2 items-center">
                     <span className="text-sm font-medium text-blue-800">Insert:</span>
-                    {personalizationTags.map((tag, i) => (
+                    {personalizationTags.filter(t => t.tag !== '{{unsubscribe_url}}').map((tag, i) => (
                       <button
                         key={i}
                         onClick={() => insertPersonalizationTag(tag.tag)}
@@ -2235,6 +2259,15 @@ const EmailEditor = forwardRef((props, ref) => {
                         {tag.tag}
                       </button>
                     ))}
+                    <div className="border-l pl-2 ml-1">
+                      <button
+                        onClick={() => insertPersonalizationTag('{{unsubscribe_url}}')}
+                        className="px-3 py-1 text-xs bg-amber-200 hover:bg-amber-300 text-amber-900 rounded transition-colors font-medium border border-amber-300"
+                        title="Insert unsubscribe link URL - required by law"
+                      >
+                        🔗 Unsubscribe Link
+                      </button>
+                    </div>
                   </div>
 
                   <textarea

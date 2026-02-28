@@ -179,6 +179,7 @@ celery_app.conf.update(
         'tasks.start_campaign': {'queue': 'campaigns', 'priority': 8},
         'tasks.complete_campaign': {'queue': 'campaigns', 'priority': 5},
         'tasks.cancel_campaign': {'queue': 'campaigns', 'priority': 9},
+        'tasks.check_scheduled_campaigns': {'queue': 'campaigns', 'priority': 8},
         
         # ===== CAMPAIGN MANAGEMENT =====
         'tasks.pause_campaign': {'queue': 'campaigns', 'priority': 9},
@@ -483,6 +484,14 @@ beat_schedule.update({
         'task': 'tasks.cleanup_old_events',
         'schedule': crontab(day_of_month=1, hour=2, minute=0),  # 1st of month at 2 AM
         'options': {'queue': 'automation', 'priority': 3}
+    },
+})
+
+beat_schedule.update({
+    'check-scheduled-campaigns': {
+        'task': 'tasks.check_scheduled_campaigns',
+        'schedule': timedelta(minutes=1),
+        'options': {'queue': 'campaigns', 'priority': 8}
     },
 })
 
