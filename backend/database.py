@@ -237,6 +237,15 @@ def get_usage_collection():
     return get_async_database().usage
 
 
+# Unsubscribe Token Collections
+def get_unsubscribe_tokens_collection():
+    """Unsubscribe tokens collection (async)"""
+    return get_async_database().unsubscribe_tokens
+
+def get_sync_unsubscribe_tokens_collection():
+    """Unsubscribe tokens collection (sync)"""
+    return get_sync_database().unsubscribe_tokens
+
 # Production Feature Collections
 def get_dlq_collection():
     """Dead Letter Queue collection"""

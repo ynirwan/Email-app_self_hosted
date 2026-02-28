@@ -120,7 +120,18 @@ Preferred communication style: Simple, everyday language.
 - Log rotation: 10MB per file, 5 backups kept
 - Console output also preserved for live monitoring
 
-## Recent Changes (2026-02-21)
+## Recent Changes (2026-02-28)
+- **Unsubscribe System**: Unique unsubscribe tokens per email send, public GET/POST endpoints for unsubscribe processing, `{{unsubscribe_url}}` template variable, `List-Unsubscribe` email header support
+  - Route: `backend/routes/unsubscribe.py` - Token generation, GET `/api/unsubscribe/{token}` (HTML page), POST `/api/webhooks/unsubscribe` (JSON webhook)
+  - Config: `UNSUBSCRIBE_DOMAIN` env var (default: `gnagainbox.com`)
+  - DB collection: `unsubscribe_tokens` (async + sync getters in database.py)
+- **Campaign Scheduling**: Schedule campaigns for future send, cancel scheduled campaigns
+  - Endpoints: POST `/api/campaigns/{id}/schedule`, POST `/api/campaigns/{id}/cancel-schedule`
+  - Celery beat task: `check_scheduled_campaigns` runs every minute to trigger due campaigns
+  - UI: Schedule modal with date/time picker, scheduled status badge, cancel schedule action
+- **Template Editor**: Enhanced unsubscribe link button visibility across all editor modes (visual, HTML, drag-drop)
+
+## Previous Changes (2026-02-21)
 - Added list dropdown with dynamic field loading to Add Subscriber modal
 - Fixed horizontal scrolling in SubscriberListView (sidebar-aware layout constraints)
 - Auto-cleanup of completed upload jobs (5-min server-side cleanup, frontend filters completed)
