@@ -184,6 +184,9 @@ class Settings:
     MAX_LOGIN_ATTEMPTS: int = 5
     LOCKOUT_DURATION_MINUTES: int = 15
     
+    # ===== UNSUBSCRIBE CONFIGURATION =====
+    UNSUBSCRIBE_DOMAIN: str = os.getenv("UNSUBSCRIBE_DOMAIN", "gnagainbox.com")
+    
     # ===== WEBHOOK CONFIGURATION =====
     WEBHOOK_ENABLED: bool = True
     WEBHOOK_RETRY_ATTEMPTS: int = 3

@@ -299,6 +299,15 @@ class SMTPEmailService(EmailServiceInterface):
             message["From"] = sender_email
             message["To"] = recipient_email
 
+            reply_to = kwargs.get("reply_to")
+            if reply_to:
+                message["Reply-To"] = reply_to
+
+            unsubscribe_url = kwargs.get("unsubscribe_url")
+            if unsubscribe_url and unsubscribe_url != "#":
+                message["List-Unsubscribe"] = f"<{unsubscribe_url}>"
+                message["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click"
+
             if text_content:
                 text_part = MIMEText(text_content, "plain")
                 message.attach(text_part)

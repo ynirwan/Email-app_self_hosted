@@ -989,4 +989,111 @@ async def get_campaign_stats(campaign_id: str):
         raise
     except Exception as e:
         logger.error(f"Failed to get campaign stats: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to get campaign stats: {str(e)}")    
+        raise HTTPException(status_code=500, detail=f"Failed to get campaign stats: {str(e)}")
+
+
+class ScheduleRequest(BaseModel):
+    scheduled_time: str = Field(..., description="ISO 8601 datetime string for when the campaign should be sent")
+
+
+@router.post("/campaigns/{campaign_id}/schedule")
+async def schedule_campaign(campaign_id: str, schedule_data: ScheduleRequest):
+    try:
+        if not ObjectId.is_valid(campaign_id):
+            raise HTTPException(status_code=400, detail="Invalid campaign ID format")
+
+        try:
+            scheduled_time = datetime.fromisoformat(schedule_data.scheduled_time.replace("Z", "+00:00"))
+            if scheduled_time.tzinfo is not None:
+                scheduled_time = scheduled_time.replace(tzinfo=None)
+        except (ValueError, AttributeError):
+            raise HTTPException(status_code=400, detail="Invalid datetime format. Use ISO 8601 format.")
+
+        if scheduled_time <= datetime.utcnow():
+            raise HTTPException(status_code=400, detail="Scheduled time must be in the future")
+
+        campaigns_collection = get_campaigns_collection()
+        campaign = await campaigns_collection.find_one({"_id": ObjectId(campaign_id)})
+        if not campaign:
+            raise HTTPException(status_code=404, detail="Campaign not found")
+
+        if campaign.get("status") not in ["draft"]:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Campaign is in '{campaign.get('status')}' state and cannot be scheduled. Only draft campaigns can be scheduled."
+            )
+
+        result = await campaigns_collection.update_one(
+            {"_id": ObjectId(campaign_id)},
+            {"$set": {
+                "status": "scheduled",
+                "scheduled_time": scheduled_time,
+                "updated_at": datetime.utcnow()
+            }}
+        )
+
+        if result.matched_count == 0:
+            raise HTTPException(status_code=404, detail="Campaign not found during update")
+
+        logger.info(f"Campaign {campaign_id} scheduled for {scheduled_time.isoformat()}")
+
+        return {
+            "message": "Campaign scheduled successfully",
+            "campaign_id": campaign_id,
+            "status": "scheduled",
+            "scheduled_time": scheduled_time.isoformat()
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to schedule campaign {campaign_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to schedule campaign: {str(e)}")
+
+
+@router.post("/campaigns/{campaign_id}/cancel-schedule")
+async def cancel_schedule(campaign_id: str):
+    try:
+        if not ObjectId.is_valid(campaign_id):
+            raise HTTPException(status_code=400, detail="Invalid campaign ID format")
+
+        campaigns_collection = get_campaigns_collection()
+        campaign = await campaigns_collection.find_one({"_id": ObjectId(campaign_id)})
+        if not campaign:
+            raise HTTPException(status_code=404, detail="Campaign not found")
+
+        if campaign.get("status") != "scheduled":
+            raise HTTPException(
+                status_code=400,
+                detail=f"Campaign is in '{campaign.get('status')}' state. Only scheduled campaigns can have their schedule cancelled."
+            )
+
+        result = await campaigns_collection.update_one(
+            {"_id": ObjectId(campaign_id)},
+            {
+                "$set": {
+                    "status": "draft",
+                    "updated_at": datetime.utcnow()
+                },
+                "$unset": {
+                    "scheduled_time": ""
+                }
+            }
+        )
+
+        if result.matched_count == 0:
+            raise HTTPException(status_code=404, detail="Campaign not found during update")
+
+        logger.info(f"Campaign {campaign_id} schedule cancelled, reverted to draft")
+
+        return {
+            "message": "Campaign schedule cancelled successfully",
+            "campaign_id": campaign_id,
+            "status": "draft"
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to cancel schedule for campaign {campaign_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to cancel schedule: {str(e)}")
