@@ -58,7 +58,7 @@ outputType = "console"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "cd backend && celery -A celery_app worker --loglevel=info --logfile=../var/log/celery.log --queues=campaigns,automation,recovery,ses_events,webhooks,subscribers,suppressions,dlq,monitoring,analytics,templates,cleanup"
+args = "cd backend && celery -A celery_app worker --beat --loglevel=info --logfile=../var/log/celery.log --queues=campaigns,automation,recovery,ses_events,webhooks,subscribers,suppressions,dlq,monitoring,analytics,templates,cleanup"
 
 [[ports]]
 localPort = 5000
@@ -86,4 +86,4 @@ build = [
 [userenv]
 
 [userenv.shared]
-REDIS_URL = "redis://default:5jrup6bv5dfHkhz9HhbnIanUkJRoCYth@redis-16194.crce179.ap-south-1-1.ec2.cloud.redislabs.com:16194/0"
+REDIS_URL = "redis://default:6ozcn1aIV5IEojt1jcVrc3XBwTuAvaYg@redis-10202.c10.us-east-1-2.ec2.cloud.redislabs.com:10202/0"
