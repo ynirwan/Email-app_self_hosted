@@ -183,7 +183,7 @@ export default function TemplatesPage() {
   }
 
   return (
-    <div className="max-w-6xl mx-auto p-6 bg-white rounded shadow">
+    <div className="space-y-6">
       <h1 className="text-3xl font-bold mb-6 border-b pb-2">Email Templates</h1>
       
       {/* Preview Modal */}

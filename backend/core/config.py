@@ -166,21 +166,26 @@ class Settings:
     # ===== CORS CONFIGURATION =====
     CORS_ORIGINS: List[str] = [
         "http://localhost:3000",
+        "http://localhost:5000",
         "http://localhost:5173",
-        "http://localhost:4173"
+        "http://localhost:4173",
+        "*"
     ]
     CORS_ALLOW_CREDENTIALS: bool = True
     CORS_ALLOW_METHODS: List[str] = ["*"]
     CORS_ALLOW_HEADERS: List[str] = ["*"]
     
     # ===== SECURITY =====
-    MASTER_ENCRYPTION_KEY: Optional[str] = os.getenv("MASTER_ENCRYPTION_KEY")
+    MASTER_ENCRYPTION_KEY: str = os.getenv("MASTER_ENCRYPTION_KEY", "lUuIwsIeBDEArb4N_KpDb7Ax8IVVJ-nAvHYCZYGg4RU=")
     ENABLE_FIELD_ENCRYPTION: bool = os.getenv("ENABLE_FIELD_ENCRYPTION", "true").lower() == "true"
     PASSWORD_ENCRYPTION_ENABLED: bool = True
     API_KEY_ROTATION_DAYS: int = 90
     SESSION_TIMEOUT_MINUTES: int = 30
     MAX_LOGIN_ATTEMPTS: int = 5
     LOCKOUT_DURATION_MINUTES: int = 15
+    
+    # ===== UNSUBSCRIBE CONFIGURATION =====
+    UNSUBSCRIBE_DOMAIN: str = os.getenv("UNSUBSCRIBE_DOMAIN", "gnagainbox.com")
     
     # ===== WEBHOOK CONFIGURATION =====
     WEBHOOK_ENABLED: bool = True

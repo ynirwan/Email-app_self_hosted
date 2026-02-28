@@ -1,0 +1,422 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>{{ subject }}</title>
+  <style>
+    body {
+      font-family: system-ui, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
+      color: #111;
+      background-color: #f5f5f5;
+      margin: 0;
+      padding: 0;
+    }
+    .email-wrapper {
+      background-color: #f5f5f5;
+      padding: 20px;
+    }
+    .container {
+      max-width: 600px;
+      margin: 0 auto;
+      background-color: #ffffff;
+      border-radius: 8px;
+      overflow: hidden;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    .header {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      padding: 30px 20px;
+      text-align: center;
+      color: white;
+    }
+    .header h1 {
+      margin: 0;
+      font-size: 28px;
+    }
+    .content {
+      padding: 30px 20px;
+    }
+    .greeting {
+      font-size: 20px;
+      font-weight: bold;
+      color: #333;
+      margin-bottom: 15px;
+    }
+    .section {
+      margin: 25px 0;
+      padding: 20px;
+      background-color: #f9f9f9;
+      border-radius: 6px;
+      border-left: 4px solid #667eea;
+    }
+    .section-title {
+      font-size: 18px;
+      font-weight: bold;
+      color: #667eea;
+      margin-bottom: 10px;
+    }
+    .cta {
+      display: inline-block;
+      padding: 12px 24px;
+      border-radius: 6px;
+      text-decoration: none;
+      background-color: #667eea;
+      color: white;
+      font-weight: bold;
+      margin: 15px 0;
+    }
+    .cta:hover {
+      background-color: #5568d3;
+    }
+    .info-box {
+      background-color: #e3f2fd;
+      border: 1px solid #2196f3;
+      border-radius: 4px;
+      padding: 15px;
+      margin: 15px 0;
+    }
+    .warning-box {
+      background-color: #fff3cd;
+      border: 1px solid #ffc107;
+      border-radius: 4px;
+      padding: 15px;
+      margin: 15px 0;
+    }
+    .success-box {
+      background-color: #d4edda;
+      border: 1px solid #28a745;
+      border-radius: 4px;
+      padding: 15px;
+      margin: 15px 0;
+    }
+    .product-list {
+      list-style: none;
+      padding: 0;
+      margin: 15px 0;
+    }
+    .product-item {
+      background-color: white;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      padding: 15px;
+      margin-bottom: 10px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .product-name {
+      font-weight: bold;
+      color: #333;
+    }
+    .product-price {
+      color: #667eea;
+      font-weight: bold;
+    }
+    .badge {
+      display: inline-block;
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 12px;
+      font-weight: bold;
+      margin-left: 8px;
+    }
+    .badge-sale {
+      background-color: #ff5252;
+      color: white;
+    }
+    .badge-new {
+      background-color: #4caf50;
+      color: white;
+    }
+    .badge-vip {
+      background-color: #ffd700;
+      color: #333;
+    }
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 15px;
+      margin: 20px 0;
+    }
+    .stat-card {
+      background-color: white;
+      border: 1px solid #e0e0e0;
+      border-radius: 6px;
+      padding: 15px;
+      text-align: center;
+    }
+    .stat-value {
+      font-size: 24px;
+      font-weight: bold;
+      color: #667eea;
+    }
+    .stat-label {
+      font-size: 14px;
+      color: #666;
+      margin-top: 5px;
+    }
+    .footer {
+      background-color: #333;
+      color: #fff;
+      padding: 20px;
+      text-align: center;
+      font-size: 14px;
+    }
+    .footer a {
+      color: #667eea;
+      text-decoration: none;
+    }
+    .divider {
+      border: 0;
+      height: 1px;
+      background-color: #e0e0e0;
+      margin: 25px 0;
+    }
+    @media only screen and (max-width: 600px) {
+      .stats-grid {
+        grid-template-columns: 1fr;
+      }
+      .container {
+        border-radius: 0;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="email-wrapper">
+    <div class="container">
+      <!-- HEADER -->
+      <div class="header">
+        <h1>🎉 Welcome to Our Store!</h1>
+      </div>
+
+      <!-- MAIN CONTENT -->
+      <div class="content">
+        <!-- PERSONALIZED GREETING -->
+        <div class="greeting">
+          Hello {{ recipient.name }}! 👋
+        </div>
+
+        <p>We're excited to have you with us. Your account <strong>{{ recipient.email }}</strong> is now active!</p>
+
+        <!-- CONDITIONAL: VIP STATUS -->
+        {% if recipient.tier == "Gold" or recipient.tier == "Platinum" %}
+        <div class="success-box">
+          <span class="badge badge-vip">⭐ VIP MEMBER</span>
+          <p>
+<strong>Exclusive Benefits for {{ recipient.tier }} Members:</strong>
+</p>
+          <ul>
+            <li>✅ Free shipping on all orders</li>
+            <li>✅ Early access to new products</li>
+            <li>✅ 20% off all purchases</li>
+            <li>✅ Dedicated customer support</li>
+          </ul>
+        </div>
+        {% endif %}
+
+        <!-- CONDITIONAL: COUNTRY-SPECIFIC MESSAGE -->
+        <div class="section">
+          <div class="section-title">📍 Your Location Benefits</div>
+          {% if recipient.country == "US" %}
+            <p>🇺🇸 <strong>Free shipping</strong> within the United States!</p>
+            <p>Orders ship from our warehouse in California and typically arrive in 2-3 business days.</p>
+          {% elif recipient.country == "UK" %}
+            <p>🇬🇧 <strong>Free shipping</strong> within the United Kingdom!</p>
+            <p>Orders ship from our London warehouse with next-day delivery available.</p>
+          {% elif recipient.country == "CA" %}
+            <p>🇨🇦 <strong>Free shipping</strong> across Canada!</p>
+            <p>Express delivery available to major cities.</p>
+          {% elif recipient.country == "AU" %}
+            <p>🇦🇺 <strong>Free shipping</strong> throughout Australia!</p>
+            <p>Fast delivery from our Sydney distribution center.</p>
+          {% else %}
+            <p>🌍 <strong>International shipping</strong> available to {{ recipient.country }}!</p>
+            <p>Estimated delivery: 5-10 business days.</p>
+          {% endif %}
+        </div>
+
+        <!-- CONDITIONAL: DEVICE-SPECIFIC CTA -->
+        {% if recipient.device == "mobile" %}
+        <div class="info-box">
+          <p>📱 We see you're on mobile! Download our app for the best experience:</p>
+          <a href="{{ app_store_url }}" class="cta">📲 Download App</a>
+        </div>
+        {% else %}
+        <div class="info-box">
+          <p>💻 Shopping from desktop? Enjoy our full-featured website experience!</p>
+          <a href="{{ website_url }}" class="cta">🛍️ Start Shopping</a>
+        </div>
+        {% endif %}
+
+        <!-- CONDITIONAL: PROMO CODE -->
+        {% if promo %}
+        <div class="warning-box">
+          <div class="section-title">🎁 Special Offer Just For You!</div>
+          <p>
+<strong>Promo Code:</strong> <code style="background:#fff;padding:4px 8px;border-radius:4px;font-size:16px;">{{ promo.code }}</code>
+</p>
+          <p>{{ promo.description }}</p>
+          <p>
+<strong>Valid until:</strong> {{ promo.expires_at }}</p>
+          <a href="{{ action_url }}" class="cta">🛒 Shop Now & Save</a>
+        </div>
+        {% endif %}
+
+        <hr class="divider">
+
+        <!-- FOR LOOP: PRODUCTS LIST -->
+        <div class="section">
+          <div class="section-title">🛍️ Recommended Products</div>
+          <p>Based on your interests, we think you'll love these:</p>
+          
+          <ul class="product-list">
+            {% for item in items %}
+            <li class="product-item">
+              <div>
+                <span class="product-name">{{ item.name }}</span>
+                {% if item.on_sale %}
+                <span class="badge badge-sale">ON SALE</span>
+                {% endif %}
+                {% if item.new %}
+                <span class="badge badge-new">NEW</span>
+                {% endif %}
+                {% if item.note %}
+                <div style="font-size:12px;color:#666;margin-top:4px;">
+                  <em>{{ item.note }}</em>
+                </div>
+                {% endif %}
+              </div>
+              <div>
+                {% if item.on_sale and item.original_price %}
+                <span style="text-decoration:line-through;color:#999;margin-right:8px;">${{ item.original_price }}</span>
+                {% endif %}
+                <span class="product-price">${{ item.price }}</span>
+              </div>
+            </li>
+            {% else %}
+            <li class="product-item">
+              <p style="margin:0;color:#666;">No products available at this time.</p>
+            </li>
+            {% endfor %}
+          </ul>
+
+          <a href="{{ shop_url }}" class="cta">View All Products →</a>
+        </div>
+
+        <hr class="divider">
+
+        <!-- CONDITIONAL: ORDER HISTORY -->
+        {% if order_count > 0 %}
+        <div class="section">
+          <div class="section-title">📊 Your Account Summary</div>
+          
+          <div class="stats-grid">
+            <div class="stat-card">
+              <div class="stat-value">{{ order_count }}</div>
+              <div class="stat-label">Total Orders</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-value">${{ total_spent }}</div>
+              <div class="stat-label">Total Spent</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-value">{{ reward_points }}</div>
+              <div class="stat-label">Reward Points</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-value">{{ days_since_last_order }}</div>
+              <div class="stat-label">Days Since Last Order</div>
+            </div>
+          </div>
+
+          {% if days_since_last_order > 30 %}
+          <div class="warning-box">
+            <p>
+<strong>We miss you!</strong> 😢</p>
+            <p>It's been {{ days_since_last_order }} days since your last order. Come back and get <strong>15% off</strong> your next purchase with code: <code>COMEBACK15</code>
+</p>
+          </div>
+          {% endif %}
+        </div>
+        {% else %}
+        <div class="info-box">
+          <p>
+<strong>Welcome to our community!</strong> 🎊</p>
+          <p>This is your first time with us. Use code <strong>FIRST20</strong> for 20% off your first purchase!</p>
+        </div>
+        {% endif %}
+
+        <hr class="divider">
+
+        <!-- NESTED CONDITIONALS: LANGUAGE-SPECIFIC MESSAGES -->
+        <div class="section">
+          <div class="section-title">🗣️ Language Support</div>
+          {% if recipient.language == "en" %}
+            <p>You're viewing this email in English. Need help? Our support team speaks your language!</p>
+          {% elif recipient.language == "es" %}
+            <p>¡Hola! Podemos ayudarte en español.</p>
+          {% elif recipient.language == "fr" %}
+            <p>Bonjour! Nous pouvons vous aider en français.</p>
+          {% elif recipient.language == "de" %}
+            <p>Hallo! Wir können Ihnen auf Deutsch helfen.</p>
+          {% else %}
+            <p>We support multiple languages. Contact us in your preferred language!</p>
+          {% endif %}
+        </div>
+
+        <!-- COMPLEX CONDITIONAL: COMBINED LOGIC -->
+        {% if (recipient.tier == "Gold" and order_count > 5) or total_spent > 500 %}
+        <div class="success-box">
+          <div class="section-title">🏆 Elite Customer Reward</div>
+          <p>You qualify for our <strong>Elite Customer Program</strong>!</p>
+          <ul>
+            <li>Free returns for life</li>
+            <li>Personal shopping assistant</li>
+            <li>Birthday gifts every year</li>
+            <li>Exclusive invitation to VIP sales</li>
+          </ul>
+          <a href="{{ elite_program_url }}" class="cta">Learn More →</a>
+        </div>
+        {% endif %}
+
+        <hr class="divider">
+
+        <!-- PERSONALIZED FOOTER CONTENT -->
+        <div style="text-align:center;margin:30px 0;">
+          <p style="font-size:16px;color:#666;">Questions? We're here to help!</p>
+          
+          {% if recipient.device == "mobile" %}
+          <a href="tel:{{ support_phone }}" class="cta">📞 Call Us Now</a>
+          {% else %}
+          <p>📞 Call us at <strong>{{ support_phone }}</strong>
+</p>
+          <p>📧 Email: <a href="mailto:{{ support_email }}">{{ support_email }}</a>
+</p>
+          {% endif %}
+        </div>
+
+      </div>
+
+      <!-- FOOTER -->
+      <div class="footer">
+        <p>
+<strong>Thank you for being a valued customer!</strong>
+</p>
+        <p>Sent on {{ sent_at }}</p>
+        <p>
+          <a href="{{ unsubscribe_url }}">Unsubscribe</a> | 
+          <a href="{{ preferences_url }}">Email Preferences</a> | 
+          <a href="{{ privacy_url }}">Privacy Policy</a>
+        </p>
+        <p style="margin-top:15px;font-size:12px;color:#999;">
+          © {{ current_year }} Your Company Name. All rights reserved.<br>
+          123 Business St, Suite 100, City, State 12345
+        </p>
+      </div>
+
+    </div>
+  </div>
+</body>
+</html>

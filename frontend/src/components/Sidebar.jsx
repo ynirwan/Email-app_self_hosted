@@ -91,6 +91,12 @@ export default function Sidebar() {
     return colors[first] || "bg-gray-500";
   };
 
+  const isEditorPage = pathname.includes('/templates/') || 
+                       pathname.includes('/automation/create') || 
+                       pathname.includes('/automation/edit');
+
+  if (isEditorPage) return null;
+
   return (
     <>
       {/* Mobile Menu Button */}
@@ -114,15 +120,14 @@ export default function Sidebar() {
         ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'}
         md:translate-x-0
         fixed top-0 left-0 z-40
-        w-72 bg-white shadow-xl
+        w-64 bg-white shadow-xl
         h-screen flex flex-col
         transition-transform duration-300 ease-in-out
       `}>
         {/* Header with Animated Logo */}
-	  {/* Header with Animated Logo */}
 <div className="h-24 flex items-center justify-center">
-  <div className="flex items-center justify-center w-full h-full bg-gradient-to-r from-blue-800 to-blue-600">
-    <ZeniPostLogo size={64} variant="animated" />
+  <div className="flex items-center justify-center w-full h-full bg-slate-900 border-b border-slate-800">
+    <ZeniPostLogo size={32} variant="animated" />
   </div>
 </div>
 
@@ -193,7 +198,7 @@ export default function Sidebar() {
       </div>
 
       {/* Main Content Spacer for Desktop */}
-      <div className="hidden md:block w-72 flex-shrink-0"></div>
+      <div className="hidden md:block w-64 flex-shrink-0"></div>
     </>
   );
 }

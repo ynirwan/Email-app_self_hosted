@@ -86,10 +86,10 @@ export default function Subscribers() {
         let hasActiveJobs = false;
 
         jobs.forEach(job => {
+          if (job.status === 'completed') return;
           updatedJobs.set(job.list_name, job);
           if (['pending', 'processing', 'failed'].includes(job.status)) {
             hasActiveJobs = true;
-            console.log(`✅ Active job found: ${job.list_name} - ${job.status}`);
           }
         });
 
@@ -125,6 +125,30 @@ export default function Subscribers() {
     }
   };
 
+  const [notifications, setNotifications] = useState([]);
+
+  const showToast = useCallback((message, type = 'info') => {
+    const id = Date.now();
+    setNotifications(prev => [...prev, { id, message, type }]);
+    setTimeout(() => {
+      setNotifications(prev => prev.filter(n => n.id !== id));
+    }, 5000);
+  }, []);
+
+  const ToastContainer = () => (
+    <div className="fixed top-4 right-4 z-50 space-y-2">
+      {notifications.map(n => (
+        <div key={n.id} className={`p-4 rounded-lg shadow-lg border ${
+          n.type === 'error' ? 'bg-red-50 border-red-200 text-red-800' :
+          n.type === 'success' ? 'bg-green-50 border-green-200 text-green-800' :
+          'bg-blue-50 border-blue-200 text-blue-800'
+        }`}>
+          {n.message}
+        </div>
+      ))}
+    </div>
+  );
+
   // ✅ ENHANCED Job Status Polling with Performance Metrics
   const pollJobStatus = async (jobId) => {
     try {
@@ -140,21 +164,11 @@ export default function Subscribers() {
         setUploadProgress(0);
 
         const failureMessage = job.error_message || 'Upload processing failed';
-        const canRecover = job.recovery_available;
         const failedAt = job.failed_at_record || 0;
         const total = job.total_records || 0;
-        const recoveryInfo = job.recovery_info || {};
 
-        alert(`❌ UPLOAD FAILED\n\n` +
-          `📊 Progress: ${failedAt.toLocaleString()} / ${total.toLocaleString()} processed\n` +
-          `❌ Error: ${failureMessage}\n\n` +
-          `🔧 Recovery Options:\n` +
-          `${canRecover ? '• Manual retry available\n' : ''}` +
-          `${recoveryInfo.optimization_available ? '• Optimized processing available\n' : ''}` +
-          `${recoveryInfo.estimated_recovery_time_minutes ? `• Estimated recovery time: ${recoveryInfo.estimated_recovery_time_minutes} minutes\n` : ''}` +
-          `\n💡 Check the main page for retry options or auto-recovery will handle this.`);
-
-        return; // Stop polling
+        showToast(`Upload failed: ${failureMessage}. Processed ${failedAt}/${total}`, 'error');
+        return; 
       }
 
       // ✅ HANDLE SUCCESSFUL COMPLETION with performance info
@@ -163,17 +177,11 @@ export default function Subscribers() {
         setUploadProgress(100);
 
         const speed = job.records_per_second || 0;
-        const processingTime = job.processing_time_seconds || 0;
-        const optimized = job.optimization_used ? ' (Optimized)' : '';
+        const count = job.final_processed?.toLocaleString() || job.processed;
 
-        alert(`✅ UPLOAD COMPLETE!${optimized}\n\n` +
-          `📊 ${job.final_processed?.toLocaleString() || job.processed} subscribers processed\n` +
-          `⚡ Speed: ${speed.toLocaleString()} records/sec\n` +
-          `⏱️ Time: ${processingTime.toFixed(1)} seconds\n` +
-          `🔧 Method: ${job.performance_display?.method_text || 'Standard'}`);
-
+        showToast(`Upload complete! ${count} subscribers processed at ${speed.toLocaleString()} rec/sec`, 'success');
         fetchLists();
-        return; // Stop polling
+        return;
       }
 
       // ✅ HANDLE ONGOING PROCESSING with enhanced progress
@@ -196,14 +204,7 @@ export default function Subscribers() {
 
       // ✅ HANDLE STUCK JOBS
       if (job.is_stuck) {
-        alert(`⚠️ JOB APPEARS STUCK\n\n` +
-          `Job: ${job.list_name}\n` +
-          `Status: No activity for 5+ minutes\n\n` +
-          `🔧 Recommended Actions:\n` +
-          `• Wait a few more minutes\n` +
-          `• Check system resources\n` +
-          `• Manual retry may be needed`);
-
+        showToast(`Job for ${job.list_name} appears stuck`, 'warning');
         setTimeout(() => pollJobStatus(jobId), 2000);
       }
 
@@ -266,6 +267,9 @@ export default function Subscribers() {
         let hasActiveJobs = false;
 
         jobs.forEach(job => {
+          if (job.status === 'completed') {
+            return;
+          }
           updatedJobs.set(job.list_name, job);
 
           if (['pending', 'processing'].includes(job.status)) {
@@ -367,14 +371,14 @@ export default function Subscribers() {
                   try {
                     const response = await API.delete('/subscribers/jobs/clear-all');
                     if (response.status === 200) {
-                      alert(`✅ Cleared ${failedJobs.length} failed jobs!`);
+                      showToast(`Successfully cleared ${failedJobs.length} failed jobs!`, 'success');
                       setProcessingJobs(new Map());
                       setShowProcessingBanner(false);
                     } else {
-                      alert('❌ Failed to clear jobs');
+                      showToast('Failed to clear jobs', 'error');
                     }
                   } catch (error) {
-                    alert('❌ Error: ' + error.message);
+                    showToast('Error: ' + error.message, 'error');
                   }
                 }}
                 className="text-xs bg-red-600 text-white px-2 py-1 rounded hover:bg-red-700"
@@ -390,11 +394,11 @@ export default function Subscribers() {
                   if (confirm('⚠️ Force cleanup stuck jobs? This will mark them as failed.')) {
                     try {
                       const response = await API.post('/subscribers/jobs/cleanup-stuck');
-                      alert(`🧹 Cleanup result: ${response.data.message}`);
+                      showToast(`Cleanup result: ${response.data.message}`, 'success');
                       // Refresh after cleanup
                       setTimeout(() => window.location.reload(), 1000);
                     } catch (error) {
-                      alert(`❌ Cleanup failed: ${error.message}`);
+                      showToast(`Cleanup failed: ${error.message}`, 'error');
                     }
                   }
                 }}
@@ -504,12 +508,12 @@ export default function Subscribers() {
                     onClick={async () => {
                       if (confirm(`Retry failed job for "${job.list_name}"?`)) {
                         try {
-                          const response = await API.post(`/subscribers/jobs/${job.job_id}/force-retry`);
-                          alert(`✅ Retry initiated for ${job.list_name}`);
+                          await API.post(`/subscribers/jobs/${job.job_id}/force-retry`);
+                          showToast(`Retry initiated for ${job.list_name}`, 'success');
                           // Refresh status
                           setTimeout(() => window.location.reload(), 1000);
                         } catch (error) {
-                          alert(`❌ Retry failed: ${error.message}`);
+                          showToast(`Retry failed: ${error.message}`, 'error');
                         }
                       }
                     }}
@@ -521,11 +525,11 @@ export default function Subscribers() {
                     onClick={async () => {
                       try {
                         await API.delete(`/subscribers/jobs/${job.job_id}`);
-                        alert(`✅ Cleared failed job: ${job.list_name}`);
+                        showToast(`Cleared failed job: ${job.list_name}`, 'success');
                         // Refresh
                         setTimeout(() => window.location.reload(), 1000);
                       } catch (error) {
-                        alert(`❌ Clear failed: ${error.message}`);
+                        showToast(`Clear failed: ${error.message}`, 'error');
                       }
                     }}
                     className="text-xs bg-gray-600 text-white px-2 py-1 rounded hover:bg-gray-700"
@@ -1008,43 +1012,32 @@ export default function Subscribers() {
     const isCompleted = job && job.status === 'completed';
   
     return (
-      <tr key={`${list._id}-${index}`} className="border-t hover:bg-gray-50" style={{ height: 40 }}>
-        <td className="p-2 font-medium">
-          <div className="flex items-center space-x-2">
-            <span>{list._id}</span>
+      <tr key={`${list._id}-${index}`} className="border-t hover:bg-gray-50">
+        <td className="p-2 font-medium max-w-xs">
+          <div className="flex flex-col gap-1">
+            <span className="truncate block" title={list._id}>{list._id}</span>
             
             {isProcessing && (
-              <div className="flex items-center space-x-1">
-                <div className="animate-spin h-3 w-3 border border-blue-600 border-t-transparent rounded-full"></div>
-                <span className="text-xs text-blue-600 bg-blue-50 px-2 py-1 rounded">
+              <div className="flex items-center gap-1 flex-wrap">
+                <div className="animate-spin h-3 w-3 border border-blue-600 border-t-transparent rounded-full flex-shrink-0"></div>
+                <span className="text-xs text-blue-600 bg-blue-50 px-2 py-0.5 rounded whitespace-nowrap">
                   {job.status === 'pending' ? 'Queued' : 'Processing'}
                 </span>
                 {job.optimization_used && (
-                  <span className="text-xs text-green-600 bg-green-50 px-1 py-1 rounded">⚡</span>
+                  <span className="text-xs text-green-600 bg-green-50 px-1 py-0.5 rounded">⚡</span>
                 )}
               </div>
             )}
             
-            {isCompleted && (
-              <div className="flex items-center space-x-1">
-                <span className="text-xs text-green-600 bg-green-50 px-2 py-1 rounded">
-                  ✅ Completed
-                </span>
-                {job.records_per_second > 0 && (
-                  <span className="text-xs text-gray-500">
-                    {job.records_per_second.toLocaleString()}/sec
-                  </span>
-                )}
-              </div>
-            )}
+            {/* Completed jobs are auto-cleared - no display needed */}
             
             {isFailed && (
-              <div className="flex items-center space-x-1">
-                <span className="text-xs text-red-600 bg-red-50 px-2 py-1 rounded">
+              <div className="flex items-center gap-1 flex-wrap">
+                <span className="text-xs text-red-600 bg-red-50 px-2 py-0.5 rounded whitespace-nowrap">
                   ❌ Failed
                 </span>
                 {job.recovery_available && (
-                  <span className="text-xs text-orange-600 bg-orange-50 px-1 py-1 rounded">
+                  <span className="text-xs text-orange-600 bg-orange-50 px-1 py-0.5 rounded whitespace-nowrap">
                     🔧 Recoverable
                   </span>
                 )}
@@ -1068,11 +1061,7 @@ export default function Subscribers() {
                 )}
               </div>
             )}
-            {isCompleted && job.final_processed && (
-              <span className="text-xs text-green-600">
-                +{job.final_processed.toLocaleString()} added
-              </span>
-            )}
+            {/* Completed count shown via refresh */}
           </div>
         </td>
         
@@ -1281,6 +1270,220 @@ export default function Subscribers() {
     }
   };
   
+  const [listFields, setListFields] = useState({ standard: [], custom: [] });
+  const [loadingFields, setLoadingFields] = useState(false);
+
+  const fetchListFields = async (selectedList) => {
+    if (!selectedList) {
+      setListFields({ standard: [], custom: [] });
+      return;
+    }
+    setLoadingFields(true);
+    try {
+      const response = await API.get(`/subscribers/lists/${selectedList}/fields`);
+      setListFields(response.data);
+    } catch {
+      setListFields({ standard: ['first_name', 'last_name'], custom: [] });
+    } finally {
+      setLoadingFields(false);
+    }
+  };
+
+  const [isNewList, setIsNewList] = useState(false);
+
+  const handleListSelectForAdd = (selectedList) => {
+    if (selectedList === '__new__') {
+      setIsNewList(true);
+      setSubscriberForm(prev => ({
+        ...prev,
+        list: '',
+        standard_fields: { first_name: '', last_name: '' },
+        custom_fields: {},
+      }));
+      setListFields({ standard: ['first_name', 'last_name'], custom: [] });
+      return;
+    }
+    setIsNewList(false);
+    setSubscriberForm(prev => ({
+      ...prev,
+      list: selectedList,
+      standard_fields: { first_name: '', last_name: '' },
+      custom_fields: {},
+    }));
+    fetchListFields(selectedList);
+  };
+
+  const AddSubscriberModal = () => {
+    const isEditing = !!editingSubscriber;
+    const stdFields = isEditing
+      ? Object.keys(editingSubscriber?.standard_fields || {})
+      : listFields.standard.length > 0 ? listFields.standard : ['first_name', 'last_name'];
+    const custFields = isEditing
+      ? Object.keys(editingSubscriber?.custom_fields || {})
+      : listFields.custom;
+
+    return (
+      <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div className="bg-white rounded-lg p-6 max-w-md w-full m-4 max-h-[90vh] overflow-y-auto">
+          <div className="flex justify-between items-center mb-4">
+            <h2 className="text-xl font-semibold">
+              {isEditing ? 'Edit Subscriber' : 'Add Subscriber'}
+            </h2>
+            <button
+              onClick={() => {
+                setShowAddModal(false);
+                setEditingSubscriber(null);
+                setSubscriberForm(emptyForm);
+                setListFields({ standard: [], custom: [] });
+                setIsNewList(false);
+              }}
+              className="text-gray-500 hover:text-gray-700 text-xl"
+            >
+              ✕
+            </button>
+          </div>
+
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium mb-1">Email *</label>
+              <input
+                type="email"
+                value={subscriberForm.email}
+                onChange={(e) => setSubscriberForm(prev => ({ ...prev, email: e.target.value }))}
+                className="w-full p-2 border rounded"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium mb-1">List *</label>
+              {isEditing ? (
+                <input
+                  type="text"
+                  value={subscriberForm.list}
+                  disabled
+                  className="w-full p-2 border rounded bg-gray-100"
+                />
+              ) : (
+                <div>
+                  {!isNewList ? (
+                    <select
+                      value={subscriberForm.list}
+                      onChange={(e) => handleListSelectForAdd(e.target.value)}
+                      className="w-full p-2 border rounded"
+                    >
+                      <option value="">Select a list...</option>
+                      {lists.map((l) => (
+                        <option key={l._id} value={l._id}>{l._id} ({l.count.toLocaleString()})</option>
+                      ))}
+                      <option value="__new__">+ Create new list</option>
+                    </select>
+                  ) : (
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        placeholder="Enter new list name..."
+                        value={subscriberForm.list}
+                        onChange={(e) => setSubscriberForm(prev => ({ ...prev, list: e.target.value }))}
+                        className="flex-1 p-2 border rounded"
+                        autoFocus
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsNewList(false);
+                          setSubscriberForm(prev => ({ ...prev, list: '' }));
+                          setListFields({ standard: [], custom: [] });
+                        }}
+                        className="px-3 py-2 text-sm text-gray-600 border rounded hover:bg-gray-50"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+              {loadingFields && (
+                <span className="text-xs text-blue-500 mt-1 block">Loading list fields...</span>
+              )}
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium mb-1">Status</label>
+              <select
+                value={subscriberForm.status}
+                onChange={(e) => setSubscriberForm(prev => ({ ...prev, status: e.target.value }))}
+                className="w-full p-2 border rounded"
+              >
+                <option value="active">Active</option>
+                <option value="inactive">Inactive</option>
+                <option value="bounced">Bounced</option>
+                <option value="unsubscribed">Unsubscribed</option>
+              </select>
+            </div>
+
+            {stdFields.map((field) => (
+              <div key={field}>
+                <label className="block text-sm font-medium mb-1 capitalize">
+                  {field.replace(/_/g, ' ')}
+                </label>
+                <input
+                  type="text"
+                  value={subscriberForm.standard_fields?.[field] || ''}
+                  onChange={(e) => setSubscriberForm(prev => ({
+                    ...prev,
+                    standard_fields: { ...prev.standard_fields, [field]: e.target.value }
+                  }))}
+                  className="w-full p-2 border rounded"
+                />
+              </div>
+            ))}
+
+            {custFields.length > 0 && (
+              <div className="border-t pt-3 mt-3">
+                <h3 className="text-sm font-medium mb-2">Custom Fields</h3>
+                {custFields.map((field) => (
+                  <div key={field} className="mb-2">
+                    <label className="block text-sm mb-1 capitalize">{field.replace(/_/g, ' ')}</label>
+                    <input
+                      type="text"
+                      value={subscriberForm.custom_fields?.[field] || ''}
+                      onChange={(e) => setSubscriberForm(prev => ({
+                        ...prev,
+                        custom_fields: { ...prev.custom_fields, [field]: e.target.value }
+                      }))}
+                      className="w-full p-2 border rounded"
+                    />
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="flex gap-4">
+              <button
+                onClick={isEditing ? handleEditSubscriber : handleAddSubscriber}
+                className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700"
+              >
+                {isEditing ? 'Update' : 'Add'} Subscriber
+              </button>
+              <button
+                onClick={() => {
+                  setShowAddModal(false);
+                  setEditingSubscriber(null);
+                  setSubscriberForm(emptyForm);
+                  setListFields({ standard: [], custom: [] });
+                  setIsNewList(false);
+                }}
+                className="bg-gray-600 text-white px-4 py-2 rounded hover:bg-gray-700"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   const handleAddSubscriber = async () => {
     if (!subscriberForm.email || !validateEmail(subscriberForm.email)) {
       alert('Valid email is required');
@@ -1348,7 +1551,8 @@ export default function Subscribers() {
 
   // Main render
   return (
-    <div className="container mx-auto p-4">
+    <div className="space-y-6">
+      <ToastContainer />
       <h1 className="text-2xl font-bold mb-4">📧 Enhanced Subscriber Management</h1>
 
       {/* ✅ ENHANCED Processing Banner */}
@@ -1716,111 +1920,7 @@ export default function Subscribers() {
         </div>
       )}
 
-      {/* Add/Edit Subscriber Modal */}
-      {showAddModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 max-w-md w-full m-4">
-            <div className="flex justify-between items-center mb-4">
-              <h2 className="text-xl font-semibold">
-                {editingSubscriber ? '✏️ Edit Subscriber' : '➕ Add Subscriber'}
-              </h2>
-              <button
-                onClick={() => {
-                  setShowAddModal(false);
-                  setEditingSubscriber(null);
-                  setSubscriberForm(emptyForm);
-                }}
-                className="text-gray-500 hover:text-gray-700 text-xl"
-              >
-                ✕
-              </button>
-            </div>
-
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium mb-1">Email *</label>
-                <input
-                  type="email"
-                  value={subscriberForm.email}
-                  onChange={(e) => setSubscriberForm(prev => ({ ...prev, email: e.target.value }))}
-                  className="w-full p-2 border rounded"
-                  required
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium mb-1">List Name *</label>
-                <input
-                  type="text"
-                  value={subscriberForm.list}
-                  onChange={(e) => setSubscriberForm(prev => ({ ...prev, list: e.target.value }))}
-                  className="w-full p-2 border rounded"
-                  required
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium mb-1">Status</label>
-                <select
-                  value={subscriberForm.status}
-                  onChange={(e) => setSubscriberForm(prev => ({ ...prev, status: e.target.value }))}
-                  className="w-full p-2 border rounded"
-                >
-                  <option value="active">Active</option>
-                  <option value="inactive">Inactive</option>
-                  <option value="bounced">Bounced</option>
-                  <option value="unsubscribed">Unsubscribed</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium mb-1">First Name</label>
-                <input
-                  type="text"
-                  value={subscriberForm.standard_fields.first_name}
-                  onChange={(e) => setSubscriberForm(prev => ({
-                    ...prev,
-                    standard_fields: { ...prev.standard_fields, first_name: e.target.value }
-                  }))}
-                  className="w-full p-2 border rounded"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium mb-1">Last Name</label>
-                <input
-                  type="text"
-                  value={subscriberForm.standard_fields.last_name}
-                  onChange={(e) => setSubscriberForm(prev => ({
-                    ...prev,
-                    standard_fields: { ...prev.standard_fields, last_name: e.target.value }
-                  }))}
-                  className="w-full p-2 border rounded"
-                />
-              </div>
-
-              <div className="flex gap-4">
-                <button
-                  onClick={editingSubscriber ? handleEditSubscriber : handleAddSubscriber}
-                  className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700"
-                >
-                  {editingSubscriber ? 'Update' : 'Add'} Subscriber
-                </button>
-                <button
-                  onClick={() => {
-                    setShowAddModal(false);
-                    setEditingSubscriber(null);
-                    setSubscriberForm(emptyForm);
-                  }}
-                  className="bg-gray-600 text-white px-4 py-2 rounded hover:bg-gray-700"
-                >
-                  Cancel
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      {showAddModal && <AddSubscriberModal />}
 
 
         

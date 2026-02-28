@@ -128,7 +128,7 @@ export default function DomainSettings() {
   const safeDomainsArray = Array.isArray(domains) ? domains : [];
 
   return (
-    <div className="max-w-6xl mx-auto mt-10 space-y-8">
+    <div className="space-y-8">
       <h2 className="text-2xl font-bold">🌐 Domain Settings</h2>
 
       {/* Top Navigation Buttons */}

@@ -179,6 +179,7 @@ celery_app.conf.update(
         'tasks.start_campaign': {'queue': 'campaigns', 'priority': 8},
         'tasks.complete_campaign': {'queue': 'campaigns', 'priority': 5},
         'tasks.cancel_campaign': {'queue': 'campaigns', 'priority': 9},
+        'tasks.check_scheduled_campaigns': {'queue': 'campaigns', 'priority': 8},
         
         # ===== CAMPAIGN MANAGEMENT =====
         'tasks.pause_campaign': {'queue': 'campaigns', 'priority': 9},
@@ -486,6 +487,14 @@ beat_schedule.update({
     },
 })
 
+beat_schedule.update({
+    'check-scheduled-campaigns': {
+        'task': 'tasks.check_scheduled_campaigns',
+        'schedule': timedelta(minutes=1),
+        'options': {'queue': 'campaigns', 'priority': 8}
+    },
+})
+
 # Subscriber cleanup
 beat_schedule.update({
     # ===== SUBSCRIBER MANAGEMENT =====
@@ -653,19 +662,33 @@ if ENABLE_GRACEFUL_SHUTDOWN:
 
 @after_setup_logger.connect
 def setup_celery_logger(logger_instance, *args, **kwargs):
-    """Setup Celery logger configuration"""
     try:
-        logger_instance.info("✅ Celery logger configured")
-        logger_instance.info(f"📊 Configured queues: campaigns, recovery, automation, webhooks, subscribers, "
-                           f"suppressions, dlq, monitoring, analytics, templates, cleanup, ses_events, ses_critical")
-        logger_instance.info(f"⚡ Worker settings: {WORKER_MAX_TASKS_PER_CHILD} max tasks per child, "
-                           f"{MAX_CONCURRENT_TASKS} concurrent tasks")
-        logger_instance.info(f"📈 Monitoring enabled: {ENABLE_METRICS_COLLECTION}")
-        logger_instance.info(f"📝 Audit logging enabled: {ENABLE_AUDIT_LOGGING}")
-        logger_instance.info(f"🤖 Automation triggers: welcome, birthday, abandoned_cart, inactive")
-        
+        from logging.handlers import RotatingFileHandler
+        log_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "var", "log")
+        os.makedirs(log_dir, exist_ok=True)
+
+        log_format = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+
+        celery_file_handler = RotatingFileHandler(
+            os.path.join(log_dir, "celery.log"),
+            maxBytes=10 * 1024 * 1024,
+            backupCount=5
+        )
+        celery_file_handler.setFormatter(log_format)
+        logger_instance.addHandler(celery_file_handler)
+
+        celery_error_handler = RotatingFileHandler(
+            os.path.join(log_dir, "celery_error.log"),
+            maxBytes=10 * 1024 * 1024,
+            backupCount=5
+        )
+        celery_error_handler.setLevel(logging.ERROR)
+        celery_error_handler.setFormatter(log_format)
+        logger_instance.addHandler(celery_error_handler)
+
+        logger_instance.info(f"Celery logger configured - files in {log_dir}")
     except Exception as e:
-        logger.error(f"❌ Celery logger setup error: {e}")
+        logger.error(f"Celery logger setup error: {e}")
 
 
 # ============================================

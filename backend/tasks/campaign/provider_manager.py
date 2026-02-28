@@ -299,6 +299,15 @@ class SMTPEmailService(EmailServiceInterface):
             message["From"] = sender_email
             message["To"] = recipient_email
 
+            reply_to = kwargs.get("reply_to")
+            if reply_to:
+                message["Reply-To"] = reply_to
+
+            unsubscribe_url = kwargs.get("unsubscribe_url")
+            if unsubscribe_url and unsubscribe_url != "#":
+                message["List-Unsubscribe"] = f"<{unsubscribe_url}>"
+                message["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click"
+
             if text_content:
                 text_part = MIMEText(text_content, "plain")
                 message.attach(text_part)
@@ -424,8 +433,9 @@ class EmailProviderManager:
 
                 logger.info(f"✅ Loaded {len(self.providers)} email provider(s): {list(self.providers.keys())}")
             else:
-                logger.error("❌ No email provider configuration found in database!")
-                raise Exception("No email provider configured. Please configure SMTP settings.")
+                logger.warning("⚠️ No email provider configuration found in database. Backend will start in degraded mode.")
+                # We don't raise here to allow the backend to start
+                # raise Exception("No email provider configured. Please configure SMTP settings.")
 
         except Exception as e:
             logger.error(f"Failed to load provider configurations: {e}", exc_info=True)

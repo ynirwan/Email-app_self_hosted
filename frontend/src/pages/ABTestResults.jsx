@@ -58,7 +58,7 @@ const ABTestResults = () => {
   };
 
   return (
-    <div className="max-w-6xl mx-auto mt-10 p-6">
+    <div className="space-y-8">
       <div className="flex justify-between items-center mb-6">
         <h2 className="text-3xl font-bold">📊 A/B Test Results</h2>
         <button

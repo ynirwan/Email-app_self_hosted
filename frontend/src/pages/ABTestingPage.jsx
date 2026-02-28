@@ -82,7 +82,7 @@ const ABTestResultsView = ({ testId, onClose }) => {
   const isCompleted = results.status === 'completed';
 
   return (
-    <div className="bg-white rounded-lg shadow-lg p-6">
+    <div className="bg-white rounded-lg shadow-lg p-6 space-y-6">
       <div className="flex justify-between items-start mb-6">
         <div>
           <h2 className="text-2xl font-bold">{results.test_name}</h2>

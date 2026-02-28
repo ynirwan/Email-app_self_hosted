@@ -17,7 +17,8 @@ import DomainSettings from './pages/DomainSettings';
 import TemplatesPage from './pages/TemplatesPage';
 import SuppressionManagement from './pages/SuppressionManagement';
 import Segmentation from './pages/Segmentation';
-import ABTestingDashboard from './pages/ABTestingDashboard'; // ✅ Add this import
+import ABTestingDashboard from './pages/ABTestingDashboard';
+import ABTestCreator from './pages/ABTestCreator';
 import ABTestResults from './pages/ABTestResults';
 
 
@@ -26,7 +27,7 @@ import AutomationDashboard from './pages/AutomationDashboard';
 import AutomationBuilder from './pages/AutomationBuilder';
 import AutomationAnalytics from './pages/AutomationAnalytics';
 import AutomationCampaignAnalytics from './pages/AutomationCampaignAnalytics';
-
+import LandingPage from './pages/LandingPage';
 
 
 const App = () => {
@@ -36,6 +37,7 @@ const App = () => {
     <BrowserRouter>
       <Routes>
         {/* Public Routes */}
+        <Route path="/landing" element={<LandingPage />} />
         <Route path="/register" element={<Register />} />
         <Route path="/login" element={<Login />} />
 
@@ -48,21 +50,22 @@ const App = () => {
             <Route path="campaigns" element={<Campaigns />} />
             <Route path="campaigns/create" element={<CreateCampaign />} />
             <Route path="campaigns/:id/edit" element={<EditCampaign />} />
-            <Route path="templates" element={<TemplatesPage />}      />		
-	    <Route path="analytics" element={<Analytics />} />
+            <Route path="templates" element={<TemplatesPage />}      />         
+            <Route path="analytics" element={<Analytics />} />
             <Route path="analytics/campaign/:campaignId" element={<CampaignAnalytics />} />
             <Route path="audit" element={<AuditTrail />} />
             <Route path="suppressions" element={<SuppressionManagement />} />
             <Route path="/segmentation" element={<Segmentation />} />
-            <Route path="ab-testing" element={<ABTestingDashboard />} /> 
+            <Route path="ab-testing" element={<ABTestingDashboard />} />
+            <Route path="ab-testing/create" element={<ABTestCreator />} />
             <Route path="ab-tests/:testId/results" element={<ABTestResults />} />
-		
+                
 
             {/* New Automation Routes */}
             <Route path="/automation" element={<AutomationDashboard />} />
             <Route path="/automation/create" element={<AutomationBuilder />} />
             <Route path="/automation/edit/:id" element={<AutomationBuilder />} />
-	          <Route path="/automation/analytics/" element={<AutomationAnalytics />} />
+                  <Route path="/automation/analytics/" element={<AutomationAnalytics />} />
             <Route path="/automation/analytics/:id" element={<AutomationCampaignAnalytics />} />
                   
             {/* Settings with nested tabs */}

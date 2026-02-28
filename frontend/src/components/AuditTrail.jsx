@@ -89,14 +89,17 @@ export default function AuditTrail() {
     let recent24h = 0;
 
     logsData.forEach(log => {
+      if (!log) return;
       // Count by action
-      byAction[log.action] = (byAction[log.action] || 0) + 1;
+      const action = log.action || 'unknown';
+      byAction[action] = (byAction[action] || 0) + 1;
 
       // Count by entity
-      byEntity[log.entity_type] = (byEntity[log.entity_type] || 0) + 1;
+      const entity = log.entity_type || 'unknown';
+      byEntity[entity] = (byEntity[entity] || 0) + 1;
 
       // Count recent activities
-      if (new Date(log.timestamp) > twentyFourHoursAgo) {
+      if (log.timestamp && new Date(log.timestamp) > twentyFourHoursAgo) {
         recent24h++;
       }
     });
@@ -380,22 +383,22 @@ export default function AuditTrail() {
             <span>📅</span> Recent Activity Timeline
           </h3>
           <div className="space-y-3 max-h-96 overflow-y-auto">
-            {filteredLogs.slice(0, 10).map((log, index) => (
-              <div key={index} className="flex items-start gap-3 p-3 hover:bg-gray-50 rounded transition-colors">
-                <div className="flex-shrink-0">
-                  <span className="text-2xl">{getEntityIcon(log.entity_type)}</span>
-                </div>
-                <div className="flex-grow">
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className={`px-2 py-0.5 rounded text-xs font-bold ${getActionBadge(log.action)}`}>
-                      {log.action}
-                    </span>
-                    <span className="text-xs text-gray-500">{formatTimestamp(log.timestamp)}</span>
+                {filteredLogs.slice(0, 10).map((log, index) => (
+                  <div key={index} className="flex items-start gap-3 p-3 hover:bg-gray-50 rounded transition-colors">
+                    <div className="flex-shrink-0">
+                      <span className="text-2xl">{getEntityIcon(log.entity_type)}</span>
+                    </div>
+                    <div className="flex-grow">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className={`px-2 py-0.5 rounded text-xs font-bold ${getActionBadge(log.action)}`}>
+                          {log.action || 'unknown'}
+                        </span>
+                        <span className="text-xs text-gray-500">{formatTimestamp(log.timestamp)}</span>
+                      </div>
+                      <p className="text-sm text-gray-700">{log.user_action || 'No description available'}</p>
+                    </div>
                   </div>
-                  <p className="text-sm text-gray-700">{log.user_action}</p>
-                </div>
-              </div>
-            ))}
+                ))}
           </div>
         </div>
       )}
@@ -457,7 +460,7 @@ export default function AuditTrail() {
 
                       <td className="p-4">
                         <span className={`px-3 py-1 rounded-full text-xs font-bold border ${getActionBadge(log.action)}`}>
-                          {log.action.toUpperCase()}
+                          {log.action?.toUpperCase() || 'UNKNOWN'}
                         </span>
                       </td>
 

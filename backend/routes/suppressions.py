@@ -2,6 +2,7 @@
 from fastapi import APIRouter, HTTPException, Query, Request, status, File, UploadFile, BackgroundTasks
 from fastapi.responses import StreamingResponse
 from database import get_suppressions_collection, get_audit_collection, get_subscribers_collection, get_campaigns_collection
+import pandas as pd
 from models.suppression import (
     SuppressionCreate, SuppressionUpdate, SuppressionOut, BulkSuppressionImport,
     SuppressionReason, SuppressionScope, SuppressionSource, BulkSuppressionCheck,
@@ -180,6 +181,9 @@ async def bulk_check_suppressions_optimized(emails: List[str], target_lists: Lis
         # Global scope takes precedence over list-specific
         if email not in suppressions or suppression["scope"] == "global":
             suppressions[email] = suppression
+
+    # Log found suppressions for debugging
+    logger.info(f"Bulk check: Found {len(suppressions)} active suppressions for {len(emails)} emails")
 
     # Build results for all emails
     for email in emails:
@@ -525,13 +529,73 @@ async def check_suppression(email: str, target_lists: Optional[List[str]] = None
     result = await is_email_suppressed(email, target_lists)
     return result
 
-@router.post("/bulk-check")
-async def bulk_check_suppressions(check_request: BulkSuppressionCheck):
+@router.post("/import")
+async def import_suppressions(
+    request: Request,
+    file: UploadFile = File(...)
+):
+    """Import suppressions from CSV with validation and audit logging"""
+    try:
+        content = await file.read()
+        df = pd.read_csv(io.BytesIO(content))
+        
+        # Validation
+        if 'email' not in df.columns:
+            raise HTTPException(status_code=400, detail="CSV must contain an 'email' column")
+            
+        collection = get_suppressions_collection()
+        operations = []
+        for _, row in df.iterrows():
+            email = str(row['email']).strip().lower()
+            if not email: continue
+            
+            suppression_doc = {
+                "email": email,
+                "reason": row.get('reason', 'import'),
+                "scope": row.get('scope', 'global'),
+                "target_lists": str(row.get('target_lists', '')).split(',') if row.get('target_lists') else [],
+                "notes": row.get('notes', 'Bulk import'),
+                "source": "bulk_import",
+                "is_active": True,
+                "created_at": datetime.utcnow(),
+                "updated_at": datetime.utcnow()
+            }
+            operations.append(UpdateOne({"email": email}, {"$set": suppression_doc}, upsert=True))
+            
+        if operations:
+            await collection.bulk_write(operations)
+        
+        # Log successful import
+        await log_suppression_activity(
+            action="import",
+            entity_id="bulk",
+            user_action=f"Imported {len(df)} suppressions from CSV",
+            request=request,
+            metadata={"filename": file.filename, "count": len(df)}
+        )
+        
+        return {"imported": len(df)}
+    except Exception as e:
+        logger.error(f"Import failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/bulk-check", response_model=BulkSuppressionCheckResult)
+async def bulk_check_suppressions(check_request: BulkSuppressionCheck, request: Request):
     """Optimized bulk suppression check for your campaign system"""
     results = await bulk_check_suppressions_optimized(
         check_request.emails,
         check_request.target_lists
     )
+    
+    # Audit log bulk check
+    await log_suppression_activity(
+        action="bulk_check",
+        entity_id="bulk",
+        user_action=f"Performed bulk suppression check for {len(check_request.emails)} emails",
+        request=request,
+        metadata={"count": len(check_request.emails), "suppressed_count": sum(1 for r in results.values() if r.is_suppressed)}
+    )
+    
     return BulkSuppressionCheckResult(
         total_checked=len(check_request.emails),
         suppressed_count=sum(1 for r in results.values() if r.is_suppressed),

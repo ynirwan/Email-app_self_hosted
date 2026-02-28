@@ -802,6 +802,13 @@ async def get_job_status():
     try:
         jobs_collection = get_jobs_collection()
         subscribers_collection = get_subscribers_collection()
+
+        cleanup_cutoff = datetime.utcnow() - timedelta(minutes=5)
+        await jobs_collection.delete_many({
+            "status": "completed",
+            "updated_at": {"$lt": cleanup_cutoff}
+        })
+
         cursor = jobs_collection.find({}, sort=[("created_at", -1)], limit=50)
         
         jobs = []
@@ -1835,6 +1842,58 @@ async def update_subscriber_status(subscriber_id: str, status: str = Query(...),
     except Exception as e:
         logger.error(f"Update status failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/lists/{list_name}/fields")
+async def get_list_fields(list_name: str):
+    try:
+        subscribers_collection = get_subscribers_collection()
+        pipeline = [
+            {"$match": {"list": list_name}},
+            {"$limit": 500},
+            {
+                "$group": {
+                    "_id": None,
+                    "standard_field_keys": {
+                        "$addToSet": {
+                            "$map": {
+                                "input": {"$objectToArray": {"$ifNull": ["$standard_fields", {}]}},
+                                "as": "field",
+                                "in": "$$field.k"
+                            }
+                        }
+                    },
+                    "custom_field_keys": {
+                        "$addToSet": {
+                            "$map": {
+                                "input": {"$objectToArray": {"$ifNull": ["$custom_fields", {}]}},
+                                "as": "field",
+                                "in": "$$field.k"
+                            }
+                        }
+                    }
+                }
+            }
+        ]
+        result = await subscribers_collection.aggregate(pipeline).to_list(1)
+        if not result:
+            return {"standard": [], "custom": []}
+
+        standard_fields = set()
+        custom_fields = set()
+        for std_array in result[0].get("standard_field_keys", []):
+            if std_array:
+                standard_fields.update(std_array)
+        for cust_array in result[0].get("custom_field_keys", []):
+            if cust_array:
+                custom_fields.update(cust_array)
+
+        return {
+            "standard": sorted(list(standard_fields)),
+            "custom": sorted(list(custom_fields))
+        }
+    except Exception as e:
+        logger.error(f"Failed to get list fields: {e}")
+        return {"standard": ["first_name", "last_name"], "custom": []}
 
 @router.get("/lists/{list_name}/export")
 async def export_list_csv(list_name: str, request: Request):

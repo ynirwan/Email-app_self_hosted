@@ -194,7 +194,7 @@ export default function SubscriberListView() {
     };
 
     return (
-        <div className="p-6">
+        <div className="min-w-0">
             <h1 className="text-xl font-semibold mb-4">Subscribers of {listName}</h1>
             
            <button
@@ -223,26 +223,26 @@ export default function SubscriberListView() {
                 </div>
             ) : (
                 <div className="overflow-x-auto">
-                    <table className="w-full border border-gray-200">
+                    <table className="min-w-max w-full border border-gray-200">
                         <thead>
                             <tr className="bg-gray-100">
-                                <th className="border p-2">Email</th>
-                                <th className="border p-2">Status</th>
-                                <th className="border p-2">Name</th>
+                                <th className="border p-2 whitespace-nowrap">Email</th>
+                                <th className="border p-2 whitespace-nowrap">Status</th>
+                                <th className="border p-2 whitespace-nowrap">Name</th>
                                 {customFieldKeys.map((key) => (
-                                    <th key={key} className="border p-2">
+                                    <th key={key} className="border p-2 whitespace-nowrap">
                                         {key}
                                     </th>
                                 ))}
-                                <th className="border p-2">Created</th>
-                                <th className="border p-2">Actions</th>
+                                <th className="border p-2 whitespace-nowrap">Created</th>
+                                <th className="border p-2 whitespace-nowrap sticky right-0 bg-gray-100">Actions</th>
                             </tr>
                         </thead>
                         <tbody>
                             {subscribers.map((sub) => (
                                 <tr key={sub._id} className="border-t hover:bg-gray-50">
-                                    <td className="border p-2">{sub.email}</td>
-                                    <td className="border p-2">
+                                    <td className="border p-2 whitespace-nowrap">{sub.email}</td>
+                                    <td className="border p-2 whitespace-nowrap">
                                         <span className={`px-2 py-1 rounded text-xs ${sub.status === 'active' ? 'bg-green-100 text-green-800' :
                                                 sub.status === 'unsubscribed' ? 'bg-red-100 text-red-800' :
                                                     'bg-gray-100 text-gray-800'
@@ -250,28 +250,28 @@ export default function SubscriberListView() {
                                             {sub.status}
                                         </span>
                                     </td>
-                                    <td className="border p-2">
+                                    <td className="border p-2 whitespace-nowrap">
                                         {sub.standard_fields?.first_name || ''} {sub.standard_fields?.last_name || ''}
                                     </td>
                                     {customFieldKeys.map((key) => (
-                                        <td key={key} className="border p-2">
+                                        <td key={key} className="border p-2 whitespace-nowrap max-w-xs truncate" title={sub.custom_fields?.[key] || "-"}>
                                             {sub.custom_fields?.[key] || "-"}
                                         </td>
                                     ))}
-                                    <td className="border p-2 text-xs text-gray-600">
+                                    <td className="border p-2 text-xs text-gray-600 whitespace-nowrap">
                                         {sub.created_at ? new Date(sub.created_at).toLocaleDateString() : "-"}
                                     </td>
-                                    <td className="border p-2">
+                                    <td className="border p-2 sticky right-0 bg-white">
                                         <div className="flex gap-2">
                                             <button
                                                 onClick={() => openEditModal(sub)}
-                                                className="px-2 py-1 bg-blue-500 text-white rounded text-sm hover:bg-blue-600"
+                                                className="px-2 py-1 bg-blue-500 text-white rounded text-sm hover:bg-blue-600 whitespace-nowrap"
                                             >
                                                 Edit
                                             </button>
                                             <button
                                                 onClick={() => handleDeleteSubscriber(sub._id)}
-                                                className="px-2 py-1 bg-red-500 text-white rounded text-sm hover:bg-red-600"
+                                                className="px-2 py-1 bg-red-500 text-white rounded text-sm hover:bg-red-600 whitespace-nowrap"
                                             >
                                                 Delete
                                             </button>

@@ -22,6 +22,12 @@ export default function Campaigns() {
   /* stop flag */
   const [stopping, setStopping] = useState(false);
 
+  /* schedule modal */
+  const [showScheduleModal, setShowScheduleModal] = useState(false);
+  const [scheduleDate, setScheduleDate] = useState('');
+  const [scheduleTime, setScheduleTime] = useState('');
+  const [scheduling, setScheduling] = useState(false);
+
   const navigate = useNavigate();
 
   /* ───────── fetch list ───────── */
@@ -40,10 +46,11 @@ export default function Campaigns() {
   /* ───────── helpers ───────── */
   const openSendModal = (c) => { setSelectedCampaign(c); setShowSendModal(true); };
   const openTestModal = (c) => { setSelectedCampaign(c); setShowTestModal(true); };
+  const openScheduleModal = (c) => { setSelectedCampaign(c); setShowScheduleModal(true); };
   const closeModals   = () => {
-    setShowSendModal(false); setShowTestModal(false);
+    setShowSendModal(false); setShowTestModal(false); setShowScheduleModal(false);
     setSelectedCampaign(null); setSending(false); setTesting(false);
-    setTestEmail('');
+    setTestEmail(''); setScheduleDate(''); setScheduleTime(''); setScheduling(false);
   };
 
   /* ───────── actions ───────── */
@@ -74,6 +81,41 @@ export default function Campaigns() {
     }
   };
 
+  const confirmSchedule = async () => {
+    if (!selectedCampaign || !scheduleDate || !scheduleTime) return;
+    try {
+      setScheduling(true);
+      const scheduledTime = new Date(`${scheduleDate}T${scheduleTime}`).toISOString();
+      await API.post(`/campaigns/${selectedCampaign._id}/schedule`, { scheduled_time: scheduledTime });
+      alert('Campaign scheduled successfully!');
+      closeModals(); await fetchCampaigns();
+    } catch (e) {
+      alert(e.response?.data?.detail || 'Schedule failed'); setScheduling(false);
+    }
+  };
+
+  const handleCancelSchedule = async (id) => {
+    if (!window.confirm('Cancel the scheduled send and revert to draft?')) return;
+    try {
+      await API.post(`/campaigns/${id}/cancel-schedule`);
+      alert('Schedule cancelled.');
+      await fetchCampaigns();
+    } catch (e) {
+      alert(e.response?.data?.detail || 'Cancel schedule failed');
+    }
+  };
+
+  const handleDelete = async (id) => {
+    if (!window.confirm('Delete this campaign? This cannot be undone.')) return;
+    try {
+      await API.delete(`/campaigns/${id}`);
+      alert('Campaign deleted.');
+      await fetchCampaigns();
+    } catch (e) {
+      alert(e.response?.data?.detail || 'Delete failed');
+    }
+  };
+
   const handleStop = async (id) => {
     const c = campaigns.find(x => x._id === id);
     if (!c) return;
@@ -89,15 +131,16 @@ export default function Campaigns() {
   };
 
   /* ───────── stats ───────── */
-  const total   = campaigns.length;
-  const drafts  = campaigns.filter(c => (c.status || 'draft') === 'draft').length;
-  const sentNum = campaigns.filter(c => c.status === 'sent').length;
+  const total      = campaigns.length;
+  const drafts     = campaigns.filter(c => (c.status || 'draft') === 'draft').length;
+  const sentNum    = campaigns.filter(c => c.status === 'sent').length;
+  const scheduled  = campaigns.filter(c => c.status === 'scheduled').length;
 
   /* ───────── render ───────── */
   if (loading) return <p className="text-center mt-10">Loading campaigns…</p>;
 
   return (
-    <div className="max-w-4xl mx-auto mt-10">
+    <div className="space-y-6">
       {/* header */}
       <div className="flex justify-between items-center mb-6">
         <h2 className="text-2xl font-bold">📢 Campaigns</h2>
@@ -116,10 +159,11 @@ export default function Campaigns() {
       )}
 
       {/* counters */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 mb-6">
-        <StatCard color="blue"  label="Total Campaigns" value={total}  icon="📊" />
-        <StatCard color="yellow" label="Draft Campaigns" value={drafts} icon="📝" />
-        <StatCard color="green" label="Sent Campaigns"  value={sentNum} icon="📧" />
+      <div className="grid grid-cols-1 sm:grid-cols-4 gap-6 mb-6">
+        <StatCard color="blue"   label="Total Campaigns"     value={total}     icon="📊" />
+        <StatCard color="yellow" label="Draft Campaigns"     value={drafts}    icon="📝" />
+        <StatCard color="purple" label="Scheduled Campaigns" value={scheduled} icon="🕐" />
+        <StatCard color="green"  label="Sent Campaigns"      value={sentNum}   icon="📧" />
       </div>
 
       {/* table */}
@@ -148,12 +192,18 @@ export default function Campaigns() {
                     <Td>{c.subject}</Td>
                     <Td>
                       <span className={`px-2 py-1 rounded text-xs font-medium ${
-                        c.status === 'sent'    ? 'bg-green-100 text-green-800' :
-                        c.status === 'sending' ? 'bg-blue-100  text-blue-800'  :
-                        c.status === 'stopped' ? 'bg-gray-200 text-gray-700'  :
-		        c.status === 'failed' ? 'bg-red-200 text-red-700'  :		      
-                                                  'bg-yellow-100 text-yellow-800'
+                        c.status === 'sent'      ? 'bg-green-100 text-green-800' :
+                        c.status === 'sending'   ? 'bg-blue-100  text-blue-800'  :
+                        c.status === 'scheduled' ? 'bg-purple-100 text-purple-800' :
+                        c.status === 'stopped'   ? 'bg-gray-200 text-gray-700'  :
+                        c.status === 'failed'    ? 'bg-red-200 text-red-700'  :                  
+                                                    'bg-yellow-100 text-yellow-800'
                       }`}>{c.status || 'draft'}</span>
+                      {c.status === 'scheduled' && c.scheduled_time && (
+                        <span className="block text-xs text-purple-600 mt-1">
+                          {new Date(c.scheduled_time).toLocaleString()}
+                        </span>
+                      )}
                     </Td>
                     <Td>{c.created_at ? new Date(c.created_at).toLocaleDateString() : '-'}</Td>
                     <Td>
@@ -166,6 +216,14 @@ export default function Campaigns() {
                         {c.status === 'draft' &&
                           <button onClick={() => openSendModal(c)}
                                   className="text-green-600 hover:text-green-800 hover:underline">📧 Send</button>}
+
+                        {c.status === 'draft' &&
+                          <button onClick={() => openScheduleModal(c)}
+                                  className="text-purple-600 hover:text-purple-800 hover:underline">🕐 Schedule</button>}
+
+                        {c.status === 'scheduled' &&
+                          <button onClick={() => handleCancelSchedule(c._id)}
+                                  className="text-orange-600 hover:text-orange-800 hover:underline">❌ Cancel Schedule</button>}
 
                         {c.status === 'sending' &&
                           <button onClick={() => handleStop(c._id)}
@@ -182,7 +240,7 @@ export default function Campaigns() {
                         <Link to={`/analytics/campaign/${c._id}`}
                               className="text-purple-600 hover:text-purple-800 hover:underline">📊 Report</Link>
 
-			{c.status === 'draft' &&
+                        {c.status === 'draft' &&
                         <button onClick={() => handleDelete(c._id)}
                                 className="text-red-600 hover:text-red-800 hover:underline">🗑️ Delete</button>}
                       </div>
@@ -226,6 +284,44 @@ export default function Campaigns() {
             <BtnPrimary onClick={confirmTest}
                         disabled={testing || !testEmail.trim()}>
               {testing ? 'Sending…' : 'Send Test'}
+            </BtnPrimary>
+          </div>
+        </Modal>
+      )}
+
+      {/* ───────── Schedule modal ───────── */}
+      {showScheduleModal && selectedCampaign && (
+        <Modal title="🕐 Schedule Campaign" onClose={closeModals}>
+          <p className="text-sm mb-4">
+            Schedule <strong>{selectedCampaign.title}</strong> to send at a future date and time.
+          </p>
+          <div className="space-y-3 mb-4">
+            <div>
+              <label className="block text-sm font-medium mb-1">Date</label>
+              <input type="date"
+                     value={scheduleDate}
+                     min={new Date().toISOString().split('T')[0]}
+                     onChange={e => setScheduleDate(e.target.value)}
+                     className="w-full px-3 py-2 border rounded"/>
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">Time</label>
+              <input type="time"
+                     value={scheduleTime}
+                     onChange={e => setScheduleTime(e.target.value)}
+                     className="w-full px-3 py-2 border rounded"/>
+            </div>
+            {scheduleDate && scheduleTime && (
+              <p className="text-sm text-purple-600 bg-purple-50 p-2 rounded">
+                Will send on: {new Date(`${scheduleDate}T${scheduleTime}`).toLocaleString()}
+              </p>
+            )}
+          </div>
+          <div className="flex justify-end gap-3">
+            <BtnSecondary onClick={closeModals}>Cancel</BtnSecondary>
+            <BtnPrimary onClick={confirmSchedule}
+                        disabled={scheduling || !scheduleDate || !scheduleTime}>
+              {scheduling ? 'Scheduling…' : 'Confirm Schedule'}
             </BtnPrimary>
           </div>
         </Modal>
