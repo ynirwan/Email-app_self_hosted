@@ -792,7 +792,7 @@ def start_campaign(self, campaign_id: str):
         
         # Update campaign status
         result = campaigns_collection.update_one(
-            {"_id": ObjectId(campaign_id), "status": {"$in": ["draft", "scheduled"]}},
+            {"_id": ObjectId(campaign_id), "status": {"$in": ["draft", "scheduled", "queued"]}},
             {
                 "$set": {
                     "status": "sending",
