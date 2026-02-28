@@ -1,5 +1,4 @@
 # routes/setting.py
-import os
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, EmailStr
 from typing import Optional
@@ -9,7 +8,6 @@ from email.mime.text import MIMEText
 from pydantic import BaseModel, EmailStr, validator
 
 
-# ✅ Follow your existing pattern - import specific collection functions
 from database import get_settings_collection, get_audit_collection
 
 router = APIRouter()
@@ -46,21 +44,38 @@ class EmailTestSettings(BaseModel):
     username: str
     password: str
 
-def get_smtp_mode():
-    """Get SMTP mode from environment variables"""
-    return os.getenv("SMTP_MODE", "unmanaged").lower()
+async def get_smtp_mode():
+    """Get SMTP mode from database settings"""
+    settings_collection = get_settings_collection()
+    settings = await settings_collection.find_one({"type": "email"})
+    if settings and settings.get("smtp_mode"):
+        return settings["smtp_mode"].lower()
+    if settings and settings.get("config", {}).get("smtp_choice"):
+        return settings["config"]["smtp_choice"].lower()
+    return "unmanaged"
 
-def get_managed_smtp_limits():
-    """Get managed SMTP limits from environment variables"""
+async def get_managed_smtp_limits():
+    """Get managed SMTP limits from database settings"""
+    settings_collection = get_settings_collection()
+    settings = await settings_collection.find_one({"type": "email"})
+    if settings:
+        config = settings.get("config", {})
+        sending_limits = config.get("sending_limits", {})
+        if sending_limits:
+            return {
+                "max_per_minute": sending_limits.get("per_minute", 500),
+                "max_per_hour": sending_limits.get("per_hour", 25000),
+                "max_per_day": sending_limits.get("per_day", 100000)
+            }
     return {
-        "max_per_minute": int(os.getenv("MANAGED_SMTP_MAX_PER_MINUTE", "500")),
-        "max_per_hour": int(os.getenv("MANAGED_SMTP_MAX_PER_HOUR", "25000")),
-        "max_per_day": int(os.getenv("MANAGED_SMTP_MAX_PER_DAY", "100000"))
+        "max_per_minute": 500,
+        "max_per_hour": 25000,
+        "max_per_day": 100000
     }
 
-def validate_managed_smtp_limits(limits: SendingLimits):
+async def validate_managed_smtp_limits(limits: SendingLimits):
     """Validate limits against managed SMTP constraints"""
-    managed_limits = get_managed_smtp_limits()
+    managed_limits = await get_managed_smtp_limits()
     
     if limits.per_minute > managed_limits["max_per_minute"]:
         raise ValueError(f"Per minute limit cannot exceed {managed_limits['max_per_minute']}")
@@ -78,8 +93,8 @@ async def get_system_config():
         settings_collection = get_settings_collection()
         settings = await settings_collection.find_one({"type": "email"})
         
-        smtp_mode = get_smtp_mode()
-        managed_limits = get_managed_smtp_limits()
+        smtp_mode = await get_smtp_mode()
+        managed_limits = await get_managed_smtp_limits()
         
         return {
             "smtp_mode": smtp_mode,
@@ -95,7 +110,7 @@ async def get_email_settings():
     try:
         settings_collection = get_settings_collection()
         settings = await settings_collection.find_one({"type": "email"})
-        smtp_mode = get_smtp_mode()
+        smtp_mode = await get_smtp_mode()
 
         if not settings:
             # Return default settings based on SMTP mode
@@ -138,7 +153,7 @@ async def update_email_settings(settings: EmailSettings):
     try:
         settings_collection = get_settings_collection()
         audit_collection = get_audit_collection()
-        smtp_mode = get_smtp_mode()
+        smtp_mode = await get_smtp_mode()
 
         # Validate settings based on SMTP mode
         if smtp_mode == "managed":
@@ -149,7 +164,7 @@ async def update_email_settings(settings: EmailSettings):
             
             # Validate limits against managed constraints
             try:
-                validate_managed_smtp_limits(settings.sending_limits)
+                await validate_managed_smtp_limits(settings.sending_limits)
             except ValueError as e:
                 raise HTTPException(status_code=400, detail=str(e))
 
@@ -199,11 +214,11 @@ async def update_email_settings(settings: EmailSettings):
             await audit_collection.insert_one({
                 "action": "email_settings_update_failed",
                 "error": str(e),
-                "smtp_mode": get_smtp_mode(),
+                "smtp_mode": "unknown",
                 "attempted_at": datetime.utcnow()
             })
         except:
-            pass  # Don't fail the main request if audit logging fails
+            pass
         
         raise HTTPException(status_code=500, detail=f"Failed to update settings: {str(e)}")
 
@@ -211,7 +226,7 @@ async def update_email_settings(settings: EmailSettings):
 async def test_email_connection(settings: EmailTestSettings):
     """Test SMTP connection - only available for unmanaged SMTP"""
     try:
-        smtp_mode = get_smtp_mode()
+        smtp_mode = await get_smtp_mode()
         audit_collection = get_audit_collection()
         
         # Don't allow connection testing for managed SMTP
@@ -281,7 +296,7 @@ async def get_email_system_status():
     try:
         settings_collection = get_settings_collection()
         audit_collection = get_audit_collection()
-        smtp_mode = get_smtp_mode()
+        smtp_mode = await get_smtp_mode()
 
         settings = await settings_collection.find_one({"type": "email"})
 
@@ -306,7 +321,7 @@ async def get_email_system_status():
             "last_updated": settings.get("updated_at") if settings else None,
             "recent_connection_tests": recent_tests,
             "recent_config_changes": recent_config_changes,
-            "managed_limits": get_managed_smtp_limits() if smtp_mode == "managed" else None
+            "managed_limits": (await get_managed_smtp_limits()) if smtp_mode == "managed" else None
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get status: {str(e)}")
@@ -316,7 +331,7 @@ async def get_email_audit_logs(limit: int = 50):
     """Get email configuration audit logs"""
     try:
         audit_collection = get_audit_collection()
-        smtp_mode = get_smtp_mode()
+        smtp_mode = await get_smtp_mode()
 
         logs = await audit_collection.find(
             {"action": {"$regex": "^email_|^smtp_"}},
@@ -339,7 +354,7 @@ async def delete_email_settings():
     try:
         settings_collection = get_settings_collection()
         audit_collection = get_audit_collection()
-        smtp_mode = get_smtp_mode()
+        smtp_mode = await get_smtp_mode()
 
         # Check if settings exist
         existing_settings = await settings_collection.find_one({"type": "email"})
@@ -371,7 +386,7 @@ async def delete_email_settings():
             await audit_collection.insert_one({
                 "action": "email_settings_delete_failed",
                 "error": str(e),
-                "smtp_mode": get_smtp_mode(),
+                "smtp_mode": "unknown",
                 "attempted_at": datetime.utcnow()
             })
         except:
@@ -384,7 +399,7 @@ async def get_email_limits():
     """Get email sending limits information"""
     try:
         settings_collection = get_settings_collection()
-        smtp_mode = get_smtp_mode()
+        smtp_mode = await get_smtp_mode()
         
         settings = await settings_collection.find_one({"type": "email"})
         current_limits = settings.get("config", {}).get("sending_limits", {}) if settings else {}
@@ -395,7 +410,7 @@ async def get_email_limits():
         }
         
         if smtp_mode == "managed":
-            response["managed_limits"] = get_managed_smtp_limits()
+            response["managed_limits"] = await get_managed_smtp_limits()
             response["limits_enforced_by"] = "system"
         else:
             response["limits_enforced_by"] = "application"
@@ -409,11 +424,11 @@ async def get_email_limits():
 async def validate_email_limits(limits: SendingLimits):
     """Validate email sending limits against system constraints"""
     try:
-        smtp_mode = get_smtp_mode()
+        smtp_mode = await get_smtp_mode()
         
         if smtp_mode == "managed":
             try:
-                validate_managed_smtp_limits(limits)
+                await validate_managed_smtp_limits(limits)
                 return {
                     "valid": True,
                     "message": "Limits are within system constraints",
@@ -424,7 +439,7 @@ async def validate_email_limits(limits: SendingLimits):
                     "valid": False,
                     "message": str(e),
                     "smtp_mode": smtp_mode,
-                    "managed_limits": get_managed_smtp_limits()
+                    "managed_limits": await get_managed_smtp_limits()
                 }
         else:
             return {

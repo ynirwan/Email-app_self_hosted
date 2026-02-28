@@ -1,4 +1,3 @@
-import os
 import logging
 from typing import Optional, Dict, Any
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
@@ -7,20 +6,19 @@ from pymongo.database import Database
 from pymongo.errors import ConnectionFailure, ServerSelectionTimeoutError
 import time
 
+from core.config import settings
+
 logger = logging.getLogger(__name__)
 
-# ===== MONGODB CONFIGURATION =====
-MONGODB_URI = os.getenv(
-    "MONGODB_URI", 
-    "mongodb://admin:password@mongodb:27017/email_marketing?authSource=admin"
-)
+# ===== MONGODB CONFIGURATION (from settings) =====
+MONGODB_URI = settings.MONGODB_URI
 
-# ===== CONNECTION POOL SETTINGS =====
-MAX_POOL_SIZE = int(os.getenv("DB_MAX_POOL_SIZE", "50"))
-MIN_POOL_SIZE = int(os.getenv("DB_MIN_POOL_SIZE", "5"))
-MAX_IDLE_TIME_MS = int(os.getenv("DB_MAX_IDLE_TIME_MS", "45000"))
-CONNECT_TIMEOUT_MS = int(os.getenv("DB_CONNECT_TIMEOUT_MS", "10000"))
-SERVER_SELECTION_TIMEOUT_MS = int(os.getenv("DB_SERVER_SELECTION_TIMEOUT_MS", "10000"))
+# ===== CONNECTION POOL SETTINGS (from settings) =====
+MAX_POOL_SIZE = settings.DB_MAX_POOL_SIZE
+MIN_POOL_SIZE = settings.DB_MIN_POOL_SIZE
+MAX_IDLE_TIME_MS = settings.DB_MAX_IDLE_TIME_SECONDS * 1000
+CONNECT_TIMEOUT_MS = settings.DB_CONNECTION_TIMEOUT_SECONDS * 1000
+SERVER_SELECTION_TIMEOUT_MS = settings.DB_SERVER_SELECTION_TIMEOUT_SECONDS * 1000
 
 # ===== CLIENT INSTANCES =====
 async_client: Optional[AsyncIOMotorClient] = None

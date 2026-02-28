@@ -1,31 +1,24 @@
 # backend/routes/email_settings.py
+import logging
 from fastapi import APIRouter, HTTPException, Request
 from models.email_models import HostedEmailSettings, SMTPTestSettings
+from core.config import settings
 from core.deployment_manager import DeploymentMode
 from core.security import encrypt_password, decrypt_password 
 from database import get_settings_collection, get_usage_collection, get_audit_collection
 from datetime import datetime
 from cryptography.fernet import Fernet
 import smtplib
-import os
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-ENCRYPTION_KEY = os.getenv("MASTER_ENCRYPTION_KEY")
-print(f"🔍 DEBUG: ENCRYPTION_KEY value: '{ENCRYPTION_KEY}'")
-print(f"🔍 DEBUG: ENCRYPTION_KEY type: {type(ENCRYPTION_KEY)}")
-print(f"🔍 DEBUG: ENCRYPTION_KEY length: {len(ENCRYPTION_KEY) if ENCRYPTION_KEY else 'None'}")
-
-
-# Make sure you have a consistent key in env
-ENCRYPTION_KEY = os.getenv("MASTER_ENCRYPTION_KEY")
-#ENCRYPTION_KEY = "lUuIwsIeBDEArb4N_KpDb7Ax8IVVJ-nAvHYCZYGg4RU="
+ENCRYPTION_KEY = settings.MASTER_ENCRYPTION_KEY
 try:
     fernet = Fernet(ENCRYPTION_KEY.encode() if isinstance(ENCRYPTION_KEY, str) else ENCRYPTION_KEY)
 except Exception as e:
     logger.error(f"Failed to initialize Fernet in email_settings: {e}")
-    # Fallback for startup to prevent crash
     fernet = None
 
 def encrypt_password(password: str) -> str:
@@ -42,8 +35,7 @@ def decrypt_password(token: str) -> str:
 class QuotaManager:
     def __init__(self):
         self.deployment_mode = DeploymentMode.HOSTED_SERVICE
-        # Daily limit set from environment variable (subscription-dependent)
-        self.daily_limit = int(os.getenv("EMAIL_DAILY_LIMIT", "1000"))
+        self.daily_limit = 1000
         self.current_usage = 0
 
     async def get_system_quota(self):

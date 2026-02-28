@@ -13,13 +13,11 @@ import json
 import logging
 from pymongo import UpdateOne
 import redis
-import os
+from core.config import settings
 
 logger = logging.getLogger(__name__)
 
-# Redis connection (add this to your database.py if not exists)
-REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
-redis_client = redis.from_url(REDIS_URL)
+redis_client = redis.from_url(settings.REDIS_URL)
 
 # Cache configuration
 SUPPRESSION_CACHE_KEY = "email_suppressions"

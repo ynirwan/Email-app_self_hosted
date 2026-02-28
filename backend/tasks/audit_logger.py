@@ -13,6 +13,7 @@ from bson import ObjectId
 from celery_app import celery_app
 from database import get_sync_audit_collection, get_sync_campaigns_collection
 from core.config import settings, get_redis_key
+from tasks.task_config import task_settings
 import redis
 
 logger = logging.getLogger(__name__)
@@ -95,7 +96,7 @@ class AuditLogger:
                     "user_id": user_id,
                     "campaign_id": ObjectId(campaign_id) if campaign_id else None,
                     "subscriber_id": subscriber_id,
-                    "ip_address": ip_address if not settings.LOG_SENSITIVE_DATA else self._hash_ip(ip_address),
+                    "ip_address": ip_address if not task_settings.LOG_SENSITIVE_DATA else self._hash_ip(ip_address),
                     "user_agent": user_agent[:500] if user_agent else None  # Truncate long user agents
                 },
                 "metadata": {
@@ -110,11 +111,11 @@ class AuditLogger:
             audit_record["data_classification"] = self._classify_audit_data(event_type, details)
             
             # Hash sensitive fields if required
-            if settings.LOG_SENSITIVE_DATA == False:
+            if task_settings.LOG_SENSITIVE_DATA == False:
                 audit_record = self._sanitize_sensitive_data(audit_record)
             
             # Store audit record
-            if settings.ENABLE_AUDIT_LOGGING:
+            if task_settings.ENABLE_AUDIT_LOGGING:
                 audit_id = self._store_audit_record(audit_record)
                 
                 # Cache recent events for quick access
@@ -505,7 +506,7 @@ def log_email_event(event_type: AuditEventType, campaign_id: str, subscriber_id:
                    email: str, details: Dict[str, Any]):
     """Log an email-related audit event"""
     # Hash email for privacy if needed
-    if not settings.LOG_SENSITIVE_DATA:
+    if not task_settings.LOG_SENSITIVE_DATA:
         details = details.copy()
         details["email_hash"] = audit_logger._hash_email(email)
         if "email" in details:

@@ -13,6 +13,7 @@ from celery_app import celery_app
 
 # Import all production systems
 from core.config import settings
+from tasks.task_config import task_settings
 from database import (
     get_sync_campaigns_collection, get_sync_email_logs_collection,
     get_sync_subscribers_collection, get_sync_templates_collection
@@ -63,7 +64,7 @@ def log_email_status(campaign_id: str, subscriber_id: str, email: str, status: s
         email_logs_collection.insert_one(log_entry)
         
         # Log audit event
-        if settings.ENABLE_AUDIT_LOGGING:
+        if task_settings.ENABLE_AUDIT_LOGGING:
             audit_details = {
                 "status": status,
                 "provider": provider,
@@ -86,10 +87,10 @@ def log_email_status(campaign_id: str, subscriber_id: str, email: str, status: s
 
 @celery_app.task(
     bind=True,
-    max_retries=settings.MAX_EMAIL_RETRIES if hasattr(settings, 'MAX_EMAIL_RETRIES') else 3,
+    max_retries=task_settings.MAX_EMAIL_RETRIES,
     queue="campaigns",
     name="tasks.send_single_campaign_email",
-    soft_time_limit=settings.TASK_TIMEOUT_SECONDS if hasattr(settings, 'TASK_TIMEOUT_SECONDS') else 30
+    soft_time_limit=task_settings.TASK_TIMEOUT_SECONDS
 )
 def send_single_campaign_email(self, campaign_id: str, subscriber_id: str):
     """
@@ -159,7 +160,7 @@ def send_single_campaign_email(self, campaign_id: str, subscriber_id: str):
         
         # ===== STEP 4: RATE LIMITING CHECK =====
         
-        if settings.ENABLE_RATE_LIMITING:
+        if task_settings.ENABLE_RATE_LIMITING:
             # Determine email provider for rate limiting
             provider_type = EmailProvider.DEFAULT
             email_settings = campaign.get("email_settings", {})
@@ -182,7 +183,7 @@ def send_single_campaign_email(self, campaign_id: str, subscriber_id: str):
                 raise self.retry(countdown=delay, exc=Exception(f"Rate limited: {rate_info}"))
             elif can_send == RateLimitResult.CIRCUIT_BREAKER_OPEN:
                 # Circuit breaker is open, send to DLQ
-                if settings.ENABLE_DLQ:
+                if task_settings.ENABLE_DLQ:
                     dlq_result = dlq_manager.send_to_dlq(
                         campaign_id, subscriber_id, recipient_email,
                         {"error": "Circuit breaker open", "provider": provider_type.value}
@@ -235,7 +236,7 @@ def send_single_campaign_email(self, campaign_id: str, subscriber_id: str):
                 text_content=personalized.get("text_content"),
                 campaign_id=campaign_id,
                 reply_to=reply_to,
-                timeout=settings.EMAIL_SEND_TIMEOUT_SECONDS
+                timeout=task_settings.EMAIL_SEND_TIMEOUT_SECONDS
             )
             
             # ===== STEP 7: RESULT PROCESSING =====
@@ -265,7 +266,7 @@ def send_single_campaign_email(self, campaign_id: str, subscriber_id: str):
                 )
                 
                 # Record rate limiter success
-                if settings.ENABLE_RATE_LIMITING:
+                if task_settings.ENABLE_RATE_LIMITING:
                     rate_limiter.record_email_result(True, provider_type, None, campaign_id)
                 
                 logger.debug(f"Email sent successfully: {campaign_id}/{subscriber_id}")
@@ -290,7 +291,7 @@ def send_single_campaign_email(self, campaign_id: str, subscriber_id: str):
                 
                 if is_permanent or self.request.retries >= self.max_retries:
                     # Send to DLQ or mark as permanently failed
-                    if settings.ENABLE_DLQ and not is_permanent:
+                    if task_settings.ENABLE_DLQ and not is_permanent:
                         dlq_result = dlq_manager.send_to_dlq(
                             campaign_id, subscriber_id, recipient_email,
                             {
@@ -320,7 +321,7 @@ def send_single_campaign_email(self, campaign_id: str, subscriber_id: str):
                     )
                     
                     # Record rate limiter failure
-                    if settings.ENABLE_RATE_LIMITING:
+                    if task_settings.ENABLE_RATE_LIMITING:
                         rate_limiter.record_email_result(False, provider_type, error_reason, campaign_id)
                     
                     return {
@@ -334,7 +335,7 @@ def send_single_campaign_email(self, campaign_id: str, subscriber_id: str):
                 
                 else:
                     # Retry with exponential backoff
-                    countdown = settings.RETRY_BACKOFF_BASE_SECONDS * (2 ** self.request.retries)
+                    countdown = task_settings.RETRY_BACKOFF_BASE_SECONDS * (2 ** self.request.retries)
                     max_countdown = 3600  # Max 1 hour
                     countdown = min(countdown, max_countdown)
                     
@@ -347,7 +348,7 @@ def send_single_campaign_email(self, campaign_id: str, subscriber_id: str):
                 # Final failure
                 error_msg = str(e)
                 
-                if settings.ENABLE_DLQ:
+                if task_settings.ENABLE_DLQ:
                     dlq_result = dlq_manager.send_to_dlq(
                         campaign_id, subscriber_id, recipient_email,
                         {
@@ -416,7 +417,7 @@ def send_campaign_batch(self, campaign_id: str, batch_size: int = None, last_id:
         # ===== RESOURCE MANAGEMENT =====
         
         if not batch_size:
-            batch_size = settings.MAX_BATCH_SIZE
+            batch_size = task_settings.MAX_BATCH_SIZE
         
         # Get optimal batch size based on current system resources
         optimal_batch_size = resource_manager.get_optimal_batch_size(batch_size, campaign_id)
@@ -654,7 +655,7 @@ def finalize_campaign(campaign_id: str) -> Dict[str, Any]:
         )
         
         # Log campaign completion
-        if settings.ENABLE_AUDIT_LOGGING:
+        if task_settings.ENABLE_AUDIT_LOGGING:
             log_campaign_event(
                 AuditEventType.CAMPAIGN_COMPLETED,
                 campaign_id,
@@ -707,7 +708,7 @@ def start_campaign(self, campaign_id: str):
             return {"error": "campaign_not_startable", "campaign_id": campaign_id}
         
         # Log campaign start
-        if settings.ENABLE_AUDIT_LOGGING:
+        if task_settings.ENABLE_AUDIT_LOGGING:
             log_campaign_event(
                 AuditEventType.CAMPAIGN_STARTED,
                 campaign_id,
@@ -715,7 +716,7 @@ def start_campaign(self, campaign_id: str):
             )
         
         # Start first batch
-        initial_batch_task = send_campaign_batch.delay(campaign_id, settings.MAX_BATCH_SIZE, None)
+        initial_batch_task = send_campaign_batch.delay(campaign_id, task_settings.MAX_BATCH_SIZE, None)
         
         return {
             "status": "campaign_started",

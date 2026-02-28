@@ -13,6 +13,7 @@ from abc import ABC, abstractmethod
 from celery_app import celery_app
 from database import get_sync_settings_collection
 from core.config import settings, get_redis_key
+from tasks.task_config import task_settings
 from tasks.rate_limiter import EmailProvider
 from tasks.audit_logger import log_system_event, AuditEventType, AuditSeverity
 import redis
@@ -149,7 +150,7 @@ class SendGridEmailService(EmailServiceInterface):
                 f"{self.base_url}/mail/send",
                 headers=headers,
                 json=payload,
-                timeout=settings.EMAIL_SEND_TIMEOUT_SECONDS
+                timeout=task_settings.EMAIL_SEND_TIMEOUT_SECONDS
             )
             
             if response.status_code == 202:  # SendGrid success code

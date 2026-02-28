@@ -103,7 +103,12 @@ Preferred communication style: Simple, everyday language.
 - **bcrypt/passlib**: Password hashing.
 
 ### Configuration
-- **python-dotenv**: Environment variable management.
+- **Two-file config architecture**:
+  - `backend/core/config.py` — App-level settings (DB, Redis, JWT, CORS, security, deployment, uploads, API). Instantiates `settings`.
+  - `backend/tasks/task_config.py` — Task/Celery-specific settings (batch sizes, retries, timeouts, rate limits, DLQ, monitoring, analytics, queues, feature flags). Instantiates `task_settings`.
+  - All other files import from these two — no direct `os.getenv` calls elsewhere.
+  - Email/SMTP/SES provider settings are managed via frontend UI and stored in MongoDB, not in env vars.
+- **python-dotenv**: Environment variable management via `backend/.env`.
 - **Fernet (cryptography)**: Encryption for sensitive configuration values like SMTP passwords.
 
 ### HTTP/Async
@@ -121,6 +126,14 @@ Preferred communication style: Simple, everyday language.
 - Console output also preserved for live monitoring
 
 ## Recent Changes (2026-02-28)
+- **Configuration Consolidation**: Refactored all backend config into two clean files
+  - `backend/core/config.py` — App-level settings only (DB, Redis, JWT, CORS, security, deployment)
+  - `backend/tasks/task_config.py` — Task/Celery settings only (batch sizes, retries, timeouts, rate limits, DLQ, monitoring)
+  - Removed all `os.getenv` calls from every other file (database.py, celery_app.py, auth.py, security.py, all tasks, all routes, main.py)
+  - Removed unused email/SMTP/SES env vars (EMAIL_PROVIDER, AWS_*, SES_*, DEFAULT_SENDER_*, SMTP_MODE, etc.) — these are managed via frontend UI/database
+  - Removed redundant REDIS_HOST/REDIS_PORT (REDIS_URL is sufficient)
+  - Cleaned up `.env` to only contain actively-used variables with clear section comments
+
 - **Unsubscribe System**: Unique unsubscribe tokens per email send, public GET/POST endpoints for unsubscribe processing, `{{unsubscribe_url}}` template variable, `List-Unsubscribe` email header support
   - Route: `backend/routes/unsubscribe.py` - Token generation, GET `/api/unsubscribe/{token}` (HTML page), POST `/api/webhooks/unsubscribe` (JSON webhook)
   - Config: `UNSUBSCRIBE_DOMAIN` env var (default: `gnagainbox.com`)

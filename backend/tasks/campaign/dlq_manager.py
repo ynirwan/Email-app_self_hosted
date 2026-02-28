@@ -11,6 +11,7 @@ from bson import ObjectId
 from celery_app import celery_app
 from database import get_sync_campaigns_collection, get_sync_dlq_collection, get_sync_email_logs_collection
 from core.config import settings, get_redis_key
+from tasks.task_config import task_settings
 import redis
 
 logger = logging.getLogger(__name__)
@@ -128,14 +129,14 @@ class DLQManager:
         
         # Check retry count
         retry_count = error_info.get("retry_count", 0)
-        if retry_count >= settings.MAX_EMAIL_RETRIES:
+        if retry_count >= task_settings.MAX_EMAIL_RETRIES:
             return False
         
         return True
     
     def _calculate_next_retry(self, retry_count: int) -> datetime:
         """Calculate next retry time with exponential backoff"""
-        delay_seconds = settings.RETRY_BACKOFF_BASE_SECONDS * (2 ** retry_count)
+        delay_seconds = task_settings.RETRY_BACKOFF_BASE_SECONDS * (2 ** retry_count)
         max_delay = 3600 * 4  # Maximum 4 hours
         delay_seconds = min(delay_seconds, max_delay)
         
@@ -186,7 +187,7 @@ def process_dlq_retries(self):
             "status": "dlq_pending",
             "can_retry": True,
             "next_retry_at": {"$lte": now},
-            "retry_count": {"$lt": settings.MAX_EMAIL_RETRIES}
+            "retry_count": {"$lt": task_settings.MAX_EMAIL_RETRIES}
         }).limit(100)  # Process up to 100 retries at once
         
         processed = 0
@@ -227,7 +228,7 @@ def process_dlq_retries(self):
                     {
                         "$set": {
                             "retry_task_id": retry_task.id,
-                            "next_retry_at": DLQManager()._calculate_next_retry(new_retry_count) if new_retry_count < settings.MAX_EMAIL_RETRIES else None
+                            "next_retry_at": DLQManager()._calculate_next_retry(new_retry_count) if new_retry_count < task_settings.MAX_EMAIL_RETRIES else None
                         }
                     }
                 )

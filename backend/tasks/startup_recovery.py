@@ -3,16 +3,16 @@ import logging
 from datetime import datetime, timedelta
 from bson import ObjectId
 import redis
-import os
 from database import (
     get_sync_campaigns_collection,
     get_sync_email_logs_collection,
     get_sync_subscribers_collection
 )
 from celery_app import celery_app
+from core.config import settings
 
 logger = logging.getLogger(__name__)
-redis_client = redis.Redis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379/0"))
+redis_client = redis.Redis.from_url(settings.REDIS_URL)
 
 @celery_app.task(bind=True, queue="cleanup", name="tasks.startup_recovery_only")
 def startup_recovery_only(self):
