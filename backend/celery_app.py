@@ -15,41 +15,8 @@ logger = logging.getLogger(__name__)
 # CONFIGURATION IMPORT
 # ============================================
 
-# Import config safely with fallbacks
-try:
-    from core.config import settings, get_redis_key
-    REDIS_URL = settings.REDIS_URL
-    MAX_CONCURRENT_TASKS = settings.MAX_CONCURRENT_TASKS
-    WORKER_MAX_TASKS_PER_CHILD = settings.WORKER_MAX_TASKS_PER_CHILD
-    MAX_EMAIL_RETRIES = settings.MAX_EMAIL_RETRIES
-    ENABLE_METRICS_COLLECTION = settings.ENABLE_METRICS_COLLECTION
-    ENABLE_AUDIT_LOGGING = settings.ENABLE_AUDIT_LOGGING
-    ENABLE_GRACEFUL_SHUTDOWN = settings.ENABLE_GRACEFUL_SHUTDOWN
-    METRICS_COLLECTION_INTERVAL_SECONDS = settings.METRICS_COLLECTION_INTERVAL_SECONDS
-    HEALTH_CHECK_INTERVAL_SECONDS = settings.HEALTH_CHECK_INTERVAL_SECONDS
-    PROVIDER_HEALTH_CHECK_INTERVAL_SECONDS = settings.PROVIDER_HEALTH_CHECK_INTERVAL_SECONDS
-    ENABLE_COMPLIANCE_TRACKING = settings.ENABLE_COMPLIANCE_TRACKING
-    AUDIT_LOG_RETENTION_DAYS = settings.AUDIT_LOG_RETENTION_DAYS
-    ENABLE_DLQ = settings.ENABLE_DLQ
-    DLQ_RETRY_DELAY_MINUTES = settings.DLQ_RETRY_DELAY_MINUTES
-    logger.info("✅ Loaded settings from core.config")
-except ImportError as e:
-    logger.warning(f"⚠️  Could not import core.config: {e}, using fallback values")
-    # Fallback values if config not available
-    REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
-    MAX_CONCURRENT_TASKS = 50
-    WORKER_MAX_TASKS_PER_CHILD = 500
-    MAX_EMAIL_RETRIES = 3
-    ENABLE_METRICS_COLLECTION = True
-    ENABLE_AUDIT_LOGGING = True
-    ENABLE_GRACEFUL_SHUTDOWN = True
-    METRICS_COLLECTION_INTERVAL_SECONDS = 60
-    HEALTH_CHECK_INTERVAL_SECONDS = 30
-    PROVIDER_HEALTH_CHECK_INTERVAL_SECONDS = 300
-    ENABLE_COMPLIANCE_TRACKING = False
-    AUDIT_LOG_RETENTION_DAYS = 90
-    ENABLE_DLQ = True
-    DLQ_RETRY_DELAY_MINUTES = 15
+from core.config import settings
+from tasks.task_config import task_settings
 
 
 # ============================================
@@ -58,8 +25,8 @@ except ImportError as e:
 
 celery_app = Celery(
     "email_campaign_worker",
-    broker=REDIS_URL,
-    backend=REDIS_URL,
+    broker=settings.CELERY_BROKER_URL,
+    backend=settings.CELERY_RESULT_BACKEND,
     include=[
         # Core email campaign tasks (always included)
         "tasks.campaign.email_campaign_tasks",
@@ -127,8 +94,8 @@ celery_app.conf.update(
     task_soft_time_limit=3000,  # 50 minutes soft limit
     
     # ===== WORKER CONFIGURATION =====
-    worker_prefetch_multiplier=max(1, MAX_CONCURRENT_TASKS // 10),  # Optimize prefetch
-    worker_max_tasks_per_child=WORKER_MAX_TASKS_PER_CHILD,  # Prevent memory leaks
+    worker_prefetch_multiplier=max(1, task_settings.MAX_CONCURRENT_TASKS // 10),  # Optimize prefetch
+    worker_max_tasks_per_child=task_settings.WORKER_MAX_TASKS_PER_CHILD,  # Prevent memory leaks
     worker_disable_rate_limits=False,  # Keep rate limits enabled
     worker_log_format='[%(asctime)s: %(levelname)s/%(processName)s] %(message)s',
     worker_task_log_format='[%(asctime)s: %(levelname)s/%(processName)s][%(task_name)s(%(task_id)s)] %(message)s',
@@ -150,7 +117,7 @@ celery_app.conf.update(
     },
     
     # ===== RESULT BACKEND CONFIGURATION =====
-    result_backend=REDIS_URL,
+    result_backend=settings.CELERY_RESULT_BACKEND,
     result_expires=3600,  # 1 hour
     result_compression='gzip',
     result_extended=True,
@@ -269,7 +236,7 @@ celery_app.conf.update(
         # Email sending tasks
         'tasks.send_single_campaign_email': {
             'rate_limit': '500/s',
-            'max_retries': MAX_EMAIL_RETRIES,
+            'max_retries': task_settings.MAX_EMAIL_RETRIES,
             'default_retry_delay': 60,
             'retry_backoff': True,
             'retry_backoff_max': 600,
@@ -335,22 +302,22 @@ logger.info("✅ Celery configuration applied")
 
 beat_schedule = {}
 
-if ENABLE_METRICS_COLLECTION:
+if task_settings.ENABLE_METRICS_COLLECTION:
     beat_schedule.update({
         # ===== MONITORING TASKS =====
         'collect-system-metrics': {
             'task': 'tasks.collect_all_metrics',
-            'schedule': timedelta(seconds=METRICS_COLLECTION_INTERVAL_SECONDS),
+            'schedule': timedelta(seconds=task_settings.METRICS_COLLECTION_INTERVAL_SECONDS),
             'options': {'queue': 'monitoring', 'priority': 3}
         },
         'health-check': {
             'task': 'tasks.run_health_checks',
-            'schedule': timedelta(seconds=HEALTH_CHECK_INTERVAL_SECONDS),
+            'schedule': timedelta(seconds=task_settings.HEALTH_CHECK_INTERVAL_SECONDS),
             'options': {'queue': 'monitoring', 'priority': 4}
         },
         'provider-health-check': {
             'task': 'tasks.check_provider_health',
-            'schedule': timedelta(seconds=PROVIDER_HEALTH_CHECK_INTERVAL_SECONDS),
+            'schedule': timedelta(seconds=task_settings.PROVIDER_HEALTH_CHECK_INTERVAL_SECONDS),
             'options': {'queue': 'monitoring', 'priority': 4}
         },
         'monitor-system-resources': {
@@ -360,12 +327,12 @@ if ENABLE_METRICS_COLLECTION:
         },
     })
 
-if ENABLE_DLQ:
+if task_settings.ENABLE_DLQ:
     beat_schedule.update({
         # ===== DLQ PROCESSING =====
         'process-dlq-retries': {
             'task': 'tasks.process_dlq_retries',
-            'schedule': timedelta(minutes=DLQ_RETRY_DELAY_MINUTES),
+            'schedule': timedelta(minutes=task_settings.DLQ_RETRY_DELAY_MINUTES),
             'options': {'queue': 'dlq', 'priority': 6}
         },
         'cleanup-old-dlq-entries': {
@@ -505,14 +472,14 @@ beat_schedule.update({
     },
 })
 
-if ENABLE_COMPLIANCE_TRACKING:
+if task_settings.ENABLE_COMPLIANCE_TRACKING:
     beat_schedule['daily-compliance-report'] = {
         'task': 'tasks.generate_daily_compliance_report',
         'schedule': timedelta(days=1),
         'options': {'queue': 'analytics', 'priority': 3}
     }
 
-if ENABLE_AUDIT_LOGGING:
+if task_settings.ENABLE_AUDIT_LOGGING:
     beat_schedule['cleanup-audit-logs'] = {
         'task': 'tasks.cleanup_audit_logs',
         'schedule': timedelta(days=7),
@@ -551,7 +518,7 @@ def task_postrun_handler(sender=None, task_id=None, task=None, args=None, kwargs
 def task_success_handler(sender=None, result=None, **kwargs):
     """Handle successful task completion"""
     try:
-        if ENABLE_METRICS_COLLECTION:
+        if task_settings.ENABLE_METRICS_COLLECTION:
             # Track successful task completion
             pass
     except Exception as e:
@@ -568,7 +535,7 @@ def task_failure_handler(sender=None, task_id=None, exception=None, traceback=No
         
         logger.error(f"❌ Task failure: {task_name} [{task_id}] - {error_msg}")
         
-        if ENABLE_AUDIT_LOGGING:
+        if task_settings.ENABLE_AUDIT_LOGGING:
             try:
                 from tasks.audit_logger import log_system_event, AuditEventType, AuditSeverity
                 log_system_event(
@@ -624,7 +591,7 @@ def worker_ready_handler(sender=None, **kwargs):
         except ImportError:
             logger.debug("Template caching not available")
         
-        if ENABLE_AUDIT_LOGGING:
+        if task_settings.ENABLE_AUDIT_LOGGING:
             try:
                 from tasks.audit_logger import log_system_event, AuditEventType
                 log_system_event(
@@ -638,7 +605,7 @@ def worker_ready_handler(sender=None, **kwargs):
         logger.error(f"Worker ready handler error: {e}")
 
 
-if ENABLE_GRACEFUL_SHUTDOWN:
+if task_settings.ENABLE_GRACEFUL_SHUTDOWN:
     @worker_shutdown.connect
     def worker_shutdown_handler(sender=None, **kwargs):
         """Handle worker shutdown gracefully"""
@@ -646,7 +613,7 @@ if ENABLE_GRACEFUL_SHUTDOWN:
             hostname = sender.hostname if sender else 'unknown'
             logger.info(f"🛑 Celery worker shutting down gracefully: {hostname}")
             
-            if ENABLE_AUDIT_LOGGING:
+            if task_settings.ENABLE_AUDIT_LOGGING:
                 try:
                     from tasks.audit_logger import log_system_event, AuditEventType
                     log_system_event(

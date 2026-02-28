@@ -11,13 +11,14 @@ from database import (
 )
 import redis
 from pymongo import UpdateOne
-import os
+from core.config import settings
+from tasks.task_config import task_settings
 
 logger = logging.getLogger(__name__)
-redis_client = redis.Redis(host='redis', port=6379, db=0, decode_responses=True)
+redis_client = redis.Redis.from_url(settings.REDIS_URL, decode_responses=True)
 
-BATCH_SIZE = int(os.getenv("SES_BATCH_SIZE", "200"))
-CRITICAL_BATCH_SIZE = int(os.getenv("SES_CRITICAL_BATCH_SIZE", "50"))
+BATCH_SIZE = task_settings.SES_BATCH_SIZE
+CRITICAL_BATCH_SIZE = task_settings.SES_CRITICAL_BATCH_SIZE
 
 @celery_app.task(bind=True, max_retries=3, queue="ses_events", name="tasks.process_ses_events_batch")
 def process_ses_events_batch(self):

@@ -6,7 +6,6 @@ Supports multiple providers with health monitoring and intelligent routing
 import logging
 import time
 import json
-import os
 from datetime import datetime, timedelta
 from typing import Dict, List, Any, Optional, Tuple
 from enum import Enum
@@ -14,6 +13,7 @@ from abc import ABC, abstractmethod
 from celery_app import celery_app
 from database import get_sync_settings_collection
 from core.config import settings, get_redis_key
+from tasks.task_config import task_settings
 from .rate_limiter import EmailProvider
 from .audit_logger import log_system_event, AuditEventType, AuditSeverity
 import redis
@@ -22,8 +22,7 @@ from cryptography.fernet import Fernet
 
 logger = logging.getLogger(__name__)
 
-# Use same encryption key as email_settings.py
-ENCRYPTION_KEY = os.getenv("MASTER_ENCRYPTION_KEY", "lUuIwsIeBDEArb4N_KpDb7Ax8IVVJ-nAvHYCZYGg4RU=")
+ENCRYPTION_KEY = settings.MASTER_ENCRYPTION_KEY
 
 def decrypt_smtp_password(encrypted_password: str) -> str:
     """Decrypt password using same key as email_settings.py"""
@@ -119,7 +118,7 @@ class SendGridEmailService(EmailServiceInterface):
                 f"{self.base_url}/mail/send",
                 headers=headers,
                 json=payload,
-                timeout=settings.EMAIL_SEND_TIMEOUT_SECONDS
+                timeout=task_settings.EMAIL_SEND_TIMEOUT_SECONDS
             )
 
             if response.status_code == 202:  # SendGrid success code
