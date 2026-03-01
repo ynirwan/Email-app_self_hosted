@@ -90,12 +90,17 @@ async def get_campaign_details(campaign_id: str):
         logger.error(f"Error fetching campaign {campaign_id}: {str(e)}")
         raise HTTPException(status_code=500, detail="Error fetching campaign details")
 
-async def get_rendered_campaign_content(campaign_id: str):
-    """Get rendered HTML content for campaign using template and field mapping"""
+async def get_rendered_campaign_content(campaign_id: str, subscriber_data: dict = None):
+    """Get rendered HTML content for campaign using template and field mapping.
+
+    FIX C4: templates store content under content_json['content'], not content_json['html'].
+    FIX C3: field_map values are field paths, not literal values — pass subscriber so
+             merge_template can resolve them properly.
+    """
     try:
         campaigns_collection = get_campaigns_collection()
         templates_collection = get_templates_collection()
-        
+
         if not ObjectId.is_valid(campaign_id):
             raise HTTPException(status_code=400, detail="Invalid campaign ID format")
 
@@ -105,32 +110,33 @@ async def get_rendered_campaign_content(campaign_id: str):
 
         template_id = campaign.get("template_id")
         if not template_id or not ObjectId.is_valid(template_id):
-            # Fallback: return basic content if no template
             return campaign.get("content", campaign.get("subject", "Test Email Content"))
 
         template = await templates_collection.find_one({"_id": ObjectId(template_id)})
         if not template:
-            # Fallback: return basic content if template not found
             return campaign.get("content", campaign.get("subject", "Test Email Content"))
 
-        # Use your existing email merge function
         try:
-            from utils.email_merge import merge_template
-            html_content = merge_template(template["content_json"], campaign.get("field_map", {}))
+            from routes.email_merge import merge_template
+            html_content = merge_template(
+                template["content_json"],
+                campaign.get("field_map", {}),
+                subscriber=subscriber_data,  # FIX C3: resolve field paths from subscriber
+            )
             return html_content
         except ImportError:
-            # Fallback if merge function not available
             logger.warning("email_merge utility not found, using basic content")
-            return template.get("content_json", {}).get("html", "Template content")
+            content_json = template.get("content_json", {})
+            # FIX C4: try "content" first, then "html"
+            return content_json.get("content") or content_json.get("html", "Template content")
         except Exception as e:
             logger.warning(f"Template merge failed: {str(e)}, using fallback")
             return campaign.get("subject", "Test Email Content")
-            
+
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Error rendering campaign content: {str(e)}")
-        # Return fallback content
         return "Test Email Content"
 
 async def get_subscriber_data(list_id: str = None, subscriber_id: str = None):
@@ -160,45 +166,65 @@ async def get_subscriber_data(list_id: str = None, subscriber_id: str = None):
         return None
 
 def personalize_content(content: str, subscriber_data: Dict[str, Any] = None):
-    """Replace placeholders in email content with subscriber data"""
+    """Replace placeholders in email content with subscriber data.
+
+    FIX C5: The previous implementation used subscriber_data.get("name") which does not
+            exist in the three-tier subscriber schema.  Standard fields live under
+            standard_fields{} and custom fields live under custom_fields{}.
+    """
     if not subscriber_data:
-        subscriber_data = {
-            "name": "Test User",
-            "email": "test@example.com"
-        }
-    
+        subscriber_data = {}
+
     try:
-        # Handle Jinja2 template syntax
-        template = Template(content)
-        
-        # Create template context
+        # Build a flat context that Jinja2 / simple replacement can use
+        standard = subscriber_data.get("standard_fields", {})
+        custom = subscriber_data.get("custom_fields", {})
+
+        first_name = standard.get("first_name", "") or ""
+        last_name = standard.get("last_name", "") or ""
+        full_name = f"{first_name} {last_name}".strip() or "Test User"
+        email = subscriber_data.get("email", "test@example.com")
+
         context = {
+            # top-level convenience aliases
+            "email": email,
+            "first_name": first_name or "Test",
+            "last_name": last_name,
+            "name": full_name,
+            # nested access (e.g. {{ subscriber.email }})
             "subscriber": subscriber_data,
-            "name": subscriber_data.get("name", "Test User"),
-            "email": subscriber_data.get("email", "test@example.com"),
-            "first_name": subscriber_data.get("name", "Test User").split()[0] if subscriber_data.get("name") else "Test"
         }
-        
-        # Add custom fields to context
-        if subscriber_data.get("custom_fields"):
-            context.update(subscriber_data["custom_fields"])
-        
-        personalized_content = template.render(**context)
-        return personalized_content
-        
+
+        # Merge all standard fields
+        context.update(standard)
+
+        # Merge all custom fields (scalars only — lists/dicts require Jinja2 loops)
+        for k, v in custom.items():
+            if not isinstance(v, (dict, list)):
+                context[k] = v
+
+        template = Template(content)
+        return template.render(**context)
+
     except Exception as e:
-        logger.warning(f"Template rendering failed: {str(e)}, using original content")
-        # Fallback: simple string replacement
-        personalized_content = content
-        
-        # Simple placeholder replacement
-        if subscriber_data:
-            personalized_content = personalized_content.replace("{{name}}", subscriber_data.get("name", "Test User"))
-            personalized_content = personalized_content.replace("{{email}}", subscriber_data.get("email", "test@example.com"))
-            personalized_content = personalized_content.replace("{{first_name}}", 
-                subscriber_data.get("name", "Test User").split()[0] if subscriber_data.get("name") else "Test")
-        
-        return personalized_content
+        logger.warning(f"Template rendering failed: {str(e)}, using simple replacement")
+        # Safe scalar fallback
+        personalized = content
+        standard = subscriber_data.get("standard_fields", {}) if subscriber_data else {}
+        email = subscriber_data.get("email", "test@example.com") if subscriber_data else "test@example.com"
+        first_name = standard.get("first_name", "Test")
+        last_name = standard.get("last_name", "")
+        full_name = f"{first_name} {last_name}".strip()
+
+        replacements = {
+            "first_name": first_name,
+            "last_name": last_name,
+            "name": full_name,
+            "email": email,
+        }
+        for key, val in replacements.items():
+            personalized = re.sub(r'\{\{\s*' + re.escape(key) + r'\s*\}\}', val, personalized)
+        return personalized
 
 async def send_test_email(smtp_config: Dict, campaign: Dict, test_email: str, subscriber_data: Dict = None):
     """Send test email using SMTP - matches your campaign structure"""
@@ -225,9 +251,9 @@ async def send_test_email(smtp_config: Dict, campaign: Dict, test_email: str, su
         
         msg['Subject'] = f"[TEST] {subject}"
         
-        # Get rendered HTML content
+        # Get rendered HTML content (pass subscriber so field paths can be resolved)
         try:
-            content = await get_rendered_campaign_content(campaign.get('_id', ''))
+            content = await get_rendered_campaign_content(campaign.get('_id', ''), subscriber_data)
         except Exception as e:
             logger.warning(f"Failed to get rendered content: {str(e)}, using fallback")
             content = campaign.get('subject', 'Test email content')
