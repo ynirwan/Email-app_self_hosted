@@ -16,7 +16,16 @@ logger = logging.getLogger(__name__)
 # ============================================
 
 from core.config import settings
-from tasks.task_config import task_settings
+
+import importlib.util as _ilu
+import os as _os
+_spec = _ilu.spec_from_file_location(
+    "task_config",
+    _os.path.join(_os.path.dirname(__file__), "tasks", "task_config.py"),
+)
+_task_config_mod = _ilu.module_from_spec(_spec)
+_spec.loader.exec_module(_task_config_mod)
+task_settings = _task_config_mod.task_settings
 
 
 # ============================================
