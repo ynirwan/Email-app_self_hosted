@@ -14,6 +14,7 @@ from database import (
     get_sync_subscribers_collection
 )
 from core.config import settings, get_redis_key
+from tasks.task_config import task_settings
 import json
 
 logger = logging.getLogger(__name__)
@@ -437,7 +438,7 @@ class CampaignController:
     def _log_campaign_action(self, campaign_id: str, action: str, details: Dict[str, Any]):
         """Log campaign control actions for audit"""
         try:
-            if not settings.ENABLE_AUDIT_LOGGING:
+            if not task_settings.ENABLE_AUDIT_LOGGING:
                 return
             
             from database import get_sync_audit_collection

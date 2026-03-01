@@ -1,10 +1,11 @@
 # config/deployment_manager.py
-import os
 import httpx
 from enum import Enum
 from typing import Dict, Optional
 from datetime import datetime
 import calendar
+
+from core.config import settings as app_settings
 
 class DeploymentMode(str, Enum):
     SELF_HOSTED = "self_hosted"
@@ -12,11 +13,11 @@ class DeploymentMode(str, Enum):
 
 class QuotaManager:
     def __init__(self):
-        self.deployment_mode = DeploymentMode(os.getenv("DEPLOYMENT_MODE", "self_hosted"))
-        self.quota_enabled = os.getenv("EMAIL_QUOTA_ENABLED", "false").lower() == "true"
-        self.quota_source = os.getenv("EMAIL_QUOTA_SOURCE", "database")
-        self.free_monthly_limit = int(os.getenv("FREE_EMAIL_LIMIT_MONTHLY", "50000"))
-        self.overage_price = float(os.getenv("OVERAGE_PRICE_PER_EMAIL", "0.001"))
+        self.deployment_mode = DeploymentMode(app_settings.DEPLOYMENT_MODE)
+        self.quota_enabled = app_settings.EMAIL_QUOTA_ENABLED
+        self.quota_source = app_settings.EMAIL_QUOTA_SOURCE
+        self.free_monthly_limit = app_settings.FREE_EMAIL_LIMIT_MONTHLY
+        self.overage_price = 0.001
         
     async def get_user_quota(self, user_id: str) -> Dict:
         """Get user email quota based on deployment mode"""
@@ -49,8 +50,8 @@ class QuotaManager:
     async def _fetch_from_control_api(self, user_id: str) -> Dict:
         """Fetch from your centralized control API"""
         try:
-            control_url = os.getenv("QUOTA_CHECK_URL", "").format(user_id=user_id)
-            api_key = os.getenv("QUOTA_API_KEY", "")
+            control_url = app_settings.QUOTA_CHECK_URL.format(user_id=user_id) if app_settings.QUOTA_CHECK_URL else ""
+            api_key = app_settings.QUOTA_API_KEY
             
             if not control_url or not api_key:
                 return await self._get_default_hosted_quota()

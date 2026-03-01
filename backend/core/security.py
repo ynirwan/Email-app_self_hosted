@@ -1,12 +1,13 @@
 # config/security.py
 from cryptography.fernet import Fernet
-import os
 import base64
 from typing import Optional, Dict
 
+from core.config import settings
+
 class SecureConfigManager:
     def __init__(self):
-        master_key = os.getenv('MASTER_ENCRYPTION_KEY')
+        master_key = settings.MASTER_ENCRYPTION_KEY
         if not master_key:
             raise ValueError("MASTER_ENCRYPTION_KEY required")
         

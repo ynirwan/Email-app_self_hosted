@@ -3,18 +3,16 @@ from passlib.context import CryptContext
 from datetime import datetime, timedelta
 from jose import JWTError, jwt
 from typing import Optional
-import os
 import logging
 
 logger = logging.getLogger(__name__)
 
-# ✅ Use the standardized database import instead of mongodb
-from database import get_users_collection  # Changed from: from mongodb import get_database
+from core.config import settings
+from database import get_users_collection
 
-# JWT Configuration
-SECRET_KEY = os.getenv("JWT_SECRET", "your-secret-key-change-in-production")
-ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 30
+SECRET_KEY = settings.JWT_SECRET
+ALGORITHM = settings.JWT_ALGORITHM
+ACCESS_TOKEN_EXPIRE_MINUTES = settings.ACCESS_TOKEN_EXPIRE_MINUTES
 
 # Password hashing
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")

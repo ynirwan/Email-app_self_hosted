@@ -29,28 +29,15 @@ PRODUCTION_FEATURES = {
     'database': True,
 }
 
-# Import configuration
-try:
-    from core.config import settings, is_production_ready
-    PRODUCTION_FEATURES['config'] = True
-    logger = logging.getLogger(__name__)
-except ImportError:
-    # Fallback settings
-    class MockSettings:
-        ENVIRONMENT = 'development'
-        DEBUG_MODE = True
-        LOG_LEVEL = 'DEBUG'
-        CORS_ORIGINS = [
-            "https://5474f674-6074-4eb8-8818-15946bef35a1-00-1y8lhfj74gqcq.pike.replit.dev"
-        ]
-        API_RATE_LIMIT_PER_MINUTE = 60
-        ENABLE_METRICS_COLLECTION = False
-        ENABLE_AUDIT_LOGGING = False
-        APP_NAME = "Email Marketing API"
-        APP_VERSION = "1.0.0"
+from core.config import settings, is_production_ready
+PRODUCTION_FEATURES['config'] = True
+logger = logging.getLogger(__name__)
 
-    settings = MockSettings()
-    logger = logging.getLogger(__name__)
+try:
+    from tasks.task_config import task_settings
+    _metrics_enabled = task_settings.ENABLE_METRICS_COLLECTION
+except ImportError:
+    _metrics_enabled = False
 
 # Import database
 try:
@@ -192,9 +179,7 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.error(f"❌ Database initialization error: {e}")
 
-    # Startup recovery
-    startup_recovery_enabled = os.getenv("STARTUP_RECOVERY_ENABLED",
-                                         "true").lower() == "true"
+    startup_recovery_enabled = settings.STARTUP_RECOVERY_ENABLED
     if startup_recovery_enabled:
         try:
             from tasks.startup_recovery import startup_recovery_only
@@ -348,7 +333,7 @@ async def performance_monitoring_middleware(request: Request, call_next):
         )
 
     # Collect metrics if enabled
-    if settings.ENABLE_METRICS_COLLECTION and metrics_collector:
+    if _metrics_enabled and metrics_collector:
         try:
             asyncio.create_task(
                 metrics_collector.record_request_metric(
