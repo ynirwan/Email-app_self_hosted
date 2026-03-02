@@ -171,17 +171,40 @@ def process_automation_trigger(self, trigger_type: str, subscriber_id: str, trig
                     continue
             
             # Check targeting (segments/lists)
+            # FIX C7: subscriber.segments[] is a static array that is never populated.
+            # Instead, query the segments collection and evaluate each segment's criteria
+            # dynamically against the subscriber.
             target_segments = rule.get("target_segments", [])
             if target_segments:
-                subscriber_segments = subscriber.get("segments", [])
-                if not any(seg in subscriber_segments for seg in target_segments):
+                segments_collection = get_sync_segments_collection()
+                subscriber_in_segment = False
+                for seg_id in target_segments:
+                    try:
+                        segment = segments_collection.find_one({"_id": ObjectId(str(seg_id))})
+                        if not segment:
+                            continue
+                        criteria = segment.get("criteria", {})
+                        if _subscriber_matches_segment_criteria(subscriber, criteria):
+                            subscriber_in_segment = True
+                            break
+                    except Exception as _seg_err:
+                        logger.warning(f"Segment lookup failed for {seg_id}: {_seg_err}")
+                if not subscriber_in_segment:
                     logger.info(f"Subscriber not in target segments for rule: {rule['name']}")
                     continue
             
+            # FIX H5: use 'lists' (plural) consistently — check_subscriber_matches_rule also uses 'lists'.
+            # Keep a fallback to the legacy 'list' (singular) field for older records.
             target_lists = rule.get("target_lists", [])
             if target_lists:
-                subscriber_list = subscriber.get("list")
-                if subscriber_list not in target_lists:
+                subscriber_lists = subscriber.get("lists") or []
+                if not subscriber_lists:
+                    # Legacy single-list field
+                    legacy = subscriber.get("list")
+                    subscriber_lists = [legacy] if legacy else []
+                target_lists_str = [str(l) for l in target_lists]
+                subscriber_lists_str = [str(l) for l in subscriber_lists]
+                if not any(l in subscriber_lists_str for l in target_lists_str):
                     logger.info(f"Subscriber not in target lists for rule: {rule['name']}")
                     continue
             
@@ -754,7 +777,6 @@ def check_welcome_automations(self):
         welcome_rules = list(automation_rules.find({
             "trigger": "welcome",
             "status": "active",
-            "workflow.steps": {"$exists": True, "$ne": []}
         }))
         
         if not welcome_rules:
@@ -839,7 +861,6 @@ def check_abandoned_cart_automations(self):
         abandoned_cart_rules = list(automation_rules.find({
             "trigger": "abandoned_cart",
             "status": "active",
-            "workflow.steps": {"$exists": True, "$ne": []}
         }))
         
         if not abandoned_cart_rules:
@@ -878,7 +899,6 @@ def check_inactive_subscriber_automations(self):
         inactive_rules = list(automation_rules.find({
             "trigger": "inactive",
             "status": "active",
-            "workflow.steps": {"$exists": True, "$ne": []}
         }))
         
         if not inactive_rules:
@@ -939,6 +959,81 @@ def check_inactive_subscriber_automations(self):
     except Exception as e:
         logger.error(f"Inactive subscriber automation check failed: {e}")
         return {"error": str(e), "triggered": 0}
+
+
+def _subscriber_matches_segment_criteria(subscriber: Dict, criteria: Dict) -> bool:
+    """
+    Evaluate whether a subscriber satisfies a segment's stored criteria.
+
+    Supports a simple AND-of-conditions schema:
+        {
+          "conditions": [
+            {"field": "standard.country", "operator": "equals", "value": "US"},
+            {"field": "custom.plan",      "operator": "contains", "value": "pro"}
+          ]
+        }
+    If no criteria are defined the segment is considered open (matches everyone).
+    """
+    if not criteria:
+        return True
+
+    conditions = criteria.get("conditions", [])
+    if not conditions:
+        return True
+
+    for cond in conditions:
+        field_path = cond.get("field", "")
+        operator = cond.get("operator", "equals")
+        expected = cond.get("value", "")
+
+        # Resolve field value from subscriber
+        if field_path == "email":
+            actual = subscriber.get("email", "")
+        elif field_path.startswith("standard."):
+            key = field_path[len("standard."):]
+            actual = subscriber.get("standard_fields", {}).get(key, "")
+        elif field_path.startswith("custom."):
+            key = field_path[len("custom."):]
+            actual = subscriber.get("custom_fields", {}).get(key, "")
+        else:
+            actual = subscriber.get(field_path, "")
+
+        actual_str = str(actual).lower() if actual is not None else ""
+        expected_str = str(expected).lower()
+
+        if operator in ("equals", "eq"):
+            if actual_str != expected_str:
+                return False
+        elif operator in ("not_equals", "ne", "neq"):
+            if actual_str == expected_str:
+                return False
+        elif operator == "contains":
+            if expected_str not in actual_str:
+                return False
+        elif operator == "not_contains":
+            if expected_str in actual_str:
+                return False
+        elif operator in ("starts_with", "startswith"):
+            if not actual_str.startswith(expected_str):
+                return False
+        elif operator in ("ends_with", "endswith"):
+            if not actual_str.endswith(expected_str):
+                return False
+        elif operator in ("greater_than", "gt"):
+            try:
+                if not (float(actual_str) > float(expected_str)):
+                    return False
+            except (ValueError, TypeError):
+                return False
+        elif operator in ("less_than", "lt"):
+            try:
+                if not (float(actual_str) < float(expected_str)):
+                    return False
+            except (ValueError, TypeError):
+                return False
+        # Unknown operators pass through (don't block)
+
+    return True
 
 
 def evaluate_trigger_conditions(conditions: Dict, subscriber: Dict, trigger_data: Dict = None) -> bool:
@@ -1007,7 +1102,7 @@ def check_subscriber_matches_rule(subscriber_id: str, rule: Dict) -> bool:
     Check if subscriber matches automation rule's target segments and lists
     """
     try:
-        from database import get_sync_subscribers_collection
+        from database import get_sync_subscribers_collection, get_sync_segments_collection
         
         subscribers_collection = get_sync_subscribers_collection()
         subscriber = subscribers_collection.find_one({"_id": ObjectId(subscriber_id)})
@@ -1031,14 +1126,22 @@ def check_subscriber_matches_rule(subscriber_id: str, rule: Dict) -> bool:
             return True
         
         # Check segment matching
-        subscriber_segments = subscriber.get("segments", [])
+        # FIX C7: evaluate segment criteria dynamically instead of reading the static
+        # subscriber.segments[] array which is never populated.
         if target_segments:
-            target_segments_str = [str(seg) for seg in target_segments]
-            subscriber_segments_str = [str(seg) for seg in subscriber_segments]
-            
-            matches_segment = any(seg in subscriber_segments_str for seg in target_segments_str)
-            
-            if not matches_segment:
+            segments_collection = get_sync_segments_collection()
+            subscriber_in_segment = False
+            for seg_id in target_segments:
+                try:
+                    segment = segments_collection.find_one({"_id": ObjectId(str(seg_id))})
+                    if segment and _subscriber_matches_segment_criteria(
+                        subscriber, segment.get("criteria", {})
+                    ):
+                        subscriber_in_segment = True
+                        break
+                except Exception as _se:
+                    logger.warning(f"Segment lookup failed for {seg_id}: {_se}")
+            if not subscriber_in_segment:
                 logger.debug(f"Subscriber {subscriber_id} not in target segments")
                 return False
         
@@ -1118,17 +1221,30 @@ def process_scheduled_automations(self):
         logger.info(f"Found {len(pending_executions)} automation steps due for execution")
         
         processed_count = 0
-        
+
         for execution in pending_executions:
             try:
-                execution_id = str(execution["_id"])
+                execution_id = execution["_id"]
+
+                # FIX H4: atomically claim the execution record before dispatching.
+                # If Celery ETA already ran this step it will have updated the status,
+                # so this find_one_and_update will return None and we skip safely.
+                claimed = automation_executions.find_one_and_update(
+                    {"_id": execution_id, "status": "scheduled"},
+                    {"$set": {"status": "dispatched_by_poller", "dispatched_at": datetime.utcnow()}},
+                    return_document=False  # we only need to know if it matched
+                )
+                if claimed is None:
+                    logger.debug(f"Execution {execution_id} already claimed or completed, skipping")
+                    continue
+
                 automation_rule_id = execution.get("automation_rule_id")
                 subscriber_id = execution.get("subscriber_id")
                 step_id = execution.get("automation_step_id")
                 workflow_instance_id = execution.get("workflow_instance_id")
-                
+
                 logger.info(f"Processing automation execution {execution_id}")
-                
+
                 # Execute the step
                 execute_automation_step.delay(
                     automation_rule_id,
@@ -1137,9 +1253,9 @@ def process_scheduled_automations(self):
                     workflow_instance_id,
                     execution.get("trigger_data", {})
                 )
-                
+
                 processed_count += 1
-                
+
             except Exception as e:
                 logger.error(f"Failed to process execution {execution.get('_id')}: {e}")
         
@@ -1173,7 +1289,6 @@ def check_daily_birthdays(self):
         birthday_rules = list(automation_rules.find({
             "trigger": "birthday",
             "status": "active",
-            "workflow.steps": {"$exists": True, "$ne": []}
         }))
         
         if not birthday_rules:
