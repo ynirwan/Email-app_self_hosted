@@ -5,15 +5,10 @@ Run this script to create all necessary indexes for optimal performance
 """
 import asyncio
 from motor.motor_asyncio import AsyncIOMotorClient
-import os
-import logging
+from backend.core.config import settings
 
-logger = logging.getLogger(__name__)
-
-MONGODB_URI = os.getenv(
-    "MONGODB_URI",
-    "mongodb://admin:password@mongodb:27017/email_marketing?authSource=admin"
-)
+MONGODB_URI = settings.MONGODB_URI
+# os.getenv removed
 
 
 async def create_automation_indexes():
