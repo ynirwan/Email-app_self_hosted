@@ -1,0 +1,26 @@
+template_cache.py — 3 fixes
+
+C2: The simple {{ var }} replacement path now skips list/dict values entirely instead of calling str() on them (which was producing [{'name': 'Widget'}] garbage in emails). ALL templates containing any {{ }} syntax now go through Jinja2 automatically, not just those with {% %}
+H2: Drag-drop block renderer now produces type-correct HTML per block type — buttons get <a> tags with background colors, images get <img> with links, dividers/spacers are proper HTML elements with styles preserved
+H3: Jinja2 autoescape disabled — custom fields with intentional HTML (e.g. <b>Sale!</b>) are no longer entity-encoded into &lt;b&gt;Sale!&lt;/b&gt;
+
+email_campaign_tasks.py — 1 fix
+
+H6: Campaign subject is now run through _personalize_content() before sending, so {{first_name}} in subjects actually expands instead of being overwritten with the raw template string
+
+email_merge.py — rewritten, 2 fixes
+
+C4: Reads content_json["content"] (current schema) with fallback to "html" (legacy)
+C3: field_map values like "standard.first_name" are now resolved against the subscriber document; a new optional subscriber parameter enables this
+
+test_email.py — 2 fixes
+
+C5: personalize_content() rewritten to use the three-tier schema (standard_fields, custom_fields) — no more subscriber.get("name") that always returns None
+C4 follow-on: get_rendered_campaign_content() signature updated to accept and pass subscriber_data so field paths resolve correctly in previews
+
+automation_tasks.py — 5 fixes + 1 new helper
+
+C6: Removed the "workflow.steps": {$exists, $ne: []} filter from all 4 checker tasks (welcome, abandoned_cart, inactive, birthday) — steps are in a separate collection, this filter was matching zero rules
+C7: Segment matching now queries the segments collection and evaluates stored criteria dynamically via a new _subscriber_matches_segment_criteria() helper — no longer checks the static subscriber.segments[] array that's never populated
+H4: process_scheduled_automations uses find_one_and_update to atomically claim each execution before dispatching — prevents double-send from the Celery ETA + polling dual path
+H5: process_automation_trigger unified to use lists (plural) with a fallback to the legacy list field, matching check_subscriber_matches_rule
