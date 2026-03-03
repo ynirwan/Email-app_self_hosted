@@ -212,11 +212,18 @@ class SESEmailService(EmailServiceInterface):
             if html_content:
                 message['Body']['Html'] = {'Data': html_content, 'Charset': 'UTF-8'}
 
-            response = ses_client.send_email(
-                Source=sender_email,
-                Destination={'ToAddresses': [recipient_email]},
-                Message=message
-            )
+            send_args = {
+                'Source': sender_email,
+                'Destination': {'ToAddresses': [recipient_email]},
+                'Message': message
+            }
+            
+            # SES Configuration Set support
+            configuration_set = kwargs.get("configuration_set")
+            if configuration_set:
+                send_args['ConfigurationSetName'] = configuration_set
+
+            response = ses_client.send_email(**send_args)
 
             return {
                 "success": True,
@@ -306,6 +313,11 @@ class SMTPEmailService(EmailServiceInterface):
             if unsubscribe_url and unsubscribe_url != "#":
                 message["List-Unsubscribe"] = f"<{unsubscribe_url}>"
                 message["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click"
+
+            # SES Configuration Set
+            configuration_set = kwargs.get("configuration_set")
+            if configuration_set:
+                message["X-SES-CONFIGURATION-SET"] = configuration_set
 
             if text_content:
                 text_part = MIMEText(text_content, "plain")

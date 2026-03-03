@@ -118,10 +118,10 @@ def send_single_campaign_email(self, campaign_id: str, subscriber_id: str):
                 return {"status": "resource_unavailable", "reason": reason, "health": health_info}
         
         # Check if campaign is stopped or paused
-        if campaign_controller.is_campaign_paused(campaign_id):
+        if campaign_controller.is_campaign_paused(campaign_id) or campaign.get("status") == "paused":
             return {"status": "paused", "reason": "campaign_paused"}
         
-        if campaign_controller.is_campaign_stopped(campaign_id):
+        if campaign_controller.is_campaign_stopped(campaign_id) or campaign.get("status") == "stopped":
             return {"status": "stopped", "reason": "campaign_stopped"}
         
         # ===== STEP 2: DATA RETRIEVAL =====
@@ -317,6 +317,10 @@ def send_single_campaign_email(self, campaign_id: str, subscriber_id: str):
         # Format sender
         from_email = f"{sender_name} <{sender_email}>" if sender_name else sender_email
         
+        # ✅ SES Configuration Set support
+        email_settings = campaign.get("email_settings", {})
+        configuration_set = email_settings.get("ses_configuration_set")
+        
         try:
             # Send email with automatic provider failover
             send_result = email_provider_manager.send_email_with_failover(
@@ -328,7 +332,8 @@ def send_single_campaign_email(self, campaign_id: str, subscriber_id: str):
                 campaign_id=campaign_id,
                 reply_to=reply_to,
                 timeout=task_settings.EMAIL_SEND_TIMEOUT_SECONDS,
-                unsubscribe_url=personalization_context.get("unsubscribe_url", "")
+                unsubscribe_url=personalization_context.get("unsubscribe_url", ""),
+                configuration_set=configuration_set
             )
             
             # ===== STEP 7: RESULT PROCESSING =====
