@@ -401,7 +401,13 @@ async def send_test_email(test_data: TestEmail):
         if subscriber_data:
             subject = personalize_content(subject, subscriber_data)
         
+        # SES Configuration Set for Test
+        configuration_set = campaign.get("email_settings", {}).get("ses_configuration_set")
+        
+        # msg['Subject'] = f"[TEST] {subject}"
         msg['Subject'] = f"[TEST] {subject}"
+        if configuration_set:
+            msg['X-SES-CONFIGURATION-SET'] = configuration_set
         
         # Get rendered HTML content
         try:
@@ -504,10 +510,19 @@ async def send_campaign(campaign_id: str):
             last_id=last_id
         )
 
-        # Update campaign state in DB
+        # ✅ Update campaign state in DB
+        update_fields = {
+            "status": "sending", 
+            "started_at": datetime.utcnow()
+        }
+        
+        # If it was stopped, we might want to clear stopped_at
+        if campaign.get("status") == "stopped":
+            update_fields["stopped_at"] = None
+
         await campaigns_collection.update_one(
             {"_id": ObjectId(campaign_id)},
-            {"$set": {"status": "sending", "started_at": datetime.utcnow()}}
+            {"$set": update_fields}
         )
 
         # 🔍 Structured log for monitoring

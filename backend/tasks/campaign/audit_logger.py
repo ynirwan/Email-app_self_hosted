@@ -295,7 +295,7 @@ class AuditLogger:
             import socket
             return hashlib.md5(socket.gethostname().encode()).hexdigest()[:8]
         except:
-            return "unknown"
+            return "system"
     
     def search_audit_logs(self, 
                          start_date: datetime = None,
