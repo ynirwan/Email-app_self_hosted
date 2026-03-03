@@ -99,6 +99,9 @@ class TaskSettings:
     TEMPLATE_VALIDATION_ENABLED: bool = True
     PERSONALIZATION_ENABLED: bool = True
 
+    # ===== SES SETTINGS =====
+    SES_CONFIGURATION_SET: str = os.getenv("SES_CONFIGURATION_SET", "")
+
     # ===== ANALYTICS =====
     ENABLE_REAL_TIME_ANALYTICS: bool = True
     ANALYTICS_AGGREGATION_INTERVAL_MINUTES: int = 5

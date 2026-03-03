@@ -35,6 +35,7 @@ class EmailSettings(BaseModel):
     smtp_port: int = 587
     username: str
     password: str
+    ses_configuration_set: Optional[str] = None
     sending_limits: SendingLimits
     bounce_handling: BounceHandling
 
