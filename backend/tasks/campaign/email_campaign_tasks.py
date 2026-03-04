@@ -117,25 +117,23 @@ def send_single_campaign_email(self, campaign_id: str, subscriber_id: str):
             else:
                 return {"status": "resource_unavailable", "reason": reason, "health": health_info}
         
+        # Get campaign data
+        campaigns_collection = get_sync_campaigns_collection()
+        subscribers_collection = get_sync_subscribers_collection()
+        email_logs_collection = get_sync_email_logs_collection()
+        
+        campaign = campaigns_collection.find_one({"_id": ObjectId(campaign_id)})
+        if not campaign:
+            error_msg = f"Campaign not found: {campaign_id}"
+            logger.error(error_msg)
+            return {"status": "failed", "reason": "campaign_not_found"}
+
         # Check if campaign is stopped or paused
         if campaign_controller.is_campaign_paused(campaign_id) or campaign.get("status") == "paused":
             return {"status": "paused", "reason": "campaign_paused"}
         
         if campaign_controller.is_campaign_stopped(campaign_id) or campaign.get("status") == "stopped":
             return {"status": "stopped", "reason": "campaign_stopped"}
-        
-        # ===== STEP 2: DATA RETRIEVAL =====
-        
-        campaigns_collection = get_sync_campaigns_collection()
-        subscribers_collection = get_sync_subscribers_collection()
-        email_logs_collection = get_sync_email_logs_collection()
-        
-        # Get campaign data
-        campaign = campaigns_collection.find_one({"_id": ObjectId(campaign_id)})
-        if not campaign:
-            error_msg = f"Campaign not found: {campaign_id}"
-            logger.error(error_msg)
-            return {"status": "failed", "reason": "campaign_not_found"}
         
         # Get subscriber data
         subscriber = subscribers_collection.find_one({"_id": ObjectId(subscriber_id)})
@@ -534,9 +532,9 @@ def send_campaign_batch(self, campaign_id: str, batch_size: int = None, last_id:
         if not campaign:
             return {"error": "campaign_not_found", "campaign_id": campaign_id}
         
-        if campaign.get("status") != "sending":
+        if campaign.get("status") not in ["sending", "paused"]:
             return {
-                "status": "campaign_not_sending",
+                "status": "campaign_not_active",
                 "current_status": campaign.get("status"),
                 "campaign_id": campaign_id
             }

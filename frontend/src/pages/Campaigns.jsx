@@ -21,6 +21,8 @@ export default function Campaigns() {
 
   /* stop flag */
   const [stopping, setStopping] = useState(false);
+  const [pausing, setPausing] = useState(false);
+  const [resuming, setResuming] = useState(false);
 
   /* schedule modal */
   const [showScheduleModal, setShowScheduleModal] = useState(false);
@@ -130,6 +132,28 @@ export default function Campaigns() {
     } finally { setStopping(false); }
   };
 
+  const handlePause = async (id) => {
+    try {
+      setPausing(true);
+      await API.post(`/campaigns/${id}/pause`);
+      alert('Campaign paused.');
+      await fetchCampaigns();
+    } catch (e) {
+      alert(e.response?.data?.detail || 'Pause failed');
+    } finally { setPausing(false); }
+  };
+
+  const handleResume = async (id) => {
+    try {
+      setResuming(true);
+      await API.post(`/campaigns/${id}/resume`);
+      alert('Campaign resumed.');
+      await fetchCampaigns();
+    } catch (e) {
+      alert(e.response?.data?.detail || 'Resume failed');
+    } finally { setResuming(false); }
+  };
+
   /* ───────── stats ───────── */
   const total      = campaigns.length;
   const drafts     = campaigns.filter(c => (c.status || 'draft') === 'draft').length;
@@ -193,7 +217,9 @@ export default function Campaigns() {
                     <Td>
                       <span className={`px-2 py-1 rounded text-xs font-medium ${
                         c.status === 'sent'      ? 'bg-green-100 text-green-800' :
+                        c.status === 'paused'    ? 'bg-orange-100 text-orange-800' :
                         c.status === 'sending'   ? 'bg-blue-100  text-blue-800'  :
+                        c.status === 'paused'    ? 'bg-orange-100 text-orange-800' :
                         c.status === 'scheduled' ? 'bg-purple-100 text-purple-800' :
                         c.status === 'stopped'   ? 'bg-gray-200 text-gray-700'  :
                         c.status === 'failed'    ? 'bg-red-200 text-red-700'  :                  
@@ -224,6 +250,20 @@ export default function Campaigns() {
                         {c.status === 'scheduled' &&
                           <button onClick={() => handleCancelSchedule(c._id)}
                                   className="text-orange-600 hover:text-orange-800 hover:underline">❌ Cancel Schedule</button>}
+
+                        {c.status === 'sending' &&
+                          <button onClick={() => handlePause(c._id)}
+                                  disabled={pausing}
+                                  className="text-orange-600 hover:text-orange-800 hover:underline">
+                            {pausing ? '⏳' : '⏸️ Pause'}
+                          </button>}
+
+                        {c.status === 'paused' &&
+                          <button onClick={() => handleResume(c._id)}
+                                  disabled={resuming}
+                                  className="text-green-600 hover:text-green-800 hover:underline">
+                            {resuming ? '⏳' : '▶️ Resume'}
+                          </button>}
 
                         {c.status === 'sending' &&
                           <button onClick={() => handleStop(c._id)}

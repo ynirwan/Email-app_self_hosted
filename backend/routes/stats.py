@@ -296,6 +296,9 @@ async def fetch_dashboard_summary() -> Dict[str, Any]:
                 failed_count = count
             elif status_name == 'stopped':
                 stopped_count = count
+            elif status_name == 'paused':
+                # Treat paused as part of stopped/inactive for the main dashboard summary
+                stopped_count += count
         
         # Calculate rates
         active_rate = round((active_subs / total_subs * 100) if total_subs > 0 else 0, 1)
