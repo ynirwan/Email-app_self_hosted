@@ -6,6 +6,7 @@ export default function SettingsPage() {
   const location = useLocation();
 
   const tabs = [
+    { name: "User Settings", path: "/settings/user" },
     { name: "SMTP Settings", path: "/settings/email" },
     { name: "Domain Settings", path: "/settings/domain" },
   ];
