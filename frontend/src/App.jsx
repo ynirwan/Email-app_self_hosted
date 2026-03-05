@@ -29,6 +29,7 @@ import AutomationBuilder from './pages/AutomationBuilder';
 import AutomationAnalytics from './pages/AutomationAnalytics';
 import AutomationCampaignAnalytics from './pages/AutomationCampaignAnalytics';
 import LandingPage from './pages/LandingPage';
+import OptInForm from './pages/OptInForm';
 
 
 const App = () => {
@@ -41,6 +42,7 @@ const App = () => {
         <Route path="/landing" element={<LandingPage />} />
         <Route path="/register" element={<Register />} />
         <Route path="/login" element={<Login />} />
+        <Route path="/subscribe/:listId" element={<OptInForm />} />
 
         {/* Protected Routes */}
         {isLoggedIn ? (
