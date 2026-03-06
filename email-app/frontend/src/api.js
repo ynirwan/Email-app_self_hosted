@@ -1,9 +1,19 @@
 // frontend/src/api.js
 import axios from "axios";
 
+const getBaseURL = () => {
+  if (window.location.hostname.includes('replit.dev')) {
+    const protocol = window.location.protocol;
+    const host = window.location.host;
+    // Replace the port or add it if missing. Replit dev domains usually handle routing.
+    // If the backend is on 8000 and frontend on 5000, we need to point to the 8000 port host.
+    return `${protocol}//${host.replace('.pike.replit.dev', '.pike.replit.dev')}/api`.replace(':5000', ':8000');
+  }
+  return "http://localhost:8000/api";
+};
+
 const API = axios.create({
-  baseURL:
-    "https://5474f674-6074-4eb8-8818-15946bef35a1-00-1y8lhfj74gqcq.pike.replit.dev:8000/api",
+  baseURL: getBaseURL(),
 });
 
 // ✅ SIMPLIFIED - REMOVED all slash manipulation logic
