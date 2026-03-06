@@ -1,0 +1,558 @@
+import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
+import ReactQuill from 'react-quill';
+import 'react-quill/dist/quill.snow.css';
+import API from '../api';
+
+export default function CreateCampaign() {
+  const [formData, setFormData] = useState({
+    title: '',
+    subject: '',
+    content: '',
+    sender_name: '',
+    sender_email: '',
+    reply_to: ''
+  });
+
+  const [lists, setLists] = useState([]);
+  const [selectedLists, setSelectedLists] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [step, setStep] = useState(1);
+  const [showHtmlSource, setShowHtmlSource] = useState(false);
+  const [isTemplateLocked, setIsTemplateLocked] = useState(false);
+
+  const [testEmail, setTestEmail] = useState('');
+  const [sendingTest, setSendingTest] = useState(false);
+  const [testSent, setTestSent] = useState(false);
+
+  const navigate = useNavigate();
+
+  // Enhanced Quill configuration with more options
+  const quillModules = {
+    toolbar: [
+      [{ 'header': [1, 2, 3, 4, 5, 6, false] }],
+      ['bold', 'italic', 'underline', 'strike'],
+      [{ 'color': [] }, { 'background': [] }],
+      [{ 'list': 'ordered'}, { 'list': 'bullet' }],
+      [{ 'align': [] }],
+      ['blockquote', 'code-block'],
+      ['link', 'image'],
+      ['clean']
+    ],
+    clipboard: {
+      matchVisual: false,
+      keepSelection: true
+    }
+  };
+
+  const quillFormats = [
+    'header', 'bold', 'italic', 'underline', 'strike',
+    'color', 'background', 'list', 'bullet', 'align',
+    'blockquote', 'code-block', 'link', 'image',
+    'style', 'class'
+  ];
+
+  useEffect(() => {
+    fetchLists();
+  }, []);
+
+  const fetchLists = async () => {
+    try {
+      const res = await API.get('/subscribers/lists');
+      setLists(res.data);
+    } catch (err) {
+      console.error("Error fetching lists", err);
+      setError("Failed to load subscriber lists");
+    }
+  };
+
+  const handleInputChange = (field, value) => {
+    setFormData(prev => ({ ...prev, [field]: value }));
+  };
+
+  const handleListToggle = (listId) => {
+    setSelectedLists(prev =>
+      prev.includes(listId)
+        ? prev.filter(id => id !== listId)
+        : [...prev, listId]
+    );
+  };
+
+  const validateStep1 = () => {
+    return formData.title.trim() && formData.subject.trim() && formData.content.trim();
+  };
+
+  const validateStep2 = () => {
+    return selectedLists.length > 0;
+  };
+
+  const getTotalRecipients = () => {
+    return lists
+      .filter(list => selectedLists.includes(list._id))
+      .reduce((total, list) => total + list.count, 0);
+  };
+
+  const handleCreateCampaign = async () => {
+    if (!validateStep1() || !validateStep2()) {
+      alert("Please fill in all required fields and select at least one list");
+      return;
+    }
+
+    try {
+      setLoading(true);
+      setError(null);
+
+      const campaignData = {
+        ...formData,
+        target_lists: selectedLists,
+        status: 'draft'
+      };
+
+      await API.post('/campaigns', campaignData);
+      alert(`Campaign "${formData.title}" created successfully!`);
+      navigate('/campaigns');
+
+    } catch (err) {
+      console.error("Failed to create campaign:", err);
+      setError(`Failed to create campaign: ${err.response?.data?.detail || 'Unknown error'}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const renderStep1 = () => (
+    <div className="space-y-6">
+      <h3 className="text-xl font-semibold">📝 Campaign Content</h3>
+
+      <div>
+        <label className="block text-sm font-medium mb-2">Campaign Name *</label>
+        <input
+          type="text"
+          placeholder="Enter campaign name (for internal use)"
+          className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+          value={formData.title}
+          onChange={e => handleInputChange('title', e.target.value)}
+        />
+      </div>
+
+      <div>
+        <label className="block text-sm font-medium mb-2">Email Subject Line *</label>
+        <input
+          type="text"
+          placeholder="Enter compelling subject line"
+          className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+          value={formData.subject}
+          onChange={e => handleInputChange('subject', e.target.value)}
+        />
+      </div>
+
+      <div>
+        <div className="flex justify-between items-center mb-2">
+          <label className="block text-sm font-medium">Email Content *</label>
+          <div className="flex gap-3 items-center">
+            <label className="flex items-center">
+              <input
+                type="checkbox"
+                checked={isTemplateLocked}
+                onChange={(e) => {
+                  setIsTemplateLocked(e.target.checked);
+                  if (e.target.checked) setShowHtmlSource(true);
+                }}
+                className="mr-2"
+              />
+              <span className="text-sm text-amber-700">🔒 Lock Template</span>
+            </label>
+
+            {!isTemplateLocked && (
+              <button
+                type="button"
+                onClick={() => setShowHtmlSource(!showHtmlSource)}
+                className={`px-4 py-2 text-sm rounded-lg border transition-colors ${
+                  showHtmlSource
+                    ? 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100'
+                    : 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100'
+                }`}
+              >
+                {showHtmlSource ? '📝 Visual Editor' : '🔧 HTML Source'}
+              </button>
+            )}
+          </div>
+        </div>
+
+        {isTemplateLocked && (
+          <div className="mb-2 p-2 bg-amber-50 border border-amber-200 rounded text-xs text-amber-700">
+            ⚠️ Template is locked to preserve styling. HTML Source mode only to maintain rich formatting.
+          </div>
+        )}
+
+        <div className="border rounded-lg">
+          {showHtmlSource || isTemplateLocked ? (
+            <div className="relative">
+              <textarea
+                className="w-full p-4 border-0 rounded-lg font-mono text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-500"
+                value={formData.content}
+                onChange={(e) => handleInputChange('content', e.target.value)}
+                placeholder="<p style='color: #333; font-size: 16px;'>Enter your HTML with inline styles...</p>"
+                rows={15}
+                style={{
+                  backgroundColor: isTemplateLocked ? '#fef3c7' : '#f8f9fa',
+                  fontFamily: 'Monaco, Menlo, "Ubuntu Mono", monospace',
+                  lineHeight: '1.4'
+                }}
+              />
+
+              {isTemplateLocked && (
+                <div className="absolute top-2 right-2 bg-amber-500 text-white px-2 py-1 rounded text-xs">
+                  🔒 LOCKED
+                </div>
+              )}
+
+              {/* Live HTML Preview */}
+              <div className="mt-3 p-3 bg-white border rounded">
+                <h4 className="text-sm font-semibold text-gray-600 mb-2">📧 Live Preview:</h4>
+                <div
+                  dangerouslySetInnerHTML={{ __html: formData.content || '<p style="color: #999;">No content to preview</p>' }}
+                  style={{
+                    fontFamily: 'Arial, sans-serif',
+                    lineHeight: '1.6',
+                    minHeight: '60px'
+                  }}
+                />
+              </div>
+            </div>
+          ) : (
+            <ReactQuill
+              theme="snow"
+              value={formData.content}
+              onChange={(value) => handleInputChange('content', value)}
+              placeholder="Start typing your email content..."
+              modules={quillModules}
+              formats={quillFormats}
+              style={{ minHeight: '300px' }}
+            />
+          )}
+        </div>
+
+        <p className="text-xs text-gray-500 mt-2">
+          💡 Switch between visual editing and HTML source code using the toggle button. Use Template Lock to preserve rich HTML formatting.
+        </p>
+      </div>
+
+      {/* ✅ FIXED EMAIL FIELDS SECTION */}
+      <div className="space-y-4">
+        <div>
+          <label className="block text-sm font-medium mb-2">Sender Name</label>
+          <input
+            type="text"
+            placeholder="Your Name or Company"
+            className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            value={formData.sender_name}
+            onChange={e => handleInputChange('sender_name', e.target.value)}
+          />
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label className="block text-sm font-medium mb-2">Sender Email</label>
+            <input
+              type="email"
+              placeholder="noreply@yourcompany.com"
+              className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              value={formData.sender_email}
+              onChange={e => handleInputChange('sender_email', e.target.value)}
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium mb-2">Reply-to Email</label>
+            <input
+              type="email"
+              placeholder="reply@yourcompany.com"
+              className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              value={formData.reply_to}
+              onChange={e => handleInputChange('reply_to', e.target.value)}
+            />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
+  const renderStep2 = () => (
+    <div className="space-y-6">
+      <h3 className="text-xl font-semibold">👥 Select Audience</h3>
+
+      <div className="bg-blue-50 p-4 rounded-lg">
+        <h4 className="font-medium text-blue-800 mb-2">📊 Audience Summary</h4>
+        <p className="text-blue-700">
+          Selected: {selectedLists.length} list(s) •
+          Total Recipients: <strong>{getTotalRecipients()}</strong>
+        </p>
+      </div>
+
+      <div>
+        <label className="block text-sm font-medium mb-3">Choose Subscriber Lists *</label>
+        <div className="space-y-2 max-h-64 overflow-y-auto border rounded-lg p-3">
+          {lists.length === 0 ? (
+            <p className="text-gray-500 text-center py-4">No subscriber lists available</p>
+          ) : (
+            lists.map(list => (
+              <label
+                key={list._id}
+                className="flex items-center p-3 border rounded-lg hover:bg-gray-50 cursor-pointer"
+              >
+                <input
+                  type="checkbox"
+                  checked={selectedLists.includes(list._id)}
+                  onChange={() => handleListToggle(list._id)}
+                  className="mr-3 h-4 w-4 text-blue-600"
+                />
+                <div className="flex-1">
+                  <span className="font-medium">{list._id}</span>
+                  <span className="text-gray-500 ml-2">({list.count} subscribers)</span>
+                </div>
+              </label>
+            ))
+          )}
+        </div>
+      </div>
+
+      {selectedLists.length > 0 && (
+        <div className="bg-green-50 p-4 rounded-lg">
+          <h4 className="font-medium text-green-800 mb-2">✅ Selected Lists:</h4>
+          <div className="flex flex-wrap gap-2">
+            {selectedLists.map(listId => {
+              const list = lists.find(l => l._id === listId);
+              return (
+                <span
+                  key={listId}
+                  className="bg-green-100 text-green-800 px-2 py-1 rounded text-sm"
+                >
+                  {listId} ({list?.count || 0})
+                </span>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+
+  const renderStep3 = () => {
+    const sendTestEmail = async () => {
+      if (!testEmail.trim()) {
+        alert('Please enter an email address for the test');
+        return;
+      }
+
+      try {
+        setSendingTest(true);
+        setTestSent(false);
+
+        const testData = {
+          to: testEmail,
+          subject: formData.subject || 'Test Email - ' + formData.title,
+          content: formData.content,
+          sender_name: formData.sender_name || 'Test Sender',
+          sender_email: formData.sender_email || 'test@yourcompany.com'
+        };
+
+        await API.post('/campaigns/send-test', testData);
+        setTestSent(true);
+        alert(`Test email sent successfully to ${testEmail}!`);
+
+      } catch (err) {
+        console.error('Failed to send test email:', err);
+        alert(`Failed to send test email: ${err.response?.data?.detail || 'Unknown error'}`);
+      } finally {
+        setSendingTest(false);
+      }
+    };
+
+    return (
+      <div className="space-y-6">
+        <h3 className="text-xl font-semibold">👀 Preview & Test</h3>
+
+        {/* Send Test Email Section */}
+        <div className="bg-green-50 p-6 rounded-lg border-2 border-green-200">
+          <h4 className="font-semibold mb-4 text-green-800">📧 Send Test Email</h4>
+          <div className="flex gap-3 items-end">
+            <div className="flex-1">
+              <label className="block text-sm font-medium mb-2 text-green-700">Test Email Address *</label>
+              <input
+                type="email"
+                placeholder="Enter email to receive test"
+                className="w-full p-3 border border-green-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500"
+                value={testEmail}
+                onChange={(e) => setTestEmail(e.target.value)}
+              />
+            </div>
+            <button
+              onClick={sendTestEmail}
+              disabled={sendingTest || !testEmail.trim()}
+              className={`px-6 py-3 rounded-lg font-medium transition-colors ${
+                sendingTest || !testEmail.trim()
+                  ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                  : 'bg-green-600 text-white hover:bg-green-700'
+              }`}
+            >
+              {sendingTest ? '📤 Sending...' : '📧 Send Test'}
+            </button>
+          </div>
+          {testSent && (
+            <div className="mt-3 p-3 bg-green-100 border border-green-200 rounded-lg">
+              <p className="text-green-800 text-sm">✅ Test email sent successfully! Check your inbox.</p>
+            </div>
+          )}
+          <p className="text-xs text-green-600 mt-2">
+            💡 Send a test email to yourself to verify formatting, links, and content before launching the campaign
+          </p>
+        </div>
+
+        {/* Email Preview Section */}
+        <div className="bg-gray-50 p-6 rounded-lg">
+          <h4 className="font-semibold mb-4">📧 Email Preview</h4>
+
+          <div className="bg-white p-6 border rounded-lg shadow-sm">
+            <div className="border-b pb-4 mb-4 space-y-2">
+              <p><strong>From:</strong> {formData.sender_name || 'Your Name'} &lt;{formData.sender_email || 'your@email.com'}&gt;</p>
+              <p><strong>Subject:</strong> {formData.subject}</p>
+              <p><strong>To:</strong> {getTotalRecipients()} recipients across {selectedLists.length} list(s)</p>
+              <p><strong>Reply-To:</strong> {formData.reply_to || 'Not specified'}</p>
+            </div>
+
+            <div
+              dangerouslySetInnerHTML={{ __html: formData.content }}
+              style={{
+                fontFamily: 'Arial, sans-serif',
+                lineHeight: '1.6',
+                color: '#333333',
+                backgroundColor: '#ffffff'
+              }}
+            />
+          </div>
+
+          {/* HTML Source View (Collapsible) */}
+          <details className="mt-4">
+            <summary className="cursor-pointer text-sm font-medium text-gray-600 hover:text-gray-800 mb-2">
+              🔧 View HTML Source Code
+            </summary>
+            <div className="bg-gray-100 p-3 rounded text-xs overflow-x-auto border max-h-40">
+              <pre className="whitespace-pre-wrap"><code>{formData.content}</code></pre>
+            </div>
+          </details>
+        </div>
+
+        <div className="bg-yellow-50 p-4 rounded-lg">
+          <h4 className="font-medium text-yellow-800 mb-2">⚠️ Final Check</h4>
+          <ul className="text-yellow-700 text-sm space-y-1">
+            <li>• <strong>Send a test email first</strong> to verify everything looks correct</li>
+            <li>• Check that colors and styling render properly in your email client</li>
+            <li>• Verify all links work correctly in the test email</li>
+            <li>• Confirm you've selected the right audience lists</li>
+            <li>• This campaign will be saved as a draft after creation</li>
+            <li>• You can send it later from the campaigns page</li>
+          </ul>
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div className="max-w-4xl mx-auto mt-10">
+      <div className="flex items-center justify-between mb-6">
+        <h2 className="text-2xl font-bold">✨ Create New Campaign</h2>
+        <button
+          onClick={() => navigate('/campaigns')}
+          className="text-gray-600 hover:text-gray-800"
+        >
+          ← Back to Campaigns
+        </button>
+      </div>
+
+      {/* Step Indicator */}
+      <div className="flex items-center justify-center mb-8">
+        {[1, 2, 3].map(stepNum => (
+          <div key={stepNum} className="flex items-center">
+            <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium ${
+              step >= stepNum
+                ? 'bg-blue-600 text-white'
+                : 'bg-gray-200 text-gray-600'
+            }`}>
+              {stepNum}
+            </div>
+            {stepNum < 3 && (
+              <div className={`w-16 h-1 ${
+                step > stepNum ? 'bg-blue-600' : 'bg-gray-200'
+              }`} />
+            )}
+          </div>
+        ))}
+      </div>
+
+      <div className="step-labels flex justify-between mb-8 text-sm text-gray-600">
+        <span className={step >= 1 ? 'text-blue-600 font-medium' : ''}>Content</span>
+        <span className={step >= 2 ? 'text-blue-600 font-medium' : ''}>Audience</span>
+        <span className={step >= 3 ? 'text-blue-600 font-medium' : ''}>Preview</span>
+      </div>
+
+      {/* Error Display */}
+      {error && (
+        <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-6">
+          {error}
+        </div>
+      )}
+
+      {/* Form Content */}
+      <div className="bg-white p-8 rounded-lg shadow">
+        {step === 1 && renderStep1()}
+        {step === 2 && renderStep2()}
+        {step === 3 && renderStep3()}
+
+        {/* Navigation Buttons */}
+        <div className="flex justify-between mt-8 pt-6 border-t">
+          <div>
+            {step > 1 && (
+              <button
+                onClick={() => setStep(step - 1)}
+                className="px-6 py-2 text-gray-600 border rounded-lg hover:bg-gray-50"
+              >
+                ← Previous
+              </button>
+            )}
+          </div>
+
+          <div>
+            {step < 3 ? (
+              <button
+                onClick={() => setStep(step + 1)}
+                disabled={step === 1 ? !validateStep1() : !validateStep2()}
+                className={`px-6 py-2 rounded-lg ${
+                  (step === 1 ? validateStep1() : validateStep2())
+                    ? 'bg-blue-600 text-white hover:bg-blue-700'
+                    : 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                }`}
+              >
+                Next →
+              </button>
+            ) : (
+              <button
+                onClick={handleCreateCampaign}
+                disabled={loading || !validateStep1() || !validateStep2()}
+                className={`px-8 py-3 rounded-lg font-medium ${
+                  loading || !validateStep1() || !validateStep2()
+                    ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                    : 'bg-green-600 text-white hover:bg-green-700'
+                }`}
+              >
+                {loading ? '⏳ Creating...' : '✅ Create Campaign'}
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+

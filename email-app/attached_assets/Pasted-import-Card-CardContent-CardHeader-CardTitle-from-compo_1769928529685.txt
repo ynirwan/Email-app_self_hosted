@@ -1,0 +1,315 @@
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { CheckCircle, ArrowRight, Mail, Filter, Clock, Target } from "lucide-react";
+import { Link } from "wouter";
+import InquiryForm from "@/components/forms/inquiry-form";
+import TestimonialCard from "@/components/testimonials/testimonial-card";
+
+export default function CustomPage() {
+  const service = {
+    id: "custom-static",
+    name: "Custom Email Automation",
+    longDescription: "Custom-built email automation solution tailored for remote teams—no coding required.",
+    features: [
+      "AI Email Categorization",
+      "Priority Routing",
+      "Workflow Automation",
+      "Easy Setup",
+      "User Access Control",
+      "Insights & Analytics"
+    ],
+    imageUrl: "/assets/images/services/custom-email.png"
+  };
+
+  const testimonials = [
+    {
+      id: "t1",
+      name: "Alice Nguyen",
+      company: "RemoteGenix",
+      position: "Ops Lead",
+      content: "Their custom automation saved us hours every week. No more inbox chaos!",
+      rating: 5,
+      avatarUrl: "/assets/images/avatars/alice.png"
+    },
+    {
+      id: "t2",
+      name: "Carlos Rivera",
+      company: "AsyncTools",
+      position: "Product Manager",
+      content: "Loved how tailored everything felt. Setup was smooth and support was excellent.",
+      rating: 4,
+      avatarUrl: "/assets/images/avatars/carlos.png"
+    }
+  ];
+
+  const benefits = [
+    {
+      icon: Filter,
+      title: "Smart Email Categorization",
+      description: "Automatically categorize incoming emails based on content, sender, and priority using AI-powered classification."
+    },
+    {
+      icon: Clock,
+      title: "Priority-Based Routing",
+      description: "Route urgent emails to the right team members instantly while organizing non-critical messages for batch processing."
+    },
+    {
+      icon: Target,
+      title: "Remote Target Optimization",
+      description: "Designed specifically for distributed teams with async communication and collaboration workflows."
+    },
+    {
+      icon: Mail,
+      title: "No Technical Skills Required",
+      description: "User-friendly interface that requires zero coding or technical knowledge to set up and manage."
+    }
+  ];
+
+  const automationFeatures = [
+    {
+      title: "Email Priority Detection",
+      description: "AI algorithms analyze email content, sender authority, keywords, and context to automatically assign priority levels.",
+      examples: ["Urgent client issues", "Executive communications", "Time-sensitive requests", "Routine updates"]
+    },
+    {
+      title: "Smart Categorization",
+      description: "Automatically organize emails into predefined categories based on your team's workflow and business processes.",
+      examples: ["Customer Support", "Sales Inquiries", "Internal Updates", "Project Communications"]
+    },
+    {
+      title: "Target-Based Routing",
+      description: "Route emails to the appropriate team members or departments based on rules you define without any technical setup.",
+      examples: ["Route support emails to support team", "Send sales leads to sales team", "Forward HR emails to HR department"]
+    },
+    {
+      title: "Custom Workflows",
+      description: "Create personalized automation workflows that match your team's unique processes and communication patterns.",
+      examples: ["Escalation procedures", "Follow-up sequences", "Approval processes", "Notification systems"]
+    }
+  ];
+
+  return (
+    <div className="space-y-16">
+      {/* Hero Section */}
+      <section className="bg-gradient-to-br from-purple-50 to-pink-100">
+        <div className="container mx-auto px-4 py-16">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 items-center">
+            <div className="space-y-6">
+              <Badge variant="secondary" className="w-fit">
+                No Coding Required
+              </Badge>
+              <h1 className="text-4xl lg:text-5xl font-bold text-gray-900">
+                {service.name}
+              </h1>
+              <p className="text-xl text-gray-600 leading-relaxed">
+                {service.longDescription}
+              </p>
+              <div className="bg-white p-6 rounded-lg shadow-sm border-l-4 border-primary">
+                <h3 className="font-semibold text-gray-900 mb-2">Perfect for Remote Teams</h3>
+                <p className="text-gray-600">
+                  Streamline email management for distributed teams with intelligent automation that requires zero technical expertise.
+                </p>
+              </div>
+              <div className="flex flex-col sm:flex-row gap-4">
+                <Button size="lg" asChild>
+                  <a href="#inquiry">Get Custom Solution</a>
+                </Button>
+                <Link href="/comparison">
+                  <Button variant="outline" size="lg">
+                    Compare Services
+                  </Button>
+                </Link>
+              </div>
+            </div>
+            <div className="relative">
+              <img
+                src={service.imageUrl}
+                alt={service.name}
+                className="rounded-2xl shadow-2xl w-full h-auto"
+              />
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Benefits Section */}
+      <section className="container mx-auto px-4">
+        <div className="text-center mb-12">
+          <h2 className="text-3xl lg:text-4xl font-bold text-gray-900 mb-4">
+            Why Choose Custom Email Automation?
+          </h2>
+          <p className="text-xl text-gray-600 max-w-3xl mx-auto">
+            Built specifically for remote teams who need intelligent email management without technical complexity.
+          </p>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+          {benefits.map((benefit, index) => (
+            <Card key={index} className="text-center h-full hover:shadow-lg transition-shadow">
+              <CardContent className="p-6 space-y-4">
+                <div className="w-16 h-16 bg-purple-100 rounded-full flex items-center justify-center mx-auto">
+                  <benefit.icon className="h-8 w-8 text-purple-600" />
+                </div>
+                <h3 className="text-xl font-semibold text-gray-900">{benefit.title}</h3>
+                <p className="text-gray-600">{benefit.description}</p>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      </section>
+
+      {/* Automation Features */}
+      <section className="bg-gray-50 py-16">
+        <div className="container mx-auto px-4">
+          <div className="text-center mb-12">
+            <h2 className="text-3xl lg:text-4xl font-bold text-gray-900 mb-4">
+              Powerful Automation Features
+            </h2>
+            <p className="text-xl text-gray-600 max-w-3xl mx-auto">
+              Comprehensive email management capabilities designed for modern remote teams.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            {automationFeatures.map((feature, index) => (
+              <Card key={index} className="h-full">
+                <CardHeader>
+                  <CardTitle className="text-xl">{feature.title}</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <p className="text-gray-600">{feature.description}</p>
+                  <div>
+                    <h4 className="font-medium text-gray-900 mb-2">Examples:</h4>
+                    <ul className="space-y-1">
+                      {feature.examples.map((example, idx) => (
+                        <li key={idx} className="flex items-center text-sm text-gray-600">
+                          <CheckCircle className="h-4 w-4 text-green-500 mr-2 flex-shrink-0" />
+                          {example}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* How It Works */}
+      <section className="container mx-auto px-4">
+        <div className="text-center mb-12">
+          <h2 className="text-3xl lg:text-4xl font-bold text-gray-900 mb-4">
+            How It Works - Simple 4-Step Process
+          </h2>
+          <p className="text-xl text-gray-600 max-w-3xl mx-auto">
+            Get your custom email automation up and running without any technical knowledge required.
+          </p>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
+          {[
+            {
+              step: "1",
+              title: "Consultation Call",
+              description: "We discuss your team's email challenges and workflow requirements in a 30-minute consultation."
+            },
+            {
+              step: "2",
+              title: "Custom Design",
+              description: "Our experts design a personalized automation system tailored to your specific needs and processes."
+            },
+            {
+              step: "3",
+              title: "Implementation",
+              description: "We set up and configure your custom email automation system with full testing and optimization."
+            },
+            {
+              step: "4",
+              title: "Training & Support",
+              description: "Your team receives comprehensive training and ongoing support to maximize productivity."
+            }
+          ].map((item, index) => (
+            <div key={index} className="text-center">
+              <div className="w-16 h-16 bg-primary rounded-full flex items-center justify-center mx-auto mb-4">
+                <span className="text-white font-bold text-xl">{item.step}</span>
+              </div>
+              <h3 className="text-xl font-semibold text-gray-900 mb-2">{item.title}</h3>
+              <p className="text-gray-600">{item.description}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* Feature List */}
+      <section className="bg-gray-50 py-16">
+        <div className="container mx-auto px-4">
+          <div className="max-w-4xl mx-auto">
+            <div className="text-center mb-12">
+              <h2 className="text-3xl lg:text-4xl font-bold text-gray-900 mb-4">
+                Complete Feature Set
+              </h2>
+              <p className="text-xl text-gray-600">
+                Everything you need for intelligent email management and team collaboration.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {service.features.map((feature, index) => (
+                <div key={index} className="flex items-start space-x-3">
+                  <CheckCircle className="h-6 w-6 text-green-500 flex-shrink-0 mt-0.5" />
+                  <span className="text-gray-700">{feature}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Testimonials */}
+      <section className="container mx-auto px-4">
+        <div className="text-center mb-12">
+          <h2 className="text-3xl lg:text-4xl font-bold text-gray-900 mb-4">
+            Client Success Stories
+          </h2>
+          <p className="text-xl text-gray-600">
+            See how our custom automation has transformed email management for remote teams.
+          </p>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+          {testimonials.map((testimonial) => (
+            <TestimonialCard key={testimonial.id} testimonial={testimonial} />
+          ))}
+        </div>
+      </section>
+
+      {/* Inquiry */}
+      <section id="inquiry" className="bg-primary text-white py-16">
+        <div className="container mx-auto px-4">
+          <div className="max-w-4xl mx-auto">
+            <div className="text-center mb-12">
+              <h2 className="text-3xl lg:text-4xl font-bold mb-4">
+                Ready to Transform Your Email Management?
+              </h2>
+              <p className="text-xl opacity-90">
+                Let's build a custom automation system for your team’s needs.
+              </p>
+            </div>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-gray-900">Request Custom Automation Solution</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <InquiryForm serviceId={service.id} />
+              </CardContent>
+            </Card>
+          </div>
+        </div>
+      </section>
+    </div>
+  );
+}
+

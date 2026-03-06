@@ -1,0 +1,450 @@
+// frontend/src/pages/Analytics.jsx
+import { useState, useEffect, useMemo, useCallback } from 'react';
+import { Link } from 'react-router-dom';
+import API from '../api';
+import {
+  LineChart,
+  Line,
+  ResponsiveContainer,
+  Tooltip as RechartTooltip,
+  XAxis,
+  YAxis,
+} from 'recharts';
+
+export default function Analytics() {
+  // --- Hooks (stable order) ---
+  const [dashboardData, setDashboardData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [dateRange, setDateRange] = useState(30);
+
+  // UI controls
+  const [search, setSearch] = useState('');
+  const [sortKey, setSortKey] = useState('sent'); // sent | open_rate | click_rate
+  const [sortOrder, setSortOrder] = useState('desc'); // asc | desc
+  const [statusFilter, setStatusFilter] = useState('all'); // all | draft | scheduled | sent
+
+  // --- Network (stable reference) ---
+  const fetchDashboardData = useCallback(async () => {
+    try {
+      setLoading(true);
+      const response = await API.get(`/analytics/dashboard?days=${dateRange}`);
+      setDashboardData(response.data);
+    } catch (error) {
+      console.error('Error fetching dashboard data:', error);
+      setDashboardData(null);
+    } finally {
+      setLoading(false);
+    }
+  }, [dateRange]);
+
+  useEffect(() => {
+    fetchDashboardData();
+  }, [fetchDashboardData]);
+
+  // --- Derived data (useMemo to avoid recalculation) ---
+  const { summary, campaigns } = dashboardData || {};
+  const campaignList = useMemo(() => campaigns || [], [campaigns]);
+
+  // Simple generated trend data for sparklines when backend doesn't provide timeseries.
+  // Uses total_sent and creates a 7-point sparkline with small variations.
+  const makeSparkData = (base = 0, points = 7) => {
+    const v = Math.max(0, Math.round(base));
+    const arr = Array.from({ length: points }, (_, i) => {
+      // small deterministic variation so chart looks meaningful
+      const variation = Math.round(((i - points / 2) / points) * (v * 0.15));
+      return { x: i + 1, y: Math.max(0, v + variation) };
+    });
+    return arr;
+  };
+
+  // Filters + sorting
+  const filteredCampaigns = useMemo(() => {
+    let list = [...campaignList];
+
+    if (search) {
+      const q = search.toLowerCase();
+      list = list.filter(
+        (c) =>
+          (c.title || '').toLowerCase().includes(q) ||
+          (c.subject || '').toLowerCase().includes(q)
+      );
+    }
+
+    if (statusFilter !== 'all') {
+      list = list.filter((c) => (c.status || '').toLowerCase() === statusFilter);
+    }
+
+    list.sort((a, b) => {
+      const getVal = (item) => {
+        if (sortKey === 'sent') return item.analytics?.total_sent || 0;
+        if (sortKey === 'open_rate') return item.analytics?.open_rate || 0;
+        if (sortKey === 'click_rate') return item.analytics?.click_rate || 0;
+        return 0;
+      };
+      const va = getVal(a);
+      const vb = getVal(b);
+      return sortOrder === 'asc' ? va - vb : vb - va;
+    });
+
+    return list;
+  }, [campaignList, search, statusFilter, sortKey, sortOrder]);
+
+  // Best / worst quick picks
+  const bestCampaign = useMemo(() => {
+    if (!filteredCampaigns.length) return null;
+    return filteredCampaigns.reduce((best, cur) => {
+      if (!best) return cur;
+      return (cur.analytics?.open_rate || 0) > (best.analytics?.open_rate || 0) ? cur : best;
+    }, null);
+  }, [filteredCampaigns]);
+
+  const worstCampaign = useMemo(() => {
+    if (!filteredCampaigns.length) return null;
+    return filteredCampaigns.reduce((worst, cur) => {
+      if (!worst) return cur;
+      return (cur.analytics?.open_rate || 0) < (worst.analytics?.open_rate || 0) ? cur : worst;
+    }, null);
+  }, [filteredCampaigns]);
+
+  // --- Render ---
+  if (loading) {
+    return (
+      <div className="animate-pulse space-y-6 p-6">
+        <div className="h-8 bg-gray-200 rounded w-1/4"></div>
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mt-4">
+          {[...Array(4)].map((_, i) => (
+            <div key={i} className="h-32 bg-gray-200 rounded"></div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-8 p-6">
+      {/* Header */}
+      <div className="flex flex-col lg:flex-row lg:justify-between lg:items-center gap-4">
+        <h1 className="text-3xl font-bold text-gray-900">Analytics Dashboard</h1>
+
+        <div className="flex gap-2 items-center">
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search campaigns..."
+            className="px-3 py-2 border rounded-lg"
+          />
+
+          <select
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value)}
+            className="px-3 py-2 border rounded-lg"
+          >
+            <option value="all">All statuses</option>
+            <option value="draft">Draft</option>
+            <option value="scheduled">Scheduled</option>
+            <option value="sent">Sent</option>
+          </select>
+
+          <select
+            value={dateRange}
+            onChange={(e) => setDateRange(Number(e.target.value))}
+            className="px-3 py-2 border rounded-lg"
+          >
+            <option value={7}>Last 7 days</option>
+            <option value={30}>Last 30 days</option>
+            <option value={90}>Last 90 days</option>
+            <option value={365}>Last year</option>
+          </select>
+        </div>
+      </div>
+
+      {/* Summary cards + sparklines */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+        {/* Total campaigns */}
+        <div className="bg-white p-6 rounded-lg shadow border">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium text-gray-600">Total Campaigns</p>
+              <p className="text-3xl font-bold text-gray-900">{summary?.total_campaigns || 0}</p>
+            </div>
+            <div className="p-3 bg-blue-50 rounded-full">
+              <span className="text-2xl">📧</span>
+            </div>
+          </div>
+          <div className="h-16 mt-4">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={makeSparkData(summary?.total_campaigns || 0, 7)}>
+                <XAxis hide dataKey="x" />
+                <YAxis hide />
+                <RechartTooltip />
+                <Line type="monotone" dataKey="y" stroke="#3b82f6" strokeWidth={2} dot={false} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+
+        {/* Emails sent */}
+        <div className="bg-white p-6 rounded-lg shadow border">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium text-gray-600">Emails Sent</p>
+              <p className="text-3xl font-bold text-gray-900">
+                {summary?.total_emails_sent?.toLocaleString() || 0}
+              </p>
+            </div>
+            <div className="p-3 bg-green-50 rounded-full">
+              <span className="text-2xl">📤</span>
+            </div>
+          </div>
+          <div className="h-16 mt-4">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={makeSparkData(summary?.total_emails_sent || 0, 7)}>
+                <XAxis hide dataKey="x" />
+                <YAxis hide />
+                <Line type="monotone" dataKey="y" stroke="#10b981" strokeWidth={2} dot={false} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+
+        {/* Avg open rate */}
+        <div className="bg-white p-6 rounded-lg shadow border">
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="flex items-center gap-2">
+                <p className="text-sm font-medium text-gray-600">Avg Open Rate</p>
+                <span title="Industry average ~20-25%" className="text-gray-400 text-xs cursor-help">
+                  ⓘ
+                </span>
+              </div>
+              <p className="text-3xl font-bold text-green-600">{summary?.average_open_rate || 0}%</p>
+            </div>
+            <div className="p-3 bg-yellow-50 rounded-full">
+              <span className="text-2xl">👁️</span>
+            </div>
+          </div>
+          <div className="h-16 mt-4">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={makeSparkData(Math.round((summary?.average_open_rate || 0) * 10), 7)}>
+                <XAxis hide dataKey="x" />
+                <YAxis hide />
+                <Line type="monotone" dataKey="y" stroke="#84cc16" strokeWidth={2} dot={false} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+
+        {/* Avg click rate */}
+        <div className="bg-white p-6 rounded-lg shadow border">
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="flex items-center gap-2">
+                <p className="text-sm font-medium text-gray-600">Avg Click Rate</p>
+                <span title="Industry average ~2-3%" className="text-gray-400 text-xs cursor-help">
+                  ⓘ
+                </span>
+              </div>
+              <p className="text-3xl font-bold text-purple-600">{summary?.average_click_rate || 0}%</p>
+            </div>
+            <div className="p-3 bg-purple-50 rounded-full">
+              <span className="text-2xl">🖱️</span>
+            </div>
+          </div>
+          <div className="h-16 mt-4">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={makeSparkData(Math.round((summary?.average_click_rate || 0) * 10), 7)}>
+                <XAxis hide dataKey="x" />
+                <YAxis hide />
+                <Line type="monotone" dataKey="y" stroke="#7c3aed" strokeWidth={2} dot={false} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+      </div>
+
+      {/* Best / Worst quick highlights */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div className="bg-white p-4 rounded-lg shadow border">
+          <p className="text-sm text-gray-600">Top performing (by open rate)</p>
+          {bestCampaign ? (
+            <div className="flex items-center justify-between mt-2">
+              <div>
+                <p className="font-medium">{bestCampaign.title}</p>
+                <p className="text-sm text-gray-500">{bestCampaign.subject}</p>
+                <p className="text-sm text-gray-500 mt-1">
+                  Open Rate: <span className="font-semibold">{bestCampaign.analytics?.open_rate || 0}%</span>
+                </p>
+              </div>
+              <Link to={`/analytics/campaign/${bestCampaign._id}`} className="text-blue-600">
+                View
+              </Link>
+            </div>
+          ) : (
+            <p className="text-sm text-gray-500 mt-2">No data</p>
+          )}
+        </div>
+
+        <div className="bg-white p-4 rounded-lg shadow border">
+          <p className="text-sm text-gray-600">Lowest performing (by open rate)</p>
+          {worstCampaign ? (
+            <div className="flex items-center justify-between mt-2">
+              <div>
+                <p className="font-medium">{worstCampaign.title}</p>
+                <p className="text-sm text-gray-500">{worstCampaign.subject}</p>
+                <p className="text-sm text-gray-500 mt-1">
+                  Open Rate: <span className="font-semibold">{worstCampaign.analytics?.open_rate || 0}%</span>
+                </p>
+              </div>
+              <Link to={`/analytics/campaign/${worstCampaign._id}`} className="text-blue-600">
+                View
+              </Link>
+            </div>
+          ) : (
+            <p className="text-sm text-gray-500 mt-2">No data</p>
+          )}
+        </div>
+      </div>
+
+      {/* Campaign Table */}
+      <div className="bg-white rounded-lg shadow border">
+        <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+          <h2 className="text-xl font-semibold text-gray-900">Campaign Performance</h2>
+
+          <div className="flex items-center gap-2">
+            <select
+              value={sortKey}
+              onChange={(e) => setSortKey(e.target.value)}
+              className="px-3 py-1 border rounded"
+            >
+              <option value="sent">Sort: Sent</option>
+              <option value="open_rate">Sort: Open Rate</option>
+              <option value="click_rate">Sort: Click Rate</option>
+            </select>
+
+            <button
+              onClick={() => setSortOrder((s) => (s === 'asc' ? 'desc' : 'asc'))}
+              className="px-3 py-1 border rounded"
+              title="Toggle sort order"
+            >
+              {sortOrder === 'asc' ? 'Asc' : 'Desc'}
+            </button>
+          </div>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Campaign</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Sent</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Opens</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Clicks</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Open Rate</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Click Rate</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>
+              </tr>
+            </thead>
+
+            <tbody className="bg-white divide-y divide-gray-200">
+              {filteredCampaigns.length ? (
+                filteredCampaigns.map((campaign) => {
+                  const openRate = campaign.analytics?.open_rate ?? 0;
+                  const clickRate = campaign.analytics?.click_rate ?? 0;
+                  const sent = campaign.analytics?.total_sent ?? 0;
+
+                  return (
+                    <tr key={campaign._id} className="hover:bg-gray-50">
+                      <td className="px-6 py-4">
+                        <div>
+                          <p className="text-sm font-medium text-gray-900">{campaign.title}</p>
+                          <p className="text-sm text-gray-500">{campaign.subject}</p>
+                        </div>
+                        {/* small sparkline derived from sent */}
+                        <div className="w-40 h-8 mt-2">
+                          <ResponsiveContainer width="100%" height="100%">
+                            <LineChart data={makeSparkData(sent, 6)}>
+                              <XAxis hide dataKey="x" />
+                              <YAxis hide />
+                              <Line type="monotone" dataKey="y" stroke="#3b82f6" strokeWidth={1.5} dot={false} />
+                            </LineChart>
+                          </ResponsiveContainer>
+                        </div>
+                      </td>
+
+                      <td className="px-6 py-4 text-sm text-gray-900">{sent.toLocaleString()}</td>
+
+                      <td className="px-6 py-4 text-sm text-gray-900">
+                        {(campaign.analytics?.total_opened ?? 0).toLocaleString()}
+                      </td>
+
+                      <td className="px-6 py-4 text-sm text-gray-900">
+                        {(campaign.analytics?.total_clicked ?? 0).toLocaleString()}
+                      </td>
+
+                      <td className="px-6 py-4">
+                        <span
+                          title={`${campaign.analytics?.total_opened || 0} opens`}
+                          className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                            openRate >= 20 ? 'bg-green-100 text-green-800' : openRate >= 10 ? 'bg-yellow-100 text-yellow-800' : 'bg-red-100 text-red-800'
+                          }`}
+                        >
+                          {openRate.toFixed(1)}%
+                        </span>
+                      </td>
+
+                      <td className="px-6 py-4">
+                        <span
+                          title={`${campaign.analytics?.total_clicked || 0} clicks`}
+                          className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                            clickRate >= 3 ? 'bg-green-100 text-green-800' : clickRate >= 1 ? 'bg-yellow-100 text-yellow-800' : 'bg-red-100 text-red-800'
+                          }`}
+                        >
+                          {clickRate.toFixed(1)}%
+                        </span>
+                      </td>
+
+                      <td className="px-6 py-4 text-sm">
+                        <span
+                          className={`px-2 py-1 rounded text-xs ${
+                            (campaign.status || '').toLowerCase() === 'sent'
+                              ? 'bg-green-100 text-green-800'
+                              : (campaign.status || '').toLowerCase() === 'scheduled'
+                              ? 'bg-yellow-100 text-yellow-800'
+                              : 'bg-gray-100 text-gray-800'
+                          }`}
+                        >
+                          {campaign.status || 'N/A'}
+                        </span>
+                      </td>
+
+                      <td className="px-6 py-4 text-sm">
+                        <Link to={`/analytics/campaign/${campaign._id}`} className="text-blue-600 hover:text-blue-800 font-medium">
+                          View →
+                        </Link>
+                      </td>
+                    </tr>
+                  );
+                })
+              ) : (
+                <tr>
+                  <td colSpan={8} className="px-6 py-8 text-center text-gray-500">
+                    <div className="flex flex-col items-center space-y-3">
+                      <span className="text-4xl">📊</span>
+                      <p className="text-lg font-medium">No campaigns found</p>
+                      <p className="text-sm">Create or import campaigns to see analytics here</p>
+                      <Link to="/campaigns/create" className="mt-4 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+                        Create Campaign
+                      </Link>
+                    </div>
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
