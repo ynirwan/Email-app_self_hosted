@@ -1,0 +1,31 @@
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import Register from './pages/Register';
+import Login from './pages/Login';
+import Dashboard from './pages/Dashboard';
+import Subscribers from './pages/Subscribers'; // ✅ Make sure this line is at the top
+import Layout from './components/Layout';
+
+const App = () => {
+  const isLoggedIn = !!localStorage.getItem('token');
+
+  return (
+    <BrowserRouter>
+      <Routes>
+        <Route path="/" element={isLoggedIn ? <Dashboard /> : <Navigate to="/login" />} />
+        <Route path="/register" element={<Register />} />
+        <Route path="/login" element={<Login />} />
+	<Route path="/subscribers" element={isLoggedIn ? <Subscribers /> : <Navigate to="/login" />} /> {/* ✅ Add this */}
+	<Route path="/" element={isLoggedIn ? <Layout><Dashboard /></Layout> : <Navigate to="/login" />} />
+        <Route path="/subscribers" element={isLoggedIn ? <Layout><Subscribers /></Layout> : <Navigate to="/login" />} />
+        <Route path="/" element={<Layout />}>	  
+   </Route>
+        )}
+	  
+      </Routes>
+    </BrowserRouter>
+  );
+};
+
+export default App;
+
+

@@ -1,0 +1,25 @@
+[2026-01-30 14:20:40,480: INFO/ForkPoolWorker-2] ✅ Non-strict mode: Allowing processing despite non-critical health issues
+
+[2026-01-30 14:20:40,585: INFO/ForkPoolWorker-2] ✅ Built promo object with 3 fields: ['description', 'code', 'expires_at']
+
+[2026-01-30 14:20:40,585: INFO/ForkPoolWorker-2] ✅ Built nested context with top-level keys: ['unsubscribe_url', 'support_email', 'preferences_url', 'order_count', 'website_url', 'privacy_url', 'support_phone', 'recipient', 'shop_url', 'subject', 'total_spent', 'promo', 'current_year', 'action_url', 'reward_points', 'days_since_last_order', 'elite_program_url', 'app_store_url', 'sent_at', 'items', 'email', 'first_name', 'last_name', 'status', 'tier', 'country', 'device', 'language', 'count', 'spent', 'points', 'lastorder', 'appurl', 'websiteurl', 'actionurl', 'shopurl', 'program', 'unsuburl', 'prefurl', 'support number', 'support email', 'list', 'create time', 'update time', 'subscriber_id', 'current_date', 'subscription_date']
+
+[2026-01-30 14:20:40,585: INFO/ForkPoolWorker-2] 🔍 Nested context keys: ['unsubscribe_url', 'support_email', 'preferences_url', 'order_count', 'website_url', 'privacy_url', 'support_phone', 'recipient', 'shop_url', 'subject', 'total_spent', 'promo', 'current_year', 'action_url', 'reward_points']
+
+[2026-01-30 14:20:40,586: INFO/ForkPoolWorker-2] 🔍 Items type: <class 'str'>
+
+[2026-01-30 14:20:40,586: INFO/ForkPoolWorker-2] 🔍 Items value: Wireless Headphones|79.99|True|Best seller!; Laptop Stand|45.0|True|Ergonomic design
+
+[2026-01-30 14:20:40,676: INFO/ForkPoolWorker-2] ✅ Rendered template using Jinja2 engine
+
+[2026-01-30 14:20:40,676: INFO/ForkPoolWorker-2] ✅ Personalized 55 fields for daniel.anderson60757@example.com
+
+[2026-01-30 14:20:40,954: INFO/ForkPoolWorker-3] ✅ Rendered template using Jinja2 engine
+
+[2026-01-30 14:20:40,963: INFO/ForkPoolWorker-3] ✅ Personalized 57 fields for emily.harris45782@example.com
+
+[2026-01-30 14:20:40,983: INFO/ForkPoolWorker-1] ✅ Rendered template using Jinja2 engine
+
+[2026-01-30 14:20:40,984: INFO/ForkPoolWorker-1] ✅ Personalized 55 fields for olivia.smith60754@example.com
+
+[2026-01-30 14:20:41,104: INFO/ForkPoolWorker-4] Task tasks.send_single_campaign_email[b2168516-8000-42d7-8659-8f8af0d651f7] succeeded in 0.8435841860000437s: {'status': 'sent', 'message_id': 'smtp_1769782841073', 'provider': 'smtp', 'execution_time': 0.8146767616271973, 'cost': 0.0, 'attempted_providers': ['smtp'], 'email': 'john.smith75902@example.com'}

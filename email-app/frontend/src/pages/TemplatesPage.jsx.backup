@@ -1,0 +1,231 @@
+import React, { useEffect, useState, useRef } from "react";
+import API from "../api";
+import EmailEditor from "react-email-editor";
+
+export default function TemplatesPage() {
+  const [templates, setTemplates] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [errorMsg, setErrorMsg] = useState("");
+  const [editTemplate, setEditTemplate] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const emailEditorRef = useRef(null);
+
+  useEffect(() => {
+    loadTemplates();
+  }, []);
+
+  const loadTemplates = async () => {
+    setLoading(true);
+    setErrorMsg("");
+    try {
+      const response = await API.get("/templates");
+      setTemplates(response.data);
+    } catch (err) {
+      setErrorMsg("Failed to load templates.");
+    }
+    setLoading(false);
+  };
+
+  const handleEdit = (template) => {
+    setEditTemplate(template);
+  };
+
+  const handleDelete = async (template) => {
+    if (!window.confirm(`Delete template "${template.name}"?`)) return;
+    try {
+      await API.delete(`/templates/${template._id || template.id}`);
+      setTemplates((prev) => prev.filter((t) => (t._id || t.id) !== (template._id || template.id)));
+    } catch {
+      alert("Failed to delete template.");
+    }
+  };
+
+  const handleEditorLoad = () => {
+    if (editTemplate && editTemplate.content_json) {
+      emailEditorRef.current.editor.loadDesign(editTemplate.content_json);
+    } else {
+      emailEditorRef.current.editor.loadBlank(); // Clear editor for a new template
+    }
+  };
+
+  const extractFields = (html) => {
+    const matches = html.match(/{{\s*[\w]+\s*}}/g) || [];
+    return [...new Set(matches.map((f) => f.replace(/[{}]/g, "").trim()))];
+  };
+
+
+  const handleSave = () => {
+  if (!editTemplate.name || !editTemplate.name.trim()) {
+    alert("Template name is required.");
+    return;
+  }
+  setSaving(true);
+  if (!emailEditorRef.current) {
+    setSaving(false);
+    return;
+  }
+
+  // Helper to collect all custom HTML blocks from the design JSON
+  function collectAllHtmlFromDesign(design) {
+    let collectedHtml = "";
+    try {
+      const rows = design.body?.rows || [];
+      rows.forEach(row => {
+        (row.columns || []).forEach(col => {
+          (col.contents || []).forEach(content => {
+            if (content.type === "html" && content.values?.html) {
+              collectedHtml += content.values.html + "\n";
+            }
+          });
+        });
+      });
+    } catch (e) {
+      // Ignore errors in parsing
+    }
+    return collectedHtml.trim();
+  }
+
+  emailEditorRef.current.editor.exportHtml((data) => {
+    const { design, html: exportedHtml } = data;
+    // Use exported HTML if available, otherwise extract from custom HTML blocks in design JSON
+    let trueHtml = exportedHtml && exportedHtml.trim() ? exportedHtml : collectAllHtmlFromDesign(design);
+    console.log('Saving HTML:', trueHtml);  // Debug output to verify HTML content
+
+    const templateId = editTemplate._id || editTemplate.id;
+    const payload = {
+      ...editTemplate,
+      content_json: design,
+      fields: extractFields(trueHtml),
+      html: trueHtml,
+    };
+
+    if (templateId) {
+      // Update existing template
+      API.put(`/templates/${templateId}`, payload)
+        .then(() => {
+          setSaving(false);
+          setEditTemplate(null);
+          loadTemplates();
+        })
+        .catch(() => {
+          alert("Failed to save template.");
+          setSaving(false);
+        });
+    } else {
+      // Create new template
+      API.post("/templates", payload)
+        .then(() => {
+          setSaving(false);
+          setEditTemplate(null);
+          loadTemplates();
+        })
+        .catch(() => {
+          alert("Failed to create template.");
+          setSaving(false);
+        });
+    }
+  });
+};
+
+
+
+
+  const handleCreate = () => {
+    setEditTemplate({ name: "", description: "", content_json: {}, fields: [] });
+  };
+
+  if (loading)
+    return <div className="p-6 text-center text-lg font-semibold">Loading templates...</div>;
+
+  return (
+    <div className="max-w-6xl mx-auto p-6 bg-white rounded shadow">
+      <h1 className="text-3xl font-bold mb-6 border-b pb-2">Email Templates</h1>
+
+      {!editTemplate ? (
+        <>
+          <button
+            onClick={handleCreate}
+            className="mb-6 px-5 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition"
+          >
+            + Create Template
+          </button>
+
+          {errorMsg ? (
+            <p className="text-red-600 font-semibold">{errorMsg}</p>
+          ) : templates.length === 0 ? (
+            <p className="text-gray-600">No templates found. Click "Create Template" to start.</p>
+          ) : (
+            <ul className="divide-y border rounded">
+              {templates.map((template) => (
+                <li
+                  key={template._id || template.id}
+                  className="flex justify-between items-center px-4 py-3 hover:bg-gray-50"
+                >
+                  <span className="font-medium">{template.name}</span>
+                  <div className="space-x-3">
+                    <button
+                      onClick={() => handleEdit(template)}
+                      className="px-3 py-1 bg-green-600 text-white rounded hover:bg-green-700 transition"
+                    >
+                      Edit
+                    </button>
+                    <button
+                      onClick={() => handleDelete(template)}
+                      className="px-3 py-1 bg-red-600 text-white rounded hover:bg-red-700 transition"
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </>
+      ) : (
+        <div>
+          <h2 className="text-xl font-semibold mb-4">
+            {editTemplate._id || editTemplate.id ? "Edit Template" : "Create New Template"}
+          </h2>
+
+          <input
+            type="text"
+            placeholder="Template Name"
+            value={editTemplate.name}
+            onChange={(e) => setEditTemplate({ ...editTemplate, name: e.target.value })}
+            className="block mb-3 w-full px-3 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-600"
+            autoFocus
+          />
+
+          <textarea
+            rows={3}
+            placeholder="Description (optional)"
+            value={editTemplate.description || ""}
+            onChange={(e) => setEditTemplate({ ...editTemplate, description: e.target.value })}
+            className="block mb-4 w-full px-3 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-600"
+          />
+
+          <div style={{ height: 600 }}>
+            <EmailEditor ref={emailEditorRef} onLoad={handleEditorLoad} />
+          </div>
+
+          <div className="mt-4 flex space-x-3">
+            <button
+              onClick={handleSave}
+              disabled={saving}
+              className="px-5 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition"
+            >
+              {saving ? "Saving..." : "Save Template"}
+            </button>
+            <button
+              onClick={() => setEditTemplate(null)}
+              disabled={saving}
+              className="px-5 py-2 bg-gray-400 text-white rounded hover:bg-gray-500 transition"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

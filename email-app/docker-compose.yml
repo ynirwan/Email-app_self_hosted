@@ -1,0 +1,154 @@
+# docker-compose.yml
+services:
+  # MongoDB Database
+  mongodb:
+    image: mongo:6.0
+    container_name: mongodb
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: password
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+      - ./mongo-init:/docker-entrypoint-initdb.d
+    command: mongod --wiredTigerCacheSizeGB 2 --journal --bind_ip_all
+    networks:
+      - app-network
+
+  # FastAPI Backend
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: fastapi-backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - PYTHONPATH=/app
+      - DEPLOYMENT_MODE=self_hosted
+      - SMTP_POLICY=unrestricted
+      - REDIS_URL=redis://redis:6379/0
+      - MASTER_ENCRYPTION_KEY=${MASTER_ENCRYPTION_KEY}
+    depends_on:
+      - mongodb
+      - redis
+    volumes:
+      - ./backend:/app
+    networks:
+      - app-network
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --workers 4
+
+  # 🎯 UNIFIED CELERY CONTAINER (All tasks and queues)
+  celery_main:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: celery-unified
+    restart: unless-stopped
+    environment:
+      - PYTHONPATH=/app
+      - REDIS_URL=redis://redis:6379/0
+      - MASTER_ENCRYPTION_KEY=${MASTER_ENCRYPTION_KEY}
+      - SES_BATCH_SIZE=200
+      - SES_CRITICAL_BATCH_SIZE=50
+    depends_on:
+      - redis
+      - mongodb
+    volumes:
+      - ./backend:/app
+    networks:
+      - app-network
+    # Run multiple workers for different queues in one container
+    command: >
+      sh -c "
+        celery -A celery_app worker -l info -Q campaigns    --concurrency=4 -n campaigns@%h & 
+        celery -A celery_app worker -l info -Q cleanup      --concurrency=2 -n cleanup@%h & 
+        celery -A celery_app worker -l info -Q ses_events   --concurrency=8 -n ses_events@%h & 
+        celery -A celery_app worker -l info -Q ses_critical --concurrency=2 -n ses_critical@%h & 
+        celery -A celery_app worker -l info -Q analytics    --concurrency=2 -n analytics@%h & 
+        wait
+      "
+
+  # Celery Beat Scheduler (for periodic tasks)
+  celery_beat:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: celery-beat
+    restart: unless-stopped
+    environment:
+      - PYTHONPATH=/app
+      - REDIS_URL=redis://redis:6379/0
+      - MASTER_ENCRYPTION_KEY=${MASTER_ENCRYPTION_KEY}
+    depends_on:
+      - redis
+    volumes:
+      - ./backend:/app
+    networks:
+      - app-network
+    command: celery -A celery_app beat --loglevel=info
+
+  # Flower Monitoring
+  flower:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: flower-monitor
+    command: celery -A celery_app flower --port=5555 --broker=redis://redis:6379/0
+    ports:
+      - "5555:5555"
+    restart: unless-stopped
+    environment:
+      - PYTHONPATH=/app
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      - redis
+    volumes:
+      - ./backend:/app
+    networks:
+      - app-network
+
+  # React Frontend
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: react-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:5173"
+    environment:
+      - REACT_APP_API_URL=http://backend:8000
+      - CHOKIDAR_USEPOLLING=true
+    depends_on:
+      - backend
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    networks:
+      - app-network
+
+  # Performance-Tuned Redis
+  redis:
+    image: redis:7-alpine
+    container_name: email-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    command: redis-server --maxmemory 2gb --maxmemory-policy allkeys-lru --save "" --appendonly yes
+    networks:
+      - app-network
+
+volumes:
+  mongodb_data:
+  redis_data:
+
+networks:
+  app-network:
+    driver: bridge
+

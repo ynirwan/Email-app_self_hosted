@@ -1,0 +1,303 @@
+from fastapi import APIRouter, HTTPException, Path, status
+from pydantic import BaseModel, EmailStr, Field
+from typing import List, Optional
+from datetime import datetime
+from bson import ObjectId
+from database import get_campaigns_collection
+import logging
+
+logger = logging.getLogger(__name__)
+router = APIRouter()
+
+# Updated Campaign schemas to match frontend requirements
+class CampaignCreate(BaseModel):
+    title: str = Field(..., min_length=1, max_length=200)
+    subject: str = Field(..., min_length=1, max_length=300)
+    content: str = Field(..., min_length=1)
+    sender_name: Optional[str] = Field(default="", max_length=100)
+    sender_email: Optional[str] = Field(default="", max_length=100)
+    reply_to: Optional[str] = Field(default="", max_length=100)
+    target_lists: List[str] = Field(..., min_items=1)
+    status: Optional[str] = Field(default="draft")
+
+class CampaignUpdate(BaseModel):
+    title: str = Field(..., min_length=1, max_length=200)
+    subject: str = Field(..., min_length=1, max_length=300)
+    content: str = Field(..., min_length=1)
+    sender_name: Optional[str] = Field(default="", max_length=100)
+    sender_email: Optional[str] = Field(default="", max_length=100)
+    reply_to: Optional[str] = Field(default="", max_length=100)
+    target_lists: List[str] = Field(..., min_items=1)
+    status: Optional[str] = Field(default="draft")
+
+# Test email schema for future use
+class TestEmail(BaseModel):
+    to: EmailStr
+    subject: str
+    content: str
+    sender_name: Optional[str] = "Test Sender"
+    sender_email: Optional[str] = "test@yourcompany.com"
+
+@router.post("/campaigns")
+async def create_campaign(campaign: CampaignCreate):
+    try:
+        campaigns_collection = get_campaigns_collection()
+
+        campaign_dict = campaign.dict()
+        campaign_dict["created_at"] = datetime.utcnow()
+        campaign_dict["updated_at"] = datetime.utcnow()
+        
+        # Ensure status is set
+        if not campaign_dict.get("status"):
+            campaign_dict["status"] = "draft"
+
+        result = await campaigns_collection.insert_one(campaign_dict)
+
+        if not result.inserted_id:
+            raise HTTPException(status_code=500, detail="Failed to create campaign")
+
+        logger.info(f"Campaign created: {result.inserted_id}")
+
+        return {
+            "message": "Campaign created successfully",
+            "id": str(result.inserted_id),
+            "campaign": {
+                **campaign_dict,
+                "_id": str(result.inserted_id)
+            }
+        }
+
+    except Exception as e:
+        logger.error(f"Campaign creation failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to create campaign: {str(e)}")
+
+@router.get("/campaigns")
+async def list_campaigns():
+    try:
+        campaigns_collection = get_campaigns_collection()
+
+        campaigns = []
+        cursor = campaigns_collection.find().sort("created_at", -1)
+
+        async for doc in cursor:
+            doc["_id"] = str(doc["_id"])  # Convert ObjectId to string
+            campaigns.append(doc)
+
+        logger.info(f"Retrieved {len(campaigns)} campaigns")
+        return {
+            "campaigns": campaigns,
+            "total": len(campaigns)
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to list campaigns: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve campaigns: {str(e)}")
+
+@router.get("/campaigns/{campaign_id}")
+async def get_campaign(campaign_id: str):
+    """Get a single campaign by ID"""
+    try:
+        campaigns_collection = get_campaigns_collection()
+
+        # Validate ObjectId format
+        if not ObjectId.is_valid(campaign_id):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid campaign ID format"
+            )
+
+        campaign = await campaigns_collection.find_one({"_id": ObjectId(campaign_id)})
+
+        if not campaign:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Campaign not found"
+            )
+
+        # Convert ObjectId to string for JSON serialization
+        campaign["_id"] = str(campaign["_id"])
+        
+        logger.info(f"Retrieved campaign: {campaign_id}")
+        return campaign
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get campaign {campaign_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to retrieve campaign: {str(e)}"
+        )
+
+@router.put("/campaigns/{campaign_id}")
+async def update_campaign(campaign_id: str, campaign_data: CampaignUpdate):
+    """Update an existing campaign"""
+    try:
+        campaigns_collection = get_campaigns_collection()
+
+        # Validate ObjectId format
+        if not ObjectId.is_valid(campaign_id):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid campaign ID format"
+            )
+
+        # Check if campaign exists
+        existing_campaign = await campaigns_collection.find_one({"_id": ObjectId(campaign_id)})
+        if not existing_campaign:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Campaign not found"
+            )
+
+        # Prepare update data
+        update_data = campaign_data.dict()
+        update_data["updated_at"] = datetime.utcnow()
+        
+        # Keep existing created_at and sent_at if they exist
+        if "created_at" in existing_campaign:
+            update_data["created_at"] = existing_campaign["created_at"]
+        if "sent_at" in existing_campaign:
+            update_data["sent_at"] = existing_campaign["sent_at"]
+
+        # Update campaign in database
+        result = await campaigns_collection.update_one(
+            {"_id": ObjectId(campaign_id)},
+            {"$set": update_data}
+        )
+
+        if result.matched_count == 0:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Campaign not found"
+            )
+
+        # Fetch updated campaign
+        updated_campaign = await campaigns_collection.find_one({"_id": ObjectId(campaign_id)})
+        updated_campaign["_id"] = str(updated_campaign["_id"])
+
+        logger.info(f"Campaign updated: {campaign_id}")
+        
+        return {
+            "message": "Campaign updated successfully",
+            "campaign": updated_campaign
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to update campaign {campaign_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to update campaign: {str(e)}"
+        )
+
+@router.delete("/campaigns/{campaign_id}")
+async def delete_campaign(campaign_id: str):
+    """Delete a campaign"""
+    try:
+        campaigns_collection = get_campaigns_collection()
+
+        # Validate ObjectId format
+        if not ObjectId.is_valid(campaign_id):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid campaign ID format"
+            )
+
+        # Check if campaign exists
+        campaign = await campaigns_collection.find_one({"_id": ObjectId(campaign_id)})
+        if not campaign:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Campaign not found"
+            )
+
+        # Delete campaign
+        result = await campaigns_collection.delete_one({"_id": ObjectId(campaign_id)})
+
+        if result.deleted_count == 0:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to delete campaign"
+            )
+
+        logger.info(f"Campaign deleted: {campaign_id}")
+        
+        return {
+            "message": "Campaign deleted successfully",
+            "deleted_campaign_id": campaign_id
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to delete campaign {campaign_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to delete campaign: {str(e)}"
+        )
+
+# Placeholder for future test email functionality
+@router.post("/campaigns/send-test")
+async def send_test_email(test_data: TestEmail):
+    """Send a test email - placeholder for future implementation"""
+    try:
+        # For now, just return success message
+        # You can implement actual email sending later
+        logger.info(f"Test email request for: {test_data.to}")
+        
+        # Simulate success (remove this when implementing real email sending)
+        return {
+            "message": f"Test email functionality not implemented yet. Would send to {test_data.to}",
+            "recipient": test_data.to,
+            "status": "placeholder"
+        }
+        
+    except Exception as e:
+        logger.error(f"Error in test email endpoint: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Test email error: {str(e)}"
+        )
+
+# Placeholder for future campaign sending functionality
+@router.post("/campaigns/{campaign_id}/send")
+async def send_campaign(campaign_id: str):
+    """Send a campaign - placeholder for future implementation"""
+    try:
+        campaigns_collection = get_campaigns_collection()
+
+        # Validate ObjectId format
+        if not ObjectId.is_valid(campaign_id):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid campaign ID format"
+            )
+
+        # Check if campaign exists
+        campaign = await campaigns_collection.find_one({"_id": ObjectId(campaign_id)})
+        if not campaign:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Campaign not found"
+            )
+
+        logger.info(f"Send campaign request for: {campaign_id}")
+        
+        # For now, just return not implemented message
+        return {
+            "message": "Campaign sending functionality not implemented yet",
+            "campaign_id": campaign_id,
+            "status": "placeholder"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in send campaign endpoint: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Send campaign error: {str(e)}"
+        )
+

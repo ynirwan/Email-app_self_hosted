@@ -1,0 +1,184 @@
+import React from 'react';
+
+export default function ZeniPostLogo({ size = 80, variant = 'animated' }) {
+  // Scale all dimensions based on size prop
+  const scale = size / 80;
+  const dimensions = {
+    container: size,
+    outerRing: size * 1.025,
+    innerRing: size * 0.95,
+    envelope: { w: size * 0.6, h: size * 0.4 },
+    flap: { border: size * 0.15 },
+    dots: { container: size * 0.25, dot: size * 0.0125 }
+  };
+
+  return (
+    <div className="flex items-center space-x-4 relative">
+      {/* Optimized CSS - only load once */}
+      <style>{`
+        @keyframes zeni-ring-pulse {
+          0%, 100% { transform: scale(1); opacity: 0.95; }
+          50% { transform: scale(1.03); opacity: 0.85; }
+        }
+        @keyframes zeni-border-rotate {
+          0% { transform: rotate(0deg); }
+          100% { transform: rotate(360deg); }
+        }
+        @keyframes zeni-envelope-float {
+          0%, 100% { transform: translateY(0) rotateZ(0deg); }
+          50% { transform: translateY(-2px) rotateZ(0.5deg); }
+        }
+        @keyframes zeni-flap-glow {
+          0% { filter: brightness(1); opacity: 0.9; }
+          100% { filter: brightness(1.15); opacity: 1; }
+        }
+        @keyframes zeni-dot-send {
+          0% { opacity: 0; transform: scale(0) translate(0, 0); }
+          40% { opacity: 1; transform: scale(1) translate(${scale * 8}px, ${scale * -8}px); }
+          100% { opacity: 0; transform: scale(0.3) translate(${scale * 16}px, ${scale * -16}px); }
+        }
+        @keyframes zeni-text-glow {
+          0% { filter: brightness(1); }
+          100% { filter: brightness(1.1); }
+        }
+        .zeni-pause-animations * {
+          animation-play-state: paused !important;
+        }
+      `}</style>
+
+      {/* Logo Icon Container */}
+      <div 
+        className={`relative flex items-center justify-center ${variant === 'static' ? 'zeni-pause-animations' : ''}`}
+        style={{ width: dimensions.container, height: dimensions.container }}
+      >
+        {/* Animated Border Ring */}
+        <div
+          className="absolute rounded-full"
+          style={{
+            width: dimensions.outerRing,
+            height: dimensions.outerRing,
+            background: 'conic-gradient(from 0deg, #4facfe, #00f2fe, #667eea, #764ba2, #4facfe)',
+            animation: variant === 'animated' ? 'zeni-border-rotate 6s linear infinite' : 'none',
+            zIndex: 1,
+          }}
+        />
+        
+        {/* Inner White Ring */}
+        <div
+          className="absolute rounded-full bg-blue shadow-2xl border border-white-500"
+          style={{
+            width: dimensions.innerRing,
+            height: dimensions.innerRing,
+            animation: variant === 'animated' ? 'zeni-ring-pulse 4s ease-in-out infinite' : 'none',
+            zIndex: 2,
+          }}
+        />
+        
+        {/* Email Envelope */}
+        <div
+          className="relative bg-white rounded shadow-lg border border-gray-200 flex items-center justify-center overflow-hidden"
+          style={{
+            width: dimensions.envelope.w,
+            height: dimensions.envelope.h,
+            animation: variant === 'animated' ? 'zeni-envelope-float 3s ease-in-out infinite' : 'none',
+            zIndex: 3,
+          }}
+        >
+          {/* Envelope Background Gradient */}
+          <div className="absolute inset-0 bg-gradient-to-br from-blue-50 via-white to-cyan-50 rounded" />
+          
+          {/* Envelope Flap - Fixed gradient colors */}
+          <div
+            className="absolute border-l-transparent border-r-transparent"
+            style={{
+              top: 0,
+              left: '50%',
+              transform: 'translateX(-50%)',
+              borderLeftWidth: dimensions.flap.border,
+              borderRightWidth: dimensions.flap.border,
+              borderTopWidth: dimensions.flap.border * 0.6,
+              borderTopColor: '#4facfe',
+              animation: variant === 'animated' ? 'zeni-flap-glow 2.5s ease-in-out infinite alternate' : 'none',
+              filter: 'drop-shadow(0 1px 2px rgba(0,0,0,0.1))',
+            }}
+          />
+          
+          {/* Subtle mail lines */}
+          <div className="absolute inset-2 flex flex-col justify-center space-y-0.5">
+            <div className="h-0.5 bg-gray-200 rounded w-3/4"></div>
+            <div className="h-0.5 bg-gray-200 rounded w-1/2"></div>
+          </div>
+        </div>
+
+        {/* Send Indicator Dots - Refined */}
+        <div 
+          className="absolute flex flex-col space-y-1"
+          style={{ 
+            top: dimensions.dots.container * -0.5, 
+            right: dimensions.dots.container * -0.5,
+            width: dimensions.dots.container,
+            height: dimensions.dots.container 
+          }}
+        >
+          {[
+            { color: '#4facfe', delay: '0s' },
+            { color: '#00f2fe', delay: '0.3s' },
+            { color: '#667eea', delay: '0.6s' }
+          ].map((dot, i) => (
+            <div
+              key={i}
+              className="rounded-full shadow-sm"
+              style={{
+                width: dimensions.dots.dot * 8,
+                height: dimensions.dots.dot * 8,
+                backgroundColor: dot.color,
+                animation: variant === 'animated' ? `zeni-dot-send 2.5s ease-in-out infinite` : 'none',
+                animationDelay: dot.delay,
+                position: 'absolute',
+                top: i * (dimensions.dots.dot * 6),
+                left: i % 2 === 0 ? 0 : dimensions.dots.dot * 4,
+              }}
+            />
+          ))}
+        </div>
+      </div>
+
+	  <div className="flex flex-col items-start">
+  {/* Typography */}
+  <div className="font-bold flex items-baseline" style={{ fontSize: scale * 36, letterSpacing: scale * -1 }}>
+    {/* Zeni with bouncing 'i' */}
+    <span className="text-white drop-shadow-sm">Zen</span>
+    <span
+      className="text-green-500 inline-block"
+      style={{
+        animation: 'bounceI 1s ease-in-out infinite'
+      }}
+    >
+      i
+    </span>
+    <span className="text-white drop-shadow-sm">Post</span>
+  </div>
+
+        {/* Professional Tagline */}
+
+  {/* Tagline */}
+  <div
+    className="text-white/80 font-medium tracking-wide mt-1"
+    style={{
+      fontSize: scale * 14
+    }}
+  >
+	  Find Your Email Zen
+  </div>
+	    {/* Custom bouncing animation */}
+  <style>{`
+    @keyframes bounceI {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-6px); }
+    }
+  `}</style>
+      </div>
+    </div>
+  );
+}
+
