@@ -682,7 +682,7 @@ def get_subscribers_for_campaign(campaign_id: str, batch_size: int, last_id: str
         target_segments = campaign.get("target_segments", [])
         
         # Build query
-        query = {"email": {"$exists": True, "$ne": ""}}
+        query = {"email": {"$exists": True, "$ne": ""}, "status": "active"}
         
         # Add list filter
         if target_lists:

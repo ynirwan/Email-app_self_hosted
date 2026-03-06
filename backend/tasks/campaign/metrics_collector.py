@@ -267,11 +267,11 @@ class MetricsCollector:
     def collect_database_metrics(self) -> Dict[str, Any]:
         """Collect database performance metrics"""
         try:
-            from database import initialize_sync_client
+            from database import get_sync_database
             
             # Get database connection
-            client = initialize_sync_client.get_sync_client()
-            db = client.email_marketing
+            db = get_sync_database()
+            client = db.client
             
             db_metrics = {
                 "timestamp": datetime.utcnow().isoformat(),
