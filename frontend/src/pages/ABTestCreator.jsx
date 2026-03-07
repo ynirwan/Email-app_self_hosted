@@ -37,7 +37,9 @@ const ABTestCreator = () => {
     ],
     split_percentage: 50,
     sample_size: 1000,
-    winner_criteria: 'open_rate'
+    winner_criteria: 'open_rate',
+    test_duration_hours: 24,
+    auto_send_winner: true,
   });
 
   useEffect(() => {
@@ -136,6 +138,8 @@ const ABTestCreator = () => {
       return 'Variant B reply-to address is required';
 
     if (testConfig.sample_size < 100) return 'Sample size must be at least 100';
+    if (!testConfig.test_duration_hours || testConfig.test_duration_hours < 1)
+      return 'Test duration must be at least 1 hour';
     return null;
   };
 
@@ -149,7 +153,11 @@ const ABTestCreator = () => {
 
     setLoading(true);
     try {
-      await API.post('/ab-tests', testConfig);
+      await API.post('/ab-tests', {
+        ...testConfig,
+        test_duration_hours: testConfig.test_duration_hours,
+        auto_send_winner: testConfig.auto_send_winner,
+      });
       navigate('/ab-testing');
     } catch (err) {
       setError(err.response?.data?.detail || 'Failed to create A/B test');
@@ -162,10 +170,10 @@ const ABTestCreator = () => {
     const variant = testConfig.variants[variantIndex];
     const variantLabel = isControl ? 'Variant A (Control)' : 'Variant B (Test)';
     const fieldMap = {
-      subject_line: { field: 'subject', label: 'Subject Line', type: 'text' },
-      sender_name: { field: 'sender_name', label: 'Sender Name', type: 'text' },
-      sender_email: { field: 'sender_email', label: 'Sender Email', type: 'email' },
-      reply_to: { field: 'reply_to', label: 'Reply-To Address', type: 'email' }
+      subject_line: { field: 'subject',      label: 'Subject Line',     type: 'text'  },
+      sender_name:  { field: 'sender_name',  label: 'Sender Name',      type: 'text'  },
+      sender_email: { field: 'sender_email', label: 'Sender Email',      type: 'email' },
+      reply_to:     { field: 'reply_to',     label: 'Reply-To Address',  type: 'email' }
     };
     const config = fieldMap[testConfig.test_type];
 
@@ -213,6 +221,7 @@ const ABTestCreator = () => {
       </div>
 
       <div className="space-y-8">
+
         {/* Test Name */}
         <div className="bg-white border rounded-lg p-6">
           <label className="block text-sm font-medium text-gray-700 mb-2">Test Name *</label>
@@ -227,45 +236,50 @@ const ABTestCreator = () => {
 
         {/* Target Lists */}
         <div className="bg-white border rounded-lg p-6">
-          <h3 className="text-lg font-semibold mb-4">Target Lists *</h3>
+          <h3 className="text-lg font-semibold mb-1">Target Lists *</h3>
           <p className="text-sm text-gray-500 mb-4">Select subscriber lists for this A/B test</p>
           {lists.length === 0 ? (
             <p className="text-gray-500 text-sm">No subscriber lists found. Upload subscribers first.</p>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              {lists.map(list => (
-                <label
-                  key={list.name}
-                  className={`flex items-center justify-between p-3 border rounded-lg cursor-pointer transition-colors ${
-                    testConfig.target_lists.includes(list.name)
-                      ? 'border-blue-500 bg-blue-50'
-                      : 'border-gray-200 hover:bg-gray-50'
-                  }`}
-                >
-                  <div className="flex items-center gap-3">
-                    <input
-                      type="checkbox"
-                      checked={testConfig.target_lists.includes(list.name)}
-                      onChange={() => handleListToggle(list.name)}
-                      className="h-4 w-4 text-blue-600 rounded"
-                    />
-                    <span className="font-medium text-gray-900">{list.name}</span>
-                  </div>
-                  <span className="text-sm text-gray-500">{list.count.toLocaleString()} subscribers</span>
-                </label>
-              ))}
-            </div>
-          )}
-          {testConfig.target_lists.length > 0 && (
-            <div className="mt-4 p-3 bg-blue-50 rounded-lg text-sm text-blue-700">
-              Total selected: {totalSelectedSubscribers.toLocaleString()} active subscribers across {testConfig.target_lists.length} list(s)
-            </div>
+            <>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {lists.map(list => (
+                  <label
+                    key={list.name}
+                    className={`flex items-center justify-between p-3 border rounded-lg cursor-pointer transition-colors ${
+                      testConfig.target_lists.includes(list.name)
+                        ? 'bg-blue-50 border-blue-400'
+                        : 'bg-white border-gray-200 hover:bg-gray-50'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={testConfig.target_lists.includes(list.name)}
+                        onChange={() => handleListToggle(list.name)}
+                        className="h-4 w-4 text-blue-600 rounded border-gray-300"
+                      />
+                      <span className="text-sm font-medium text-gray-800">{list.name}</span>
+                    </div>
+                    <span className="text-xs text-gray-500 bg-gray-100 px-2 py-0.5 rounded-full">
+                      {list.count.toLocaleString()} subscribers
+                    </span>
+                  </label>
+                ))}
+              </div>
+              {testConfig.target_lists.length > 0 && (
+                <p className="mt-3 text-sm text-blue-700 font-medium">
+                  ✓ {totalSelectedSubscribers.toLocaleString()} total subscribers selected
+                </p>
+              )}
+            </>
           )}
         </div>
 
-        {/* Template Selection */}
+        {/* Template */}
         <div className="bg-white border rounded-lg p-6">
-          <h3 className="text-lg font-semibold mb-4">Email Template *</h3>
+          <h3 className="text-lg font-semibold mb-1">Email Template *</h3>
+          <p className="text-sm text-gray-500 mb-4">Select the base template for this test</p>
           {templates.length === 0 ? (
             <p className="text-gray-500 text-sm">No templates found. Create a template first.</p>
           ) : (
@@ -362,6 +376,8 @@ const ABTestCreator = () => {
         <div className="bg-white border rounded-lg p-6">
           <h3 className="text-lg font-semibold mb-4">Test Configuration</h3>
           <div className="space-y-6">
+
+            {/* Test Type */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">Test Type</label>
               <select
@@ -376,6 +392,7 @@ const ABTestCreator = () => {
               </select>
             </div>
 
+            {/* Variants */}
             <div>
               <h4 className="text-md font-semibold text-gray-900 mb-4">Variants</h4>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -384,6 +401,7 @@ const ABTestCreator = () => {
               </div>
             </div>
 
+            {/* Split / Sample / Criteria */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -397,6 +415,10 @@ const ABTestCreator = () => {
                   onChange={(e) => setTestConfig({ ...testConfig, split_percentage: parseInt(e.target.value) })}
                   className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
                 />
+                <div className="flex justify-between text-xs text-gray-400 mt-1">
+                  <span>A: {testConfig.split_percentage}%</span>
+                  <span>B: {100 - testConfig.split_percentage}%</span>
+                </div>
               </div>
 
               <div>
@@ -409,6 +431,11 @@ const ABTestCreator = () => {
                   max={totalSelectedSubscribers || 100000}
                   className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
+                {totalSelectedSubscribers > 0 && (
+                  <p className="text-xs text-gray-500 mt-1">
+                    Max: {totalSelectedSubscribers.toLocaleString()} subscribers
+                  </p>
+                )}
               </div>
 
               <div>
@@ -423,12 +450,67 @@ const ABTestCreator = () => {
                 </select>
               </div>
             </div>
+
+            {/* ── NEW: Test Duration ── */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Test Duration
+                <span className="ml-2 text-xs font-normal text-gray-500">
+                  Winner is auto-declared after this period
+                </span>
+              </label>
+              <select
+                value={testConfig.test_duration_hours}
+                onChange={(e) => setTestConfig({ ...testConfig, test_duration_hours: parseInt(e.target.value) })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value={1}>1 hour</option>
+                <option value={2}>2 hours</option>
+                <option value={4}>4 hours</option>
+                <option value={8}>8 hours</option>
+                <option value={12}>12 hours</option>
+                <option value={24}>24 hours (recommended)</option>
+                <option value={48}>48 hours</option>
+                <option value={72}>72 hours</option>
+                <option value={168}>7 days</option>
+              </select>
+            </div>
+
+            {/* ── NEW: Auto-send Winner ── */}
+            <div
+              className={`flex items-start gap-3 p-4 rounded-lg border transition-colors cursor-pointer ${
+                testConfig.auto_send_winner
+                  ? 'bg-green-50 border-green-300'
+                  : 'bg-gray-50 border-gray-200'
+              }`}
+              onClick={() => setTestConfig(prev => ({ ...prev, auto_send_winner: !prev.auto_send_winner }))}
+            >
+              <input
+                id="auto_send_winner"
+                type="checkbox"
+                checked={testConfig.auto_send_winner}
+                onChange={(e) => setTestConfig({ ...testConfig, auto_send_winner: e.target.checked })}
+                className="mt-0.5 h-4 w-4 text-green-600 rounded border-gray-300 cursor-pointer"
+                onClick={(e) => e.stopPropagation()}
+              />
+              <div>
+                <label htmlFor="auto_send_winner" className="text-sm font-medium text-gray-800 cursor-pointer">
+                  Auto-send winning variant to remaining subscribers
+                </label>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  When the test ends, the winning variant is automatically applied to the campaign and sent
+                  to all subscribers who were <strong>not</strong> part of the A/B test sample.
+                  If disabled, you can trigger the send manually from the results page.
+                </p>
+              </div>
+            </div>
+
           </div>
         </div>
 
         {error && (
           <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-            <p className="text-sm text-red-800">{error}</p>
+            <p className="text-sm text-red-800">⚠️ {error}</p>
           </div>
         )}
 
@@ -447,6 +529,7 @@ const ABTestCreator = () => {
             {loading ? 'Creating...' : 'Create A/B Test'}
           </button>
         </div>
+
       </div>
     </div>
   );
