@@ -1,0 +1,164 @@
+# A/B Testing — Missing Duration & Winner Declaration Fix
+## Summary of all changes required
+
+---
+
+## Problem
+The A/B test system had no mechanism to:
+1. Configure how long the test should run
+2. Automatically declare a winner when time expires
+3. Auto-send the winning variant to remaining (non-tested) subscribers
+4. A `/complete` API endpoint that the frontend was already calling but didn't exist
+
+---
+
+## Files to change
+
+### 1. `backend/models/ab_test.py`
+Add two new fields to `ABTestSchema`:
+
+```python
+test_duration_hours: Optional[int] = 24   # 1–168 hours
+auto_send_winner: bool = True             # send remaining after winner declared
+```
+
+---
+
+### 2. `backend/routes/ab_testing.py`
+
+**a) Update `ABTestCreate` Pydantic model** — add:
+```python
+test_duration_hours: Optional[int] = Field(default=24, ge=1, le=168)
+auto_send_winner: bool = True
+```
+
+**b) Update `create_ab_test` route** — persist new fields in `test_doc`:
+```python
+"test_duration_hours": test.test_duration_hours,
+"auto_send_winner":    test.auto_send_winner,
+```
+
+**c) Update `get_ab_test_results` route** — add to `response_data`:
+```python
+"test_duration_hours": test.get("test_duration_hours"),
+"auto_send_winner":    test.get("auto_send_winner", True),
+"winner_variant":      test.get("winner_variant"),
+"campaign_id":         str(test["campaign_id"]) if test.get("campaign_id") else None,
+```
+
+**d) Add `calculate_test_results_sync()` helper** (sync for Celery):
+```python
+def calculate_test_results_sync(test_id: str) -> Dict:
+    # same logic as calculate_test_results() but using sync Motor/pymongo
+    # see tasks_ab_testing_additions.py for full implementation
+```
+
+**e) Add `apply_winner_to_campaign_sync()` helper**:
+- Updates campaign subject/content/template with winner variant config
+- Calls `send_campaign_batch.delay(campaign_id=...)`
+
+**f) Add `POST /ab-tests/{test_id}/complete` route**:
+```python
+@router.post("/ab-tests/{test_id}/complete")
+async def complete_ab_test(test_id: str, request: CompleteTestRequest):
+    # 1. Validate test is in "running" status
+    # 2. Calculate results + determine winner
+    # 3. Set status="completed", winner_variant, end_date
+    # 4. If apply_to_campaign=True: fire auto_complete_ab_test.delay()
+    # 5. Return winner summary
+```
+
+Full code for d/e/f is in `routes_ab_testing_additions.py`.
+
+---
+
+### 3. `backend/tasks/ab_testing.py`
+
+**Add two new Celery tasks** (from `tasks_ab_testing_additions.py`):
+
+**`check_ab_test_expiry`** (periodic, every 15 min):
+- Queries all `status="running"` A/B tests
+- Checks `start_date + test_duration_hours` vs `now`
+- Calls `auto_complete_ab_test.delay()` for expired tests
+
+**`auto_complete_ab_test`** (async worker):
+- Calculates winner using `calculate_test_results_sync()`
+- Marks test `status="completed"` with `winner_variant`
+- Calls `apply_winner_to_campaign_sync()` if `apply_to_campaign=True`
+
+---
+
+### 4. `backend/celery_app.py`
+
+**a) Add task routes**:
+```python
+'tasks.check_ab_test_expiry':      {'queue': 'ab_tests', 'priority': 6},
+'tasks.auto_complete_ab_test':     {'queue': 'ab_tests', 'priority': 7},
+'tasks.send_ab_test_batch':        {'queue': 'ab_tests', 'priority': 6},
+'tasks.send_ab_test_single_email': {'queue': 'ab_tests', 'priority': 5},
+```
+
+**b) Add beat schedule entry**:
+```python
+beat_schedule['check-ab-test-expiry'] = {
+    'task': 'tasks.check_ab_test_expiry',
+    'schedule': timedelta(minutes=15),
+    'options': {'queue': 'ab_tests', 'priority': 6}
+}
+```
+
+**c) Ensure `tasks.ab_testing` is in `include=[ ... ]` list**.
+
+---
+
+### 5. `frontend/src/pages/ABTestCreator.jsx`
+
+**a) Update initial state**:
+```js
+test_duration_hours: 24,
+auto_send_winner: true,
+```
+
+**b) Add two form fields after "Winner Criteria" dropdown**:
+- `<select>` for duration (1h / 2h / 4h / 8h / 12h / 24h / 48h / 72h / 7d)
+- Checkbox for "Auto-send winner to remaining subscribers"
+
+**c) Include in API payload**:
+```js
+test_duration_hours: testConfig.test_duration_hours,
+auto_send_winner:    testConfig.auto_send_winner,
+```
+
+---
+
+### 6. `frontend/src/pages/ABTestingPage.jsx`
+
+**Add `getTimeRemaining()` helper** and render in results view:
+- ⏱ amber badge showing `Xh Ym remaining` (or `Expired — winner declaration pending`)
+- 🚀 green badge if `auto_send_winner` is enabled
+
+Full JSX is in `ABTestingPage_results_additions.jsx`.
+
+---
+
+## Flow after fix
+
+```
+Create A/B test
+  └─ test_duration_hours = 24, auto_send_winner = true
+
+Start test (sends variant A/B emails to sample)
+  └─ status = "running", start_date = now
+
+Celery Beat (every 15 min) → check_ab_test_expiry
+  └─ elapsed >= test_duration_hours?
+       └─ YES → auto_complete_ab_test.delay()
+                 ├─ calculate winner
+                 ├─ status = "completed"
+                 └─ auto_send_winner=true?
+                      └─ apply_winner_to_campaign_sync()
+                           ├─ update campaign subject/content
+                           └─ send_campaign_batch.delay()  ← sends to remaining subscribers
+
+OR manual: POST /ab-tests/{id}/complete → same logic
+```

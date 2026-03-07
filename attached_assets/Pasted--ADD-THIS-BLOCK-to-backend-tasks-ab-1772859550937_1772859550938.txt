@@ -1,0 +1,123 @@
+# ============================================================
+# ADD THIS BLOCK to backend/tasks/ab_testing.py
+# (at the bottom, after existing tasks)
+# ============================================================
+
+@celery_app.task(
+    bind=True,
+    queue="ab_tests",
+    name="tasks.check_ab_test_expiry"
+)
+def check_ab_test_expiry(self):
+    """
+    Celery Beat periodic task — runs every 15 minutes.
+    Finds running A/B tests whose test_duration_hours has elapsed,
+    declares the winner, and optionally auto-sends to remaining subscribers.
+    """
+    try:
+        ab_tests_collection = get_sync_ab_tests_collection()
+
+        # Find all running tests
+        running_tests = list(ab_tests_collection.find({"status": "running"}))
+        logger.info(f"[AB Expiry] Checking {len(running_tests)} running tests")
+
+        now = datetime.utcnow()
+
+        for test in running_tests:
+            test_id = str(test["_id"])
+            start_date = test.get("start_date")
+            duration_hours = test.get("test_duration_hours")
+
+            # Skip if no duration configured or not started yet
+            if not start_date or not duration_hours:
+                continue
+
+            elapsed_hours = (now - start_date).total_seconds() / 3600
+            if elapsed_hours < duration_hours:
+                logger.debug(
+                    f"[AB Expiry] Test {test_id} not yet expired "
+                    f"({elapsed_hours:.1f}h / {duration_hours}h)"
+                )
+                continue
+
+            logger.info(f"[AB Expiry] Test {test_id} expired — auto-completing")
+
+            # Delegate to the complete logic
+            auto_complete_ab_test.delay(
+                test_id=test_id,
+                apply_to_campaign=test.get("auto_send_winner", True)
+            )
+
+        return {"checked": len(running_tests)}
+
+    except Exception as e:
+        logger.error(f"[AB Expiry] check_ab_test_expiry failed: {e}")
+        return {"error": str(e)}
+
+
+@celery_app.task(
+    bind=True,
+    queue="ab_tests",
+    name="tasks.auto_complete_ab_test"
+)
+def auto_complete_ab_test(self, test_id: str, apply_to_campaign: bool = True):
+    """
+    Declare winner for an expired A/B test and optionally
+    trigger the campaign send to remaining subscribers.
+    Called by check_ab_test_expiry or manually via API.
+    """
+    try:
+        from routes.ab_testing import (
+            calculate_test_results_sync,
+            determine_winner,
+            apply_winner_to_campaign_sync,
+        )
+
+        ab_tests_collection = get_sync_ab_tests_collection()
+        test = ab_tests_collection.find_one({"_id": ObjectId(test_id)})
+        if not test:
+            logger.error(f"[AB Complete] Test {test_id} not found")
+            return {"success": False, "error": "not_found"}
+
+        if test["status"] == "completed":
+            logger.info(f"[AB Complete] Test {test_id} already completed")
+            return {"success": True, "skipped": True}
+
+        # Calculate results & winner
+        results = calculate_test_results_sync(test_id)
+        winner = determine_winner(results, test.get("winner_criteria", "open_rate"))
+
+        # Mark test as completed
+        ab_tests_collection.update_one(
+            {"_id": ObjectId(test_id)},
+            {
+                "$set": {
+                    "status": "completed",
+                    "end_date": datetime.utcnow(),
+                    "winner_variant": winner.get("winner"),
+                    "winner_improvement": winner.get("improvement", 0),
+                    "updated_at": datetime.utcnow(),
+                }
+            }
+        )
+
+        logger.info(
+            f"[AB Complete] Test {test_id} completed — "
+            f"winner: {winner.get('winner')}, improvement: {winner.get('improvement')}%"
+        )
+
+        # Optionally apply winner to campaign and send to remaining subscribers
+        if apply_to_campaign and test.get("campaign_id") and winner.get("winner") != "TIE":
+            apply_winner_to_campaign_sync(test_id, test["campaign_id"], winner["winner"])
+
+        return {
+            "success": True,
+            "test_id": test_id,
+            "winner": winner.get("winner"),
+            "improvement": winner.get("improvement"),
+            "campaign_updated": apply_to_campaign,
+        }
+
+    except Exception as e:
+        logger.error(f"[AB Complete] auto_complete_ab_test failed for {test_id}: {e}")
+        return {"success": False, "error": str(e)}

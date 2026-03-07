@@ -1,0 +1,215 @@
+# ============================================================
+# CHANGES TO backend/routes/ab_testing.py
+# ============================================================
+#
+# 1. Update ABTestCreate Pydantic model (add new fields)
+# 2. Add calculate_test_results_sync() helper
+# 3. Add apply_winner_to_campaign_sync() helper
+# 4. Add POST /ab-tests/{test_id}/complete route
+# ============================================================
+
+
+# ── 1. UPDATE ABTestCreate model ───────────────────────────
+# Replace your existing ABTestCreate class with this:
+
+from pydantic import BaseModel, Field
+from typing import List, Optional, Dict
+
+class ABTestCreate(BaseModel):
+    campaign_id: str
+    test_name: str
+    test_type: str
+    variants: List[Dict]
+    target_lists: List[str]
+    split_percentage: int = 50
+    sample_size: int = 100
+    winner_criteria: str = "open_rate"
+    # ── NEW FIELDS ──────────────────────────────────────────
+    test_duration_hours: Optional[int] = Field(
+        default=24,
+        ge=1,
+        le=168,         # max 7 days
+        description="Hours to run the test before auto-declaring a winner"
+    )
+    auto_send_winner: bool = Field(
+        default=True,
+        description="Automatically send the winning variant to remaining subscribers"
+    )
+    # ────────────────────────────────────────────────────────
+    subject: Optional[str] = None
+    sender_name: Optional[str] = None
+    sender_email: Optional[str] = None
+    template_id: Optional[str] = None
+    content: Optional[str] = None
+
+
+class CompleteTestRequest(BaseModel):
+    apply_to_campaign: bool = True
+
+
+# ── 2. ADD sync helper — calculate_test_results_sync() ─────
+# This is the synchronous version used by Celery tasks.
+# Add it alongside your existing async calculate_test_results().
+
+def calculate_test_results_sync(test_id: str) -> Dict:
+    """Synchronous version for use inside Celery tasks."""
+    from database import get_sync_ab_test_results_collection
+    ab_test_results_collection = get_sync_ab_test_results_collection()
+
+    results_a = list(ab_test_results_collection.find(
+        {"test_id": test_id, "variant": "A"}
+    ))
+    results_b = list(ab_test_results_collection.find(
+        {"test_id": test_id, "variant": "B"}
+    ))
+
+    def calculate_metrics(results):
+        sent   = len(results)
+        opened = sum(1 for r in results if r.get("email_opened"))
+        clicked = sum(1 for r in results if r.get("email_clicked"))
+        total_opened = opened or 1   # avoid /0
+        return {
+            "sent":       sent,
+            "opened":     opened,
+            "clicked":    clicked,
+            "open_rate":  round((opened  / sent * 100), 2) if sent else 0,
+            "click_rate": round((clicked / sent * 100), 2) if sent else 0,
+        }
+
+    return {
+        "variant_a": calculate_metrics(results_a),
+        "variant_b": calculate_metrics(results_b),
+    }
+
+
+# ── 3. ADD sync helper — apply_winner_to_campaign_sync() ───
+# Updates the campaign with winner variant config and triggers send.
+
+def apply_winner_to_campaign_sync(test_id: str, campaign_id: str, winner_variant: str):
+    """
+    Sync version: update campaign with winner's subject/content then
+    trigger send_campaign_batch for remaining subscribers.
+    """
+    from database import (
+        get_sync_ab_tests_collection,
+        get_sync_campaigns_collection,
+    )
+    from bson import ObjectId
+    from tasks.email_campaign_tasks import send_campaign_batch
+    import logging
+
+    logger = logging.getLogger(__name__)
+
+    ab_tests_collection  = get_sync_ab_tests_collection()
+    campaigns_collection = get_sync_campaigns_collection()
+
+    test = ab_tests_collection.find_one({"_id": ObjectId(test_id)})
+    if not test or not ObjectId.is_valid(campaign_id):
+        logger.error(f"apply_winner: invalid test/campaign ids {test_id}/{campaign_id}")
+        return
+
+    # Identify winning variant config (variants[0] = A, variants[1] = B)
+    variant_index = 0 if winner_variant == "A" else 1
+    variants = test.get("variants", [])
+    if variant_index >= len(variants):
+        logger.error(f"apply_winner: variant index {variant_index} out of range")
+        return
+
+    winning_config = variants[variant_index]
+
+    # Build update dict from winner config
+    update_fields = {"winner_variant_applied": winner_variant}
+    if "subject" in winning_config:
+        update_fields["subject"] = winning_config["subject"]
+    if "sender_name" in winning_config:
+        update_fields["sender_name"] = winning_config["sender_name"]
+    if "content" in winning_config:
+        update_fields["content"] = winning_config["content"]
+    if "template_id" in winning_config:
+        update_fields["template_id"] = winning_config["template_id"]
+
+    campaigns_collection.update_one(
+        {"_id": ObjectId(campaign_id)},
+        {"$set": update_fields}
+    )
+    logger.info(f"apply_winner: campaign {campaign_id} updated with variant {winner_variant}")
+
+    # Trigger send to remaining subscribers
+    # Remaining subscribers = all in target lists EXCEPT those already in the A/B test
+    send_campaign_batch.delay(campaign_id=campaign_id)
+    logger.info(f"apply_winner: send_campaign_batch triggered for campaign {campaign_id}")
+
+
+# ── 4. ADD POST /ab-tests/{test_id}/complete route ─────────
+# Add this route inside the router in backend/routes/ab_testing.py
+
+"""
+@router.post("/ab-tests/{test_id}/complete")
+async def complete_ab_test(test_id: str, request: CompleteTestRequest):
+    try:
+        ab_tests_collection = get_ab_tests_collection()
+
+        if not ObjectId.is_valid(test_id):
+            raise HTTPException(status_code=400, detail="Invalid test ID")
+
+        test = await ab_tests_collection.find_one({"_id": ObjectId(test_id)})
+        if not test:
+            raise HTTPException(status_code=404, detail="A/B test not found")
+
+        if test["status"] == "completed":
+            raise HTTPException(status_code=400, detail="Test is already completed")
+
+        if test["status"] != "running":
+            raise HTTPException(
+                status_code=400,
+                detail=f"Test must be running to complete (current: {test['status']})"
+            )
+
+        # Calculate winner
+        results  = await calculate_test_results(test_id)
+        winner   = determine_winner(results, test.get("winner_criteria", "open_rate"))
+
+        # Mark completed
+        await ab_tests_collection.update_one(
+            {"_id": ObjectId(test_id)},
+            {
+                "$set": {
+                    "status": TestStatus.COMPLETED,
+                    "end_date": datetime.utcnow(),
+                    "winner_variant": winner.get("winner"),
+                    "winner_improvement": winner.get("improvement", 0),
+                    "updated_at": datetime.utcnow(),
+                }
+            }
+        )
+
+        response = {
+            "message": f"Test completed. Winner: Variant {winner.get('winner')}",
+            "test_id": test_id,
+            "winner": winner,
+            "campaign_applied": False,
+        }
+
+        # Apply winner to campaign if requested
+        if request.apply_to_campaign and test.get("campaign_id") and winner.get("winner") != "TIE":
+            from tasks.ab_testing import auto_complete_ab_test
+            # Fire-and-forget: update campaign + trigger remaining send
+            auto_complete_ab_test.apply_async(
+                kwargs={
+                    "test_id": test_id,
+                    "apply_to_campaign": True,
+                },
+                countdown=1,
+            )
+            response["campaign_applied"] = True
+            response["message"] += " Winner variant applied to campaign. Sending to remaining subscribers shortly."
+
+        logger.info(f"A/B test manually completed: {test_id}, winner: {winner.get('winner')}")
+        return response
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to complete A/B test {test_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to complete test: {str(e)}")
+"""

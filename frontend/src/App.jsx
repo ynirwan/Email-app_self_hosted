@@ -14,6 +14,7 @@ import AuditTrail from './components/AuditTrail';
 import SettingsPage from './pages/SettingsPage'; // ✅ Added import
 import EmailSettings from './pages/EmailSettings';
 import DomainSettings from './pages/DomainSettings';
+import UserSettings from './pages/UserSettings';
 import TemplatesPage from './pages/TemplatesPage';
 import SuppressionManagement from './pages/SuppressionManagement';
 import Segmentation from './pages/Segmentation';
@@ -28,6 +29,7 @@ import AutomationBuilder from './pages/AutomationBuilder';
 import AutomationAnalytics from './pages/AutomationAnalytics';
 import AutomationCampaignAnalytics from './pages/AutomationCampaignAnalytics';
 import LandingPage from './pages/LandingPage';
+import OptInForm from './pages/OptInForm';
 
 
 const App = () => {
@@ -40,6 +42,7 @@ const App = () => {
         <Route path="/landing" element={<LandingPage />} />
         <Route path="/register" element={<Register />} />
         <Route path="/login" element={<Login />} />
+        <Route path="/subscribe/:listId" element={<OptInForm />} />
 
         {/* Protected Routes */}
         {isLoggedIn ? (
@@ -70,6 +73,7 @@ const App = () => {
                   
             {/* Settings with nested tabs */}
             <Route path="settings" element={<SettingsPage />}>
+              <Route path="user" element={<UserSettings />} />
               <Route path="email" element={<EmailSettings />} />
               <Route path="domain" element={<DomainSettings />} />
             </Route>

@@ -2,6 +2,9 @@
 """
 Production-ready email campaign tasks with all optimizations
 Integrates all systems: resource management, rate limiting, DLQ, metrics, etc.
+✅ FIXED: Proper field_map application with support for complex data structures
+✅ FIXED: Jinja2 support for loops and conditionals
+✅ FIXED: Nested object support for Jinja2 templates
 """
 import logging
 import time
@@ -13,19 +16,18 @@ from celery_app import celery_app
 
 # Import all production systems
 from core.config import settings
-from tasks.task_config import task_settings
 from database import (
     get_sync_campaigns_collection, get_sync_email_logs_collection,
     get_sync_subscribers_collection, get_sync_templates_collection
 )
-from tasks.resource_manager import resource_manager
-from tasks.rate_limiter import rate_limiter, EmailProvider, RateLimitResult
-from tasks.dlq_manager import dlq_manager
-from tasks.campaign_control import campaign_controller
-from tasks.metrics_collector import metrics_collector
-from tasks.template_cache import template_processor
-from tasks.provider_manager import email_provider_manager
-from tasks.audit_logger import (
+from .resource_manager import resource_manager
+from .rate_limiter import rate_limiter, EmailProvider, RateLimitResult
+from .dlq_manager import dlq_manager
+from .campaign_control import campaign_controller
+from .metrics_collector import metrics_collector
+from .template_cache import template_processor
+from .provider_manager import email_provider_manager
+from .audit_logger import (
     log_campaign_event, log_email_event, log_system_event,
     AuditEventType, AuditSeverity
 )
@@ -64,7 +66,7 @@ def log_email_status(campaign_id: str, subscriber_id: str, email: str, status: s
         email_logs_collection.insert_one(log_entry)
         
         # Log audit event
-        if task_settings.ENABLE_AUDIT_LOGGING:
+        if settings.ENABLE_AUDIT_LOGGING:
             audit_details = {
                 "status": status,
                 "provider": provider,
@@ -87,15 +89,16 @@ def log_email_status(campaign_id: str, subscriber_id: str, email: str, status: s
 
 @celery_app.task(
     bind=True,
-    max_retries=task_settings.MAX_EMAIL_RETRIES,
+    max_retries=settings.MAX_EMAIL_RETRIES if hasattr(settings, 'MAX_EMAIL_RETRIES') else 3,
     queue="campaigns",
     name="tasks.send_single_campaign_email",
-    soft_time_limit=task_settings.TASK_TIMEOUT_SECONDS
+    soft_time_limit=settings.TASK_TIMEOUT_SECONDS if hasattr(settings, 'TASK_TIMEOUT_SECONDS') else 30
 )
 def send_single_campaign_email(self, campaign_id: str, subscriber_id: str):
     """
     Production-ready single email sending with all optimizations
-    Integrates: resource management, rate limiting, DLQ, provider failover, etc.
+    ✅ FIXED: Proper field_map application for dynamic personalization
+    ✅ FIXED: Support for complex data structures (arrays, objects)
     """
     start_time = time.time()
     
@@ -160,7 +163,7 @@ def send_single_campaign_email(self, campaign_id: str, subscriber_id: str):
         
         # ===== STEP 4: RATE LIMITING CHECK =====
         
-        if task_settings.ENABLE_RATE_LIMITING:
+        if settings.ENABLE_RATE_LIMITING:
             # Determine email provider for rate limiting
             provider_type = EmailProvider.DEFAULT
             email_settings = campaign.get("email_settings", {})
@@ -183,7 +186,7 @@ def send_single_campaign_email(self, campaign_id: str, subscriber_id: str):
                 raise self.retry(countdown=delay, exc=Exception(f"Rate limited: {rate_info}"))
             elif can_send == RateLimitResult.CIRCUIT_BREAKER_OPEN:
                 # Circuit breaker is open, send to DLQ
-                if task_settings.ENABLE_DLQ:
+                if settings.ENABLE_DLQ:
                     dlq_result = dlq_manager.send_to_dlq(
                         campaign_id, subscriber_id, recipient_email,
                         {"error": "Circuit breaker open", "provider": provider_type.value}
@@ -192,7 +195,7 @@ def send_single_campaign_email(self, campaign_id: str, subscriber_id: str):
                 else:
                     return {"status": "failed", "reason": "circuit_breaker_open"}
         
-        # ===== STEP 5: TEMPLATE PROCESSING =====
+        # ===== STEP 5: TEMPLATE PROCESSING WITH DYNAMIC FIELD MAPPING =====
         
         template_id = campaign.get("template_id")
         if not template_id:
@@ -207,11 +210,102 @@ def send_single_campaign_email(self, campaign_id: str, subscriber_id: str):
             logger.error(error_msg)
             return {"status": "failed", "reason": "template_not_found"}
         
-        # Personalize template
+        # ✅ FIXED: Build personalization context by applying field_map dynamically
+        field_map = campaign.get("field_map", {})
         fallback_values = campaign.get("fallback_values", {})
+        personalization_context = {}
+        
+        for template_field, mapped_field in field_map.items():
+            template_field = template_field.strip()
+            
+            if mapped_field == "__EMPTY__":
+                # User wants this field to be empty
+                personalization_context[template_field] = ""
+                continue
+            
+            if mapped_field == "__DEFAULT__":
+                # Use fallback value
+                personalization_context[template_field] = fallback_values.get(template_field, "")
+                continue
+            
+            # Extract value from subscriber based on mapping
+            value = None
+            
+            if mapped_field == "email":
+                # Direct email field
+                value = subscriber.get("email", "")
+            
+            elif mapped_field.startswith("standard."):
+                # Standard field (e.g., "standard.first_name")
+                field_name = mapped_field.replace("standard.", "")
+                value = subscriber.get("standard_fields", {}).get(field_name, "")
+            
+            elif mapped_field.startswith("custom."):
+                # Custom field (e.g., "custom.status", "custom.items", "custom.promo")
+                field_name = mapped_field.replace("custom.", "")
+                value = subscriber.get("custom_fields", {}).get(field_name)
+                
+                # ✅ CRITICAL: Keep complex data structures (arrays, objects) intact!
+                # Don't convert to string if it's a dict or list - Jinja2 needs them as-is
+                if value is None:
+                    value = ""
+                # If value is dict or list, keep it as-is for Jinja2 loops/conditionals
+            
+            else:
+                # Unknown mapping type, use fallback
+                value = fallback_values.get(template_field, "")
+            
+            # Store the value (keep complex types intact for Jinja2)
+            personalization_context[template_field] = value
+        
+        # ✅ Add flat subscriber fields for backward compatibility
+        personalization_context["email"] = subscriber.get("email", "")
+        personalization_context["first_name"] = subscriber.get("standard_fields", {}).get("first_name", "")
+        personalization_context["last_name"] = subscriber.get("standard_fields", {}).get("last_name", "")
+        
+        # ✅ Add ALL custom fields directly to context (for complex data access)
+        # This allows templates to access custom fields directly without explicit mapping
+        custom_fields = subscriber.get("custom_fields", {})
+        for key, value in custom_fields.items():
+            if key not in personalization_context:
+                personalization_context[key] = value
+        
+        # ✅ Generate unsubscribe token and URL
+        try:
+            from routes.unsubscribe import generate_unsubscribe_token, build_unsubscribe_url
+            unsub_token = generate_unsubscribe_token(campaign_id, subscriber_id, recipient_email)
+            unsub_url = build_unsubscribe_url(unsub_token)
+            personalization_context["unsubscribe_url"] = unsub_url
+        except Exception as unsub_err:
+            logger.warning(f"Failed to generate unsubscribe token: {unsub_err}")
+            personalization_context["unsubscribe_url"] = "#"
+        
+        # ✅ Add system fields
+        personalization_context.update({
+            "subscriber_id": str(subscriber.get("_id", "")),
+            "current_date": datetime.utcnow().strftime("%Y-%m-%d"),
+            "current_year": str(datetime.utcnow().year),
+            "sent_at": datetime.utcnow().strftime("%B %d, %Y")
+        })
+        
+        # Add any remaining fallback values not in field_map
+        for key, value in fallback_values.items():
+            if key not in personalization_context:
+                personalization_context[key] = value
+        
+        # Personalize template with the enriched context
         personalized = template_processor.personalize_template(
-            template, subscriber, fallback_values
+            template, subscriber, personalization_context
         )
+
+        # FIX H6: personalize the campaign's subject using the same context so that
+        # placeholders like {{first_name}} in the subject line are expanded correctly.
+        raw_subject = campaign.get("subject", "No Subject")
+        personalized["subject"] = template_processor._personalize_content(
+            raw_subject, personalization_context
+        )
+        
+        logger.info(f"✅ Personalized {len(personalization_context)} fields for {recipient_email}")
         
         if "error" in personalized:
             logger.error(f"Template personalization failed: {personalized['error']}")
@@ -236,7 +330,8 @@ def send_single_campaign_email(self, campaign_id: str, subscriber_id: str):
                 text_content=personalized.get("text_content"),
                 campaign_id=campaign_id,
                 reply_to=reply_to,
-                timeout=task_settings.EMAIL_SEND_TIMEOUT_SECONDS
+                timeout=settings.EMAIL_SEND_TIMEOUT_SECONDS,
+                unsubscribe_url=personalization_context.get("unsubscribe_url", "")
             )
             
             # ===== STEP 7: RESULT PROCESSING =====
@@ -266,7 +361,7 @@ def send_single_campaign_email(self, campaign_id: str, subscriber_id: str):
                 )
                 
                 # Record rate limiter success
-                if task_settings.ENABLE_RATE_LIMITING:
+                if settings.ENABLE_RATE_LIMITING:
                     rate_limiter.record_email_result(True, provider_type, None, campaign_id)
                 
                 logger.debug(f"Email sent successfully: {campaign_id}/{subscriber_id}")
@@ -291,7 +386,7 @@ def send_single_campaign_email(self, campaign_id: str, subscriber_id: str):
                 
                 if is_permanent or self.request.retries >= self.max_retries:
                     # Send to DLQ or mark as permanently failed
-                    if task_settings.ENABLE_DLQ and not is_permanent:
+                    if settings.ENABLE_DLQ and not is_permanent:
                         dlq_result = dlq_manager.send_to_dlq(
                             campaign_id, subscriber_id, recipient_email,
                             {
@@ -321,7 +416,7 @@ def send_single_campaign_email(self, campaign_id: str, subscriber_id: str):
                     )
                     
                     # Record rate limiter failure
-                    if task_settings.ENABLE_RATE_LIMITING:
+                    if settings.ENABLE_RATE_LIMITING:
                         rate_limiter.record_email_result(False, provider_type, error_reason, campaign_id)
                     
                     return {
@@ -335,7 +430,7 @@ def send_single_campaign_email(self, campaign_id: str, subscriber_id: str):
                 
                 else:
                     # Retry with exponential backoff
-                    countdown = task_settings.RETRY_BACKOFF_BASE_SECONDS * (2 ** self.request.retries)
+                    countdown = settings.RETRY_BACKOFF_BASE_SECONDS * (2 ** self.request.retries)
                     max_countdown = 3600  # Max 1 hour
                     countdown = min(countdown, max_countdown)
                     
@@ -348,7 +443,7 @@ def send_single_campaign_email(self, campaign_id: str, subscriber_id: str):
                 # Final failure
                 error_msg = str(e)
                 
-                if task_settings.ENABLE_DLQ:
+                if settings.ENABLE_DLQ:
                     dlq_result = dlq_manager.send_to_dlq(
                         campaign_id, subscriber_id, recipient_email,
                         {
@@ -417,7 +512,7 @@ def send_campaign_batch(self, campaign_id: str, batch_size: int = None, last_id:
         # ===== RESOURCE MANAGEMENT =====
         
         if not batch_size:
-            batch_size = task_settings.MAX_BATCH_SIZE
+            batch_size = settings.MAX_BATCH_SIZE
         
         # Get optimal batch size based on current system resources
         optimal_batch_size = resource_manager.get_optimal_batch_size(batch_size, campaign_id)
@@ -617,6 +712,18 @@ def finalize_campaign(campaign_id: str) -> Dict[str, Any]:
         campaigns_collection = get_sync_campaigns_collection()
         email_logs_collection = get_sync_email_logs_collection()
         
+        # ✅ Get campaign current status
+        campaign = campaigns_collection.find_one({"_id": ObjectId(campaign_id)})
+        
+        # ✅ Don't auto-finalize if manually stopped
+        if campaign and campaign.get("stop_type") == "graceful":
+            logger.info(f"Campaign {campaign_id} was manually stopped, marking as stopped instead of completed")
+            campaigns_collection.update_one(
+                {"_id": ObjectId(campaign_id)},
+                {"$set": {"status": "stopped", "completed_at": datetime.utcnow()}}
+            )
+            return {"status": "stopped", "message": "Campaign was manually stopped"}
+        
         # Get final statistics from email logs
         stats_pipeline = [
             {"$match": {"campaign_id": ObjectId(campaign_id)}},
@@ -655,7 +762,7 @@ def finalize_campaign(campaign_id: str) -> Dict[str, Any]:
         )
         
         # Log campaign completion
-        if task_settings.ENABLE_AUDIT_LOGGING:
+        if settings.ENABLE_AUDIT_LOGGING:
             log_campaign_event(
                 AuditEventType.CAMPAIGN_COMPLETED,
                 campaign_id,
@@ -689,7 +796,7 @@ def start_campaign(self, campaign_id: str):
         
         # Update campaign status
         result = campaigns_collection.update_one(
-            {"_id": ObjectId(campaign_id), "status": {"$in": ["draft", "scheduled"]}},
+            {"_id": ObjectId(campaign_id), "status": {"$in": ["draft", "scheduled", "queued"]}},
             {
                 "$set": {
                     "status": "sending",
@@ -708,7 +815,7 @@ def start_campaign(self, campaign_id: str):
             return {"error": "campaign_not_startable", "campaign_id": campaign_id}
         
         # Log campaign start
-        if task_settings.ENABLE_AUDIT_LOGGING:
+        if settings.ENABLE_AUDIT_LOGGING:
             log_campaign_event(
                 AuditEventType.CAMPAIGN_STARTED,
                 campaign_id,
@@ -716,7 +823,7 @@ def start_campaign(self, campaign_id: str):
             )
         
         # Start first batch
-        initial_batch_task = send_campaign_batch.delay(campaign_id, task_settings.MAX_BATCH_SIZE, None)
+        initial_batch_task = send_campaign_batch.delay(campaign_id, settings.MAX_BATCH_SIZE, None)
         
         return {
             "status": "campaign_started",
@@ -729,3 +836,39 @@ def start_campaign(self, campaign_id: str):
         logger.error(f"Campaign start failed for {campaign_id}: {e}")
         return {"error": str(e)}
 
+@celery_app.task(bind=True, queue="campaigns", name="tasks.check_scheduled_campaigns")
+def check_scheduled_campaigns(self):
+    try:
+        campaigns_collection = get_sync_campaigns_collection()
+        now = datetime.utcnow()
+
+        triggered = []
+        while True:
+            campaign = campaigns_collection.find_one_and_update(
+                {"status": "scheduled", "scheduled_time": {"$lte": now}},
+                {"$set": {"status": "queued", "queued_at": now}},
+            )
+            if not campaign:
+                break
+            campaign_id = str(campaign["_id"])
+            try:
+                task = start_campaign.delay(campaign_id)
+                triggered.append({"campaign_id": campaign_id, "task_id": task.id})
+                logger.info(f"Triggered scheduled campaign {campaign_id}, task_id={task.id}")
+            except Exception as e:
+                campaigns_collection.update_one(
+                    {"_id": campaign["_id"]},
+                    {"$set": {"status": "scheduled"}}
+                )
+                logger.error(f"Failed to trigger scheduled campaign {campaign_id}: {e}")
+
+        return {
+            "status": "completed",
+            "checked_at": now.isoformat(),
+            "triggered_count": len(triggered),
+            "triggered_campaigns": triggered
+        }
+
+    except Exception as e:
+        logger.error(f"check_scheduled_campaigns failed: {e}")
+        return {"error": str(e)}

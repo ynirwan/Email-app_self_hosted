@@ -401,7 +401,13 @@ async def send_test_email(test_data: TestEmail):
         if subscriber_data:
             subject = personalize_content(subject, subscriber_data)
         
+        # SES Configuration Set for Test
+        configuration_set = campaign.get("email_settings", {}).get("ses_configuration_set")
+        
+        # msg['Subject'] = f"[TEST] {subject}"
         msg['Subject'] = f"[TEST] {subject}"
+        if configuration_set:
+            msg['X-SES-CONFIGURATION-SET'] = configuration_set
         
         # Get rendered HTML content
         try:
@@ -504,10 +510,19 @@ async def send_campaign(campaign_id: str):
             last_id=last_id
         )
 
-        # Update campaign state in DB
+        # ✅ Update campaign state in DB
+        update_fields = {
+            "status": "sending", 
+            "started_at": datetime.utcnow()
+        }
+        
+        # If it was stopped, we might want to clear stopped_at
+        if campaign.get("status") == "stopped":
+            update_fields["stopped_at"] = None
+
         await campaigns_collection.update_one(
             {"_id": ObjectId(campaign_id)},
-            {"$set": {"status": "sending", "started_at": datetime.utcnow()}}
+            {"$set": update_fields}
         )
 
         # 🔍 Structured log for monitoring
@@ -582,6 +597,76 @@ async def get_campaign_status(campaign_id: str):
 
     except HTTPException:
         raise
+    except Exception as e:
+        logger.error(f"Failed to get status for campaign {campaign_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/campaigns/{campaign_id}/pause")
+async def pause_campaign(campaign_id: str):
+    """Pause a sending campaign"""
+    try:
+        if not ObjectId.is_valid(campaign_id):
+            raise HTTPException(status_code=400, detail="Invalid campaign ID")
+
+        campaigns_collection = get_campaigns_collection()
+        campaign = await campaigns_collection.find_one({"_id": ObjectId(campaign_id)})
+
+        if not campaign:
+            raise HTTPException(status_code=404, detail="Campaign not found")
+
+        if campaign.get("status") != "sending":
+            raise HTTPException(status_code=400, detail=f"Cannot pause campaign in '{campaign.get('status')}' status")
+
+        await campaigns_collection.update_one(
+            {"_id": ObjectId(campaign_id)},
+            {"$set": {"status": "paused", "paused_at": datetime.utcnow()}}
+        )
+
+        logger.info(f"Campaign paused: {campaign_id}")
+        return {"message": "Campaign paused successfully", "status": "paused"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to pause campaign {campaign_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/campaigns/{campaign_id}/resume")
+async def resume_campaign(campaign_id: str):
+    """Resume a paused campaign"""
+    try:
+        if not ObjectId.is_valid(campaign_id):
+            raise HTTPException(status_code=400, detail="Invalid campaign ID")
+
+        campaigns_collection = get_campaigns_collection()
+        campaign = await campaigns_collection.find_one({"_id": ObjectId(campaign_id)})
+
+        if not campaign:
+            raise HTTPException(status_code=404, detail="Campaign not found")
+
+        if campaign.get("status") != "paused":
+            raise HTTPException(status_code=400, detail=f"Cannot resume campaign in '{campaign.get('status')}' status")
+
+        # Re-trigger sending logic
+        task = send_campaign_batch.delay(
+            campaign_id=campaign_id,
+            batch_size=None,
+            last_id=None
+        )
+
+        await campaigns_collection.update_one(
+            {"_id": ObjectId(campaign_id)},
+            {"$set": {"status": "sending", "resumed_at": datetime.utcnow()}, "$unset": {"paused_at": ""}}
+        )
+
+        logger.info(f"Campaign resumed: {campaign_id}")
+        return {"message": "Campaign resumed successfully", "status": "sending", "task_id": task.id}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to resume campaign {campaign_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
     except Exception as e:
         logger.error("get-campaign-status-error", extra={
             "campaign_id": campaign_id,

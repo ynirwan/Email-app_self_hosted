@@ -4,6 +4,7 @@ from typing import List, Optional, Dict
 from datetime import datetime
 from enum import Enum
 
+
 class TestType(str, Enum):
     SUBJECT_LINE = "subject_line"
     CONTENT = "content"
@@ -11,11 +12,13 @@ class TestType(str, Enum):
     SEND_TIME = "send_time"
     CTA_BUTTON = "cta_button"
 
+
 class TestStatus(str, Enum):
     DRAFT = "draft"
     RUNNING = "running"
     COMPLETED = "completed"
     PAUSED = "paused"
+
 
 class ABTestSchema(BaseModel):
     id: Optional[str]
@@ -32,6 +35,11 @@ class ABTestSchema(BaseModel):
     results: Optional[Dict]
     created_at: datetime
     updated_at: datetime
+    test_duration_hours: Optional[int] = 24  # 1–168 hours
+    auto_send_winner: bool = True  # send remaining after winner declared
+    test_duration_hours: Optional[int] = 24  # 1–168 hours
+    auto_send_winner: bool = True  # send remaining after winner declared
+
 
 class ABTestResult(BaseModel):
     test_id: str
@@ -44,4 +52,3 @@ class ABTestResult(BaseModel):
     sent_at: Optional[datetime]
     opened_at: Optional[datetime]
     clicked_at: Optional[datetime]
-

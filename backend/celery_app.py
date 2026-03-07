@@ -16,7 +16,16 @@ logger = logging.getLogger(__name__)
 # ============================================
 
 from core.config import settings
-from tasks.task_config import task_settings
+
+import importlib.util as _ilu
+import os as _os
+_spec = _ilu.spec_from_file_location(
+    "task_config",
+    _os.path.join(_os.path.dirname(__file__), "tasks", "task_config.py"),
+)
+_task_config_mod = _ilu.module_from_spec(_spec)
+_spec.loader.exec_module(_task_config_mod)
+task_settings = _task_config_mod.task_settings
 
 
 # ============================================
@@ -30,6 +39,7 @@ celery_app = Celery(
     include=[
         # Core email campaign tasks (always included)
         "tasks.campaign.email_campaign_tasks",
+        "tasks.ab_testing",
     #    "tasks.startup_recovery",
     ]
 )
@@ -140,6 +150,12 @@ celery_app.conf.update(
     
     # ===== ROUTING CONFIGURATION =====
     task_routes={
+        # ===== A/B TESTING TASKS =====
+        'tasks.check_ab_test_expiry':      {'queue': 'ab_tests', 'priority': 6},
+        'tasks.auto_complete_ab_test':     {'queue': 'ab_tests', 'priority': 7},
+        'tasks.send_ab_test_batch':        {'queue': 'ab_tests', 'priority': 6},
+        'tasks.send_ab_test_single_email': {'queue': 'ab_tests', 'priority': 5},
+
         # ===== EMAIL CAMPAIGN TASKS =====
         'tasks.send_single_campaign_email': {'queue': 'campaigns', 'priority': 7},
         'tasks.send_campaign_batch': {'queue': 'campaigns', 'priority': 6},
@@ -384,6 +400,12 @@ beat_schedule.update({
         'task': 'tasks.generate_dlq_analytics',
         'schedule': timedelta(hours=4),
         'options': {'queue': 'analytics', 'priority': 2}
+    },
+    # ===== A/B TEST AUTO-COMPLETE =====
+    'check-ab-test-expiry': {
+        'task': 'tasks.check_ab_test_expiry',
+        'schedule': timedelta(minutes=15),   # check every 15 min
+        'options': {'queue': 'ab_tests', 'priority': 6}
     },
 })
 

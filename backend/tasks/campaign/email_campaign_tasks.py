@@ -117,25 +117,23 @@ def send_single_campaign_email(self, campaign_id: str, subscriber_id: str):
             else:
                 return {"status": "resource_unavailable", "reason": reason, "health": health_info}
         
-        # Check if campaign is stopped or paused
-        if campaign_controller.is_campaign_paused(campaign_id):
-            return {"status": "paused", "reason": "campaign_paused"}
-        
-        if campaign_controller.is_campaign_stopped(campaign_id):
-            return {"status": "stopped", "reason": "campaign_stopped"}
-        
-        # ===== STEP 2: DATA RETRIEVAL =====
-        
+        # Get campaign data
         campaigns_collection = get_sync_campaigns_collection()
         subscribers_collection = get_sync_subscribers_collection()
         email_logs_collection = get_sync_email_logs_collection()
         
-        # Get campaign data
         campaign = campaigns_collection.find_one({"_id": ObjectId(campaign_id)})
         if not campaign:
             error_msg = f"Campaign not found: {campaign_id}"
             logger.error(error_msg)
             return {"status": "failed", "reason": "campaign_not_found"}
+
+        # Check if campaign is stopped or paused
+        if campaign_controller.is_campaign_paused(campaign_id) or campaign.get("status") == "paused":
+            return {"status": "paused", "reason": "campaign_paused"}
+        
+        if campaign_controller.is_campaign_stopped(campaign_id) or campaign.get("status") == "stopped":
+            return {"status": "stopped", "reason": "campaign_stopped"}
         
         # Get subscriber data
         subscriber = subscribers_collection.find_one({"_id": ObjectId(subscriber_id)})
@@ -317,6 +315,10 @@ def send_single_campaign_email(self, campaign_id: str, subscriber_id: str):
         # Format sender
         from_email = f"{sender_name} <{sender_email}>" if sender_name else sender_email
         
+        # ✅ SES Configuration Set support
+        email_settings = campaign.get("email_settings", {})
+        configuration_set = email_settings.get("ses_configuration_set")
+        
         try:
             # Send email with automatic provider failover
             send_result = email_provider_manager.send_email_with_failover(
@@ -328,7 +330,8 @@ def send_single_campaign_email(self, campaign_id: str, subscriber_id: str):
                 campaign_id=campaign_id,
                 reply_to=reply_to,
                 timeout=task_settings.EMAIL_SEND_TIMEOUT_SECONDS,
-                unsubscribe_url=personalization_context.get("unsubscribe_url", "")
+                unsubscribe_url=personalization_context.get("unsubscribe_url", ""),
+                configuration_set=configuration_set
             )
             
             # ===== STEP 7: RESULT PROCESSING =====
@@ -529,9 +532,9 @@ def send_campaign_batch(self, campaign_id: str, batch_size: int = None, last_id:
         if not campaign:
             return {"error": "campaign_not_found", "campaign_id": campaign_id}
         
-        if campaign.get("status") != "sending":
+        if campaign.get("status") not in ["sending", "paused"]:
             return {
-                "status": "campaign_not_sending",
+                "status": "campaign_not_active",
                 "current_status": campaign.get("status"),
                 "campaign_id": campaign_id
             }
@@ -679,7 +682,7 @@ def get_subscribers_for_campaign(campaign_id: str, batch_size: int, last_id: str
         target_segments = campaign.get("target_segments", [])
         
         # Build query
-        query = {"email": {"$exists": True, "$ne": ""}}
+        query = {"email": {"$exists": True, "$ne": ""}, "status": "active"}
         
         # Add list filter
         if target_lists:

@@ -116,7 +116,9 @@ class AuditLogger:
             
             # Store audit record
             if task_settings.ENABLE_AUDIT_LOGGING:
-                audit_id = self._store_audit_record(audit_record)
+                self.batch_buffer.append(audit_record)
+                if len(self.batch_buffer) >= self.batch_size:
+                    self._flush()
                 
                 # Cache recent events for quick access
                 self._cache_recent_event(audit_record)
@@ -125,7 +127,7 @@ class AuditLogger:
                 if severity == AuditSeverity.CRITICAL:
                     self._handle_critical_event(audit_record)
                 
-                return str(audit_id)
+                return str(audit_record["_id"])
             else:
                 logger.debug(f"Audit logging disabled - would log: {event_type.value}")
                 return "disabled"
@@ -134,7 +136,19 @@ class AuditLogger:
             logger.error(f"Audit logging failed: {e}")
             # Don't fail the main operation due to audit logging issues
             return "error"
-    
+
+    def _flush(self):
+        """Flush the audit buffer to the database"""
+        if not self.batch_buffer:
+            return
+            
+        try:
+            audit_collection = get_sync_audit_collection()
+            audit_collection.insert_many(self.batch_buffer)
+            self.batch_buffer = []
+        except Exception as e:
+            logger.error(f"Failed to flush audit buffer: {e}")
+
     def _store_audit_record(self, audit_record: Dict[str, Any]) -> ObjectId:
         """Store audit record in database"""
         try:
@@ -281,7 +295,7 @@ class AuditLogger:
             import socket
             return hashlib.md5(socket.gethostname().encode()).hexdigest()[:8]
         except:
-            return "unknown"
+            return "system"
     
     def search_audit_logs(self, 
                          start_date: datetime = None,
@@ -573,5 +587,12 @@ def generate_daily_compliance_report(self):
         return {"error": str(e)}
 
 # Global audit logger instance
-audit_logger = AuditLogger()
+_audit_logger_instance = None
+def get_audit_logger():
+    global _audit_logger_instance
+    if _audit_logger_instance is None:
+        _audit_logger_instance = AuditLogger()
+    return _audit_logger_instance
+
+audit_logger = get_audit_logger()
 

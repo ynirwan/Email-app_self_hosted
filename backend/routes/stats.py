@@ -278,21 +278,27 @@ async def fetch_dashboard_summary() -> Dict[str, Any]:
         sending_count = 0
         completed_count = 0
         failed_count = 0
+        stopped_count = 0
         
         for status in campaign_statuses:
-            status_name = status.get('_id', '').lower()
+            status_name = status.get('_id', '').lower() if status.get('_id') else 'unknown'
             count = status.get('count', 0)
             
             if status_name == 'draft':
                 draft_count = count
             elif status_name == 'scheduled':
                 scheduled_count = count
-            elif status_name == 'sending':
-                sending_count = count
+            elif status_name in ['sending', 'processing', 'queued']:
+                sending_count += count
             elif status_name == 'completed':
                 completed_count = count
             elif status_name == 'failed':
                 failed_count = count
+            elif status_name == 'stopped':
+                stopped_count = count
+            elif status_name == 'paused':
+                # Treat paused as part of stopped/inactive for the main dashboard summary
+                stopped_count += count
         
         # Calculate rates
         active_rate = round((active_subs / total_subs * 100) if total_subs > 0 else 0, 1)
@@ -317,6 +323,7 @@ async def fetch_dashboard_summary() -> Dict[str, Any]:
             "sending_campaigns": sending_count,
             "completed_campaigns": completed_count,
             "failed_campaigns": failed_count,
+            "stopped_campaigns": stopped_count,
             "summary": {
                 "active_rate": active_rate,
                 "avg_open_rate": avg_open_rate,

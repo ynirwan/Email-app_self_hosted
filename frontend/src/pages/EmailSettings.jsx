@@ -15,6 +15,7 @@ export default function EmailSettings() {
     password: '',
     ses_type: null,
     aws_region: 'us-east-1',
+    ses_configuration_set: '',
     bounce_forward_email: ''
   });
   const [usage, setUsage] = useState(null);
@@ -386,6 +387,21 @@ export default function EmailSettings() {
                     </option>
                   ))}
                 </select>
+              </div>
+
+              {/* SES Configuration Set */}
+              <div className="mt-4">
+                <label className="block text-sm font-medium mb-2">SES Configuration Set (Optional)</label>
+                <input
+                  type="text"
+                  className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-orange-500"
+                  value={settings.ses_configuration_set || ''}
+                  onChange={(e) => setSettings(prev => ({ ...prev, ses_configuration_set: e.target.value }))}
+                  placeholder="my-configuration-set"
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  Specify a configuration set to use for tracking and management.
+                </p>
               </div>
             </div>
           )}
