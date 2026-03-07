@@ -10,7 +10,7 @@ export default function TemplatesPage() {
   const [editTemplate, setEditTemplate] = useState(null);
   const [saving, setSaving] = useState(false);
   const [previewTemplate, setPreviewTemplate] = useState(null); // Preview state
-  const [previewMode, setPreviewMode] = useState('desktop'); // Preview device mode
+  const [previewMode, setPreviewMode] = useState("desktop"); // Preview device mode
   const emailEditorRef = useRef(null);
 
   useEffect(() => {
@@ -45,7 +45,7 @@ export default function TemplatesPage() {
     try {
       await API.delete(`/templates/${template._id || template.id}`);
       setTemplates((prev) =>
-        prev.filter((t) => (t._id || t.id) !== (template._id || template.id))
+        prev.filter((t) => (t._id || t.id) !== (template._id || template.id)),
       );
     } catch {
       alert("Failed to delete template.");
@@ -56,17 +56,20 @@ export default function TemplatesPage() {
     console.log("=== Editor Load Debug ===");
     console.log("editTemplate:", editTemplate);
     console.log("emailEditorRef.current:", emailEditorRef.current);
-    
+
     setTimeout(() => {
       if (!emailEditorRef.current || !editTemplate) {
         console.log("Editor or template not ready");
         return;
       }
-      
+
       console.log("Loading template:", editTemplate.name);
       console.log("Template content_json:", editTemplate.content_json);
-      
-      if (editTemplate.content_json && Object.keys(editTemplate.content_json).length > 0) {
+
+      if (
+        editTemplate.content_json &&
+        Object.keys(editTemplate.content_json).length > 0
+      ) {
         console.log("Calling loadDesign with:", editTemplate.content_json);
         emailEditorRef.current.editor.loadDesign(editTemplate.content_json);
       } else {
@@ -82,7 +85,7 @@ export default function TemplatesPage() {
       return;
     }
     setSaving(true);
-    
+
     if (!emailEditorRef.current) {
       setSaving(false);
       return;
@@ -98,7 +101,7 @@ export default function TemplatesPage() {
       const { design, html: exportedHtml } = data;
       const trueHtml = exportedHtml?.trim() || "";
       const templateId = editTemplate._id || editTemplate.id;
-      
+
       const payload = {
         ...editTemplate,
         content_json: design,
@@ -127,11 +130,11 @@ export default function TemplatesPage() {
   };
 
   const handleCreate = () => {
-    setEditTemplate({ 
-      name: "", 
-      description: "", 
+    setEditTemplate({
+      name: "",
+      description: "",
       content_json: { mode: "visual" },
-      fields: [] 
+      fields: [],
     });
   };
 
@@ -140,38 +143,38 @@ export default function TemplatesPage() {
     if (!template) return "";
 
     const contentJson = template.content_json || {};
-    
+
     // Handle different template modes
-    if (contentJson.mode === 'html' && contentJson.content) {
+    if (contentJson.mode === "html" && contentJson.content) {
       return contentJson.content;
-    } else if (contentJson.mode === 'drag-drop' && contentJson.blocks) {
-      return contentJson.blocks.map(block => block.content || '').join('\n');
-    } else if (contentJson.mode === 'visual' && contentJson.content) {
+    } else if (contentJson.mode === "drag-drop" && contentJson.blocks) {
+      return contentJson.blocks.map((block) => block.content || "").join("\n");
+    } else if (contentJson.mode === "visual" && contentJson.content) {
       return contentJson.content;
     } else if (template.html) {
       // Fallback to stored HTML
       return template.html;
     } else if (contentJson.body && contentJson.body.rows) {
       // Handle legacy Unlayer format
-      let extractedHtml = '';
+      let extractedHtml = "";
       try {
-        contentJson.body.rows.forEach(row => {
-          row.columns?.forEach(column => {
-            column.contents?.forEach(content => {
-              if (content.type === 'html' && content.values?.html) {
-                extractedHtml += content.values.html + '\n';
+        contentJson.body.rows.forEach((row) => {
+          row.columns?.forEach((column) => {
+            column.contents?.forEach((content) => {
+              if (content.type === "html" && content.values?.html) {
+                extractedHtml += content.values.html + "\n";
               }
             });
           });
         });
         return extractedHtml;
       } catch (e) {
-        console.error('Error extracting HTML from legacy format:', e);
-        return '<p>Error rendering template preview</p>';
+        console.error("Error extracting HTML from legacy format:", e);
+        return "<p>Error rendering template preview</p>";
       }
     }
-    
-    return '<p>No preview available</p>';
+
+    return "<p>No preview available</p>";
   };
 
   if (loading) {
@@ -185,7 +188,7 @@ export default function TemplatesPage() {
   return (
     <div className="space-y-6">
       <h1 className="text-3xl font-bold mb-6 border-b pb-2">Email Templates</h1>
-      
+
       {/* Preview Modal */}
       {previewTemplate && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
@@ -193,39 +196,41 @@ export default function TemplatesPage() {
             {/* Modal Header */}
             <div className="border-b p-4 flex justify-between items-center">
               <div>
-                <h2 className="text-xl font-semibold">Preview: {previewTemplate.name}</h2>
+                <h2 className="text-xl font-semibold">
+                  Preview: {previewTemplate.name}
+                </h2>
                 <p className="text-sm text-gray-600">
-                  Mode: {previewTemplate.content_json?.mode || 'unknown'} • 
+                  Mode: {previewTemplate.content_json?.mode || "unknown"} •
                   Fields: {previewTemplate.fields?.length || 0}
                 </p>
               </div>
-              
+
               {/* Device Mode Buttons */}
               <div className="flex items-center gap-2">
                 <button
-                  onClick={() => setPreviewMode('desktop')}
-                  className={`p-2 rounded flex items-center gap-1 ${previewMode === 'desktop' ? 'bg-blue-600 text-white' : 'hover:bg-gray-200'}`}
+                  onClick={() => setPreviewMode("desktop")}
+                  className={`p-2 rounded flex items-center gap-1 ${previewMode === "desktop" ? "bg-blue-600 text-white" : "hover:bg-gray-200"}`}
                   title="Desktop Preview"
                 >
                   <Monitor size={16} />
                 </button>
                 <button
-                  onClick={() => setPreviewMode('tablet')}
-                  className={`p-2 rounded flex items-center gap-1 ${previewMode === 'tablet' ? 'bg-blue-600 text-white' : 'hover:bg-gray-200'}`}
+                  onClick={() => setPreviewMode("tablet")}
+                  className={`p-2 rounded flex items-center gap-1 ${previewMode === "tablet" ? "bg-blue-600 text-white" : "hover:bg-gray-200"}`}
                   title="Tablet Preview"
                 >
                   <Tablet size={16} />
                 </button>
                 <button
-                  onClick={() => setPreviewMode('mobile')}
-                  className={`p-2 rounded flex items-center gap-1 ${previewMode === 'mobile' ? 'bg-blue-600 text-white' : 'hover:bg-gray-200'}`}
+                  onClick={() => setPreviewMode("mobile")}
+                  className={`p-2 rounded flex items-center gap-1 ${previewMode === "mobile" ? "bg-blue-600 text-white" : "hover:bg-gray-200"}`}
                   title="Mobile Preview"
                 >
                   <Smartphone size={16} />
                 </button>
-                
+
                 <div className="w-px h-6 bg-gray-300 mx-2"></div>
-                
+
                 <button
                   onClick={() => setPreviewTemplate(null)}
                   className="p-2 rounded hover:bg-gray-200"
@@ -240,19 +245,22 @@ export default function TemplatesPage() {
             <div className="p-4 bg-gray-100 flex justify-center overflow-auto max-h-[70vh]">
               <div
                 className={`bg-white shadow-lg transition-all duration-300 ${
-                  previewMode === 'desktop' ? 'w-full max-w-4xl' :
-                  previewMode === 'tablet' ? 'w-[768px]' : 'w-[375px]'
+                  previewMode === "desktop"
+                    ? "w-full max-w-4xl"
+                    : previewMode === "tablet"
+                      ? "w-[768px]"
+                      : "w-[375px]"
                 }`}
                 style={{
-                  minHeight: '400px',
-                  border: previewMode !== 'desktop' ? '2px solid #ccc' : 'none',
-                  borderRadius: previewMode !== 'desktop' ? '8px' : '0'
+                  minHeight: "400px",
+                  border: previewMode !== "desktop" ? "2px solid #ccc" : "none",
+                  borderRadius: previewMode !== "desktop" ? "8px" : "0",
                 }}
               >
                 <div
                   className="p-4"
                   dangerouslySetInnerHTML={{
-                    __html: renderTemplatePreview(previewTemplate)
+                    __html: renderTemplatePreview(previewTemplate),
                   }}
                 />
               </div>
@@ -261,8 +269,10 @@ export default function TemplatesPage() {
             {/* Modal Footer */}
             <div className="border-t p-4 bg-gray-50 flex justify-between items-center">
               <div className="text-sm text-gray-600">
-                Last updated: {previewTemplate.updated_at ? 
-                  new Date(previewTemplate.updated_at).toLocaleDateString() : 'Unknown'}
+                Last updated:{" "}
+                {previewTemplate.updated_at
+                  ? new Date(previewTemplate.updated_at).toLocaleDateString()
+                  : "Unknown"}
               </div>
               <div className="flex gap-3">
                 <button
@@ -294,7 +304,7 @@ export default function TemplatesPage() {
           >
             + Create Template
           </button>
-          
+
           {errorMsg ? (
             <p className="text-red-600 font-semibold">{errorMsg}</p>
           ) : templates.length === 0 ? (
@@ -312,7 +322,7 @@ export default function TemplatesPage() {
                     <div className="flex items-center gap-3">
                       <span className="font-medium">{template.name}</span>
                       <span className="text-xs px-2 py-1 bg-blue-100 text-blue-800 rounded-full">
-                        {template.content_json?.mode || 'legacy'}
+                        {template.content_json?.mode || "legacy"}
                       </span>
                     </div>
                     <div className="text-sm text-gray-500 mt-1">
@@ -320,11 +330,14 @@ export default function TemplatesPage() {
                         <span>{template.description} • </span>
                       )}
                       {template.fields?.length > 0 && (
-                        <span>{template.fields.length} personalization field{template.fields.length !== 1 ? 's' : ''}</span>
+                        <span>
+                          {template.fields.length} personalization field
+                          {template.fields.length !== 1 ? "s" : ""}
+                        </span>
                       )}
                     </div>
                   </div>
-                  
+
                   <div className="flex items-center space-x-3">
                     <button
                       onClick={() => handlePreview(template)}
@@ -378,7 +391,7 @@ export default function TemplatesPage() {
               </button>
             </div>
           </div>
-          
+
           <input
             type="text"
             placeholder="Template Name"
@@ -389,8 +402,8 @@ export default function TemplatesPage() {
             className="block mb-3 w-full px-3 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-600"
             autoFocus
           />
-          
-          <textarea
+
+          {/*   <textarea
             rows={3}
             placeholder="Description (optional)"
             value={editTemplate.description || ""}
@@ -398,13 +411,13 @@ export default function TemplatesPage() {
               setEditTemplate({ ...editTemplate, description: e.target.value })
             }
             className="block mb-4 w-full px-3 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-600"
-          />
-          
+          /> */}
+
           <div style={{ height: 600 }}>
-            <EmailEditor 
-              ref={emailEditorRef} 
+            <EmailEditor
+              ref={emailEditorRef}
               onLoad={handleEditorLoad}
-              key={editTemplate._id || editTemplate.name || 'new'}
+              key={editTemplate._id || editTemplate.name || "new"}
             />
           </div>
         </div>
@@ -412,4 +425,3 @@ export default function TemplatesPage() {
     </div>
   );
 }
-

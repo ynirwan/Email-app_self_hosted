@@ -50,7 +50,9 @@ class ABTestCreate(BaseModel):
     variants: List[ABTestVariant]
     split_percentage: int = 50
     sample_size: int
-    winner_criteria: str = "open_rate"
+    winner_criteria: str = "open_rate
+    test_duration_hours: Optional[int] = Field(default=24, ge=1, le=168)
+    auto_send_winner: bool = True
 
 # ===== HELPER FUNCTIONS =====
 def convert_objectid_to_str(document):
