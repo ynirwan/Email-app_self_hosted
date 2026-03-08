@@ -1,44 +1,46 @@
+"""
+Celery application for email marketing platform.
+Uses external Redis for broker/backend (configured via .env).
+"""
 from celery import Celery
 import logging
-from datetime import timedelta
 import os
 
 logger = logging.getLogger(__name__)
 
+# Load configuration
 from core.config import settings
-from tasks.task_config import task_settings
 
+# Create Celery app
 celery_app = Celery(
     "email_campaign_worker",
     broker=settings.CELERY_BROKER_URL,
     backend=settings.CELERY_RESULT_BACKEND,
 )
 
+# Configure Celery
 celery_app.conf.update(
-    task_ignore_result=True,
-    task_store_errors_even_if_ignored=True,
-    broker_connection_retry_on_startup=True,
     timezone='UTC',
     enable_utc=True,
-    imports=(
-        'tasks.campaign.email_campaign_tasks',
-        'tasks.automation_tasks',
-        'tasks.ses_webhook_tasks',
-        'tasks.analytics_tasks',
-        'tasks.cleanup_tasks',
-        'tasks.suppression_tasks',
-    )
+    task_acks_late=False,
+    task_reject_on_worker_lost=True,
+    task_ignore_result=True,
+    task_store_errors_even_if_ignored=True,
+    task_track_started=True,
+    task_time_limit=3600,
+    task_soft_time_limit=3000,
+    worker_prefetch_multiplier=1,
+    worker_max_tasks_per_child=100,
+    broker_connection_retry_on_startup=True,
+    broker_connection_retry=True,
+    broker_connection_max_retries=10,
+    task_serializer='json',
+    result_serializer='json',
+    accept_content=['json'],
+    task_default_queue='campaigns',
 )
 
-celery_app.conf.beat_schedule = {
-    'check-scheduled-campaigns': {
-        'task': 'tasks.campaign.email_campaign_tasks.check_scheduled_campaigns',
-        'schedule': timedelta(minutes=1),
-        'options': {'queue': 'campaigns', 'priority': 8}
-    },
-}
+# Auto-discover tasks from tasks package
+celery_app.autodiscover_tasks(['tasks'], force=True)
 
-from celery.signals import worker_ready
-@worker_ready.connect
-def worker_ready_handler(sender=None, **kwargs):
-    logger.info(f"✅ Celery worker ready: {sender.hostname if sender else 'unknown'}")
+logger.info("✅ Celery app configured with external Redis broker")
