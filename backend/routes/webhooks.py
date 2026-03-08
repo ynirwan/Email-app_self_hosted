@@ -18,6 +18,7 @@ from contextlib import asynccontextmanager
 from database import get_email_logs_collection, get_subscribers_collection, get_suppressions_collection
 from models.suppression_filter import create_suppression_from_bounce, create_suppression_from_complaint
 from bson import ObjectId
+from core.config import settings
 
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
 logger = logging.getLogger(__name__)
@@ -39,7 +40,7 @@ async def get_redis_pool():
     global redis_pool
     if not redis_pool:
         redis_pool = redis.ConnectionPool.from_url(
-            "redis://redis:6379/0",
+            settings.REDIS_URL,
             max_connections=50,
             decode_responses=True,
             retry_on_timeout=True,
