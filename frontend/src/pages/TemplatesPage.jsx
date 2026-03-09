@@ -368,12 +368,7 @@ export default function TemplatesPage() {
       ) : (
         <div>
           {/* Sticky header bar with Save/Cancel */}
-          <div className="sticky top-0 bg-white z-20 pb-3 mb-4 border-b flex justify-between items-center">
-            <h2 className="text-xl font-semibold">
-              {editTemplate._id || editTemplate.id
-                ? "Edit Template"
-                : "Create New Template"}
-            </h2>
+          <div className="sticky top-0 bg-white z-20 pb-3 mb-4 border-b flex justify-end items-center">
             <div className="flex space-x-3">
               <button
                 onClick={() => setEditTemplate(null)}
