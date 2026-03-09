@@ -2,27 +2,19 @@
 import axios from "axios";
 
 const getBaseURL = () => {
-  // Priority 1: Use VITE_API_BASE_URL from .env if configured
+  // Priority 1: Use VITE_API_BASE_URL from .env if explicitly configured
   if (import.meta.env.VITE_API_BASE_URL) {
     console.log("📡 Using configured API URL:", import.meta.env.VITE_API_BASE_URL);
     return import.meta.env.VITE_API_BASE_URL;
   }
   
-  // Priority 2: For Replit environments, auto-detect and construct backend URL
-  if (window.location.hostname.includes('replit.dev')) {
-    const protocol = window.location.protocol;
-    const host = window.location.hostname;
-    // Remove port if present, keep only the hostname
-    const baseHost = host.split(':')[0];
-    // Replit routes :8000 through the same host automatically
-    const backendUrl = `${protocol}//${baseHost}:8000/api`;
-    console.log("🔗 Auto-detected Replit API URL:", backendUrl);
-    return backendUrl;
-  }
-  
-  // Priority 3: Fallback to localhost for development
-  console.log("🏠 Using localhost API URL");
-  return "http://localhost:8000/api";
+  // Priority 2: Use current hostname with backend port
+  // This works for: Replit environments, custom domains, and localhost
+  const protocol = window.location.protocol;
+  const hostname = window.location.hostname;
+  const backendUrl = `${protocol}//${hostname}:8000/api`;
+  console.log("🔗 Using current hostname for backend:", backendUrl);
+  return backendUrl;
 };
 
 const API = axios.create({
