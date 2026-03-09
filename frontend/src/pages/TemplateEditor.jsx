@@ -89,25 +89,24 @@ export default function TemplateEditor({ onSaved }) {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-3">
         <input
           placeholder="Template Name"
           value={templateName}
           onChange={(e) => setTemplateName(e.target.value)}
           className="w-full px-3 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-600"
         />
-        <div className="flex items-center gap-2 px-3 py-2 bg-blue-50 text-blue-700 text-sm rounded">
-          <span>Tip: Use <b>{"{{first_name}}"}</b> for personalization</span>
-        </div>
+        <input
+          placeholder="Short description (optional)"
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+          className="w-full px-3 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-600"
+        />
       </div>
 
-      <textarea
-        placeholder="Short description for this template..."
-        value={description}
-        onChange={(e) => setDescription(e.target.value)}
-        rows={2}
-        className="block mb-4 w-full px-3 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-600"
-      />
+      <div className="flex items-center gap-2 px-3 py-2 bg-blue-50 text-blue-700 text-sm rounded mb-4">
+        <span>Tip: Use <b>{"{{first_name}}"}</b> for personalization</span>
+      </div>
 
       <div className="my-6 border rounded overflow-hidden relative" style={{ height: 600 }}>
         {previewMode && (
