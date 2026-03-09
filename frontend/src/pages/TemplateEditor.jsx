@@ -64,8 +64,7 @@ export default function TemplateEditor({ onSaved }) {
 
   return (
     <div className="max-w-6xl mx-auto p-6 bg-white rounded shadow flex flex-col">
-      <div className="flex justify-between items-center mb-4">
-        <h2 className="text-xl font-semibold">Create/Edit Email Template</h2>
+      <div className="flex justify-end items-center mb-4">
         <div className="flex space-x-3">
           <button
             onClick={togglePreview}

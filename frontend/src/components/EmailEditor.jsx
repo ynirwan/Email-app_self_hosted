@@ -1880,22 +1880,19 @@ const EmailEditor = forwardRef((props, ref) => {
         {editMode === 'drag-drop' && (
           <div className="col-span-3 bg-gray-50 p-4 rounded-lg">
             <h3 className="text-lg font-semibold mb-4">Email Blocks</h3>
-            <div className="grid grid-cols-4 gap-2">
+            <div className="space-y-2">
               {emailBlockTypes.map((blockType) => (
                 <div
                   key={blockType.id}
                   draggable
                   onDragStart={(e) => handleDragStart(e, blockType)}
-                  className={`flex flex-col items-center justify-center p-3 bg-white rounded-lg border border-gray-200 hover:border-blue-400 cursor-move transition-all hover:shadow-md group relative ${blockType.id === 'button' ? 'ring-2 ring-blue-200 bg-blue-50' : ''
+                  className={`flex items-center gap-3 p-3 bg-white rounded-lg border border-gray-200 hover:border-blue-400 cursor-move transition-all hover:shadow-md group ${blockType.id === 'button' ? 'ring-2 ring-blue-200 bg-blue-50' : ''
                     } ${blockType.id === 'image' ? 'ring-2 ring-green-200 bg-green-50' : ''
                     }`}
                   title={blockType.name}
                 >
-                  <blockType.icon size={24} className="text-gray-600 group-hover:text-blue-600 transition-colors" />
-                  {/* Tooltip on hover */}
-                  <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-2 py-1 bg-gray-800 text-white text-xs rounded whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50">
-                    {blockType.name}
-                  </div>
+                  <blockType.icon size={20} className="text-gray-600 group-hover:text-blue-600 transition-colors flex-shrink-0" />
+                  <span className="text-sm font-medium flex-1">{blockType.name}</span>
                 </div>
               ))}
             </div>
