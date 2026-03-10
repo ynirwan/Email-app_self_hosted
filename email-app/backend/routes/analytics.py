@@ -9,6 +9,10 @@ from database import (
 )
 from bson import ObjectId
 import logging
+import csv
+import json
+from io import StringIO
+from fastapi.responses import StreamingResponse
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -258,4 +262,153 @@ async def get_analytics_dashboard(days: int = Query(default=30, ge=1, le=365)):
 
     except Exception as e:
         logger.error(f"Error getting dashboard analytics: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@router.get("/campaigns/{campaign_id}/export")
+async def export_campaign_analytics(
+    campaign_id: str,
+    format: str = Query("csv", regex="^(csv|json)$"),
+    event_types: Optional[str] = Query(None)  # comma-separated: opens,clicks,bounces,etc
+):
+    """
+    Export campaign analytics in CSV or JSON format
+    
+    Query parameters:
+    - format: csv or json (default: csv)
+    - event_types: comma-separated list of event types to include
+      (opened, clicked, bounced, unsubscribed, complained, delivered)
+      If not specified, includes all events
+    """
+    try:
+        analytics_collection = get_analytics_collection()
+        events_collection = get_email_events_collection()
+        campaigns_collection = get_campaigns_collection()
+
+        # Validate campaign exists
+        campaign = await campaigns_collection.find_one({"_id": ObjectId(campaign_id)})
+        if not campaign:
+            raise HTTPException(status_code=404, detail="Campaign not found")
+
+        # Get analytics summary
+        analytics = await analytics_collection.find_one({"campaign_id": ObjectId(campaign_id)})
+        if not analytics:
+            analytics = {
+                "total_sent": 0,
+                "total_delivered": 0,
+                "total_bounced": 0,
+                "total_opened": 0,
+                "total_clicked": 0,
+                "total_unsubscribed": 0,
+                "total_spam_reports": 0
+            }
+
+        total_sent = campaign.get("sent_count", 0)
+        
+        # Calculate rates
+        analytics_data = {
+            "campaign_name": campaign.get("title", ""),
+            "campaign_id": str(campaign["_id"]),
+            "sent": total_sent,
+            "delivered": analytics.get("total_delivered", 0),
+            "bounced": analytics.get("total_bounced", 0),
+            "opened": analytics.get("total_opened", 0),
+            "clicked": analytics.get("total_clicked", 0),
+            "unsubscribed": analytics.get("total_unsubscribed", 0),
+            "complained": analytics.get("total_spam_reports", 0),
+            "delivery_rate": round(((total_sent - analytics.get("total_bounced", 0)) / total_sent * 100), 2) if total_sent > 0 else 0,
+            "open_rate": round((analytics.get("total_opened", 0) / total_sent * 100), 2) if total_sent > 0 else 0,
+            "click_rate": round((analytics.get("total_clicked", 0) / total_sent * 100), 2) if total_sent > 0 else 0,
+            "bounce_rate": round((analytics.get("total_bounced", 0) / total_sent * 100), 2) if total_sent > 0 else 0,
+            "unsubscribe_rate": round((analytics.get("total_unsubscribed", 0) / total_sent * 100), 2) if total_sent > 0 else 0,
+            "complaint_rate": round((analytics.get("total_spam_reports", 0) / total_sent * 100), 2) if total_sent > 0 else 0
+        }
+
+        # Parse event types filter
+        allowed_event_types = None
+        if event_types:
+            allowed_event_types = [et.strip().lower() for et in event_types.split(",")]
+
+        # Get all email events for this campaign
+        events_query = {"campaign_id": ObjectId(campaign_id)}
+        if allowed_event_types:
+            events_query["event_type"] = {"$in": allowed_event_types}
+
+        events_list = []
+        async for event in events_collection.find(events_query).sort("timestamp", -1):
+            event_record = {
+                "timestamp": event.get("timestamp", "").isoformat() if isinstance(event.get("timestamp"), datetime) else str(event.get("timestamp", "")),
+                "subscriber_email": event.get("subscriber_email", ""),
+                "event_type": event.get("event_type", ""),
+                "url": event.get("url", ""),
+                "reason": event.get("reason", ""),
+                "user_agent": event.get("user_agent", ""),
+                "ip_address": event.get("ip_address", "")
+            }
+            events_list.append(event_record)
+
+        # Format response based on format parameter
+        if format.lower() == "json":
+            export_data = {
+                "summary": analytics_data,
+                "events": events_list,
+                "export_timestamp": datetime.utcnow().isoformat(),
+                "total_events": len(events_list)
+            }
+            
+            json_str = json.dumps(export_data, indent=2, default=str)
+            return StreamingResponse(
+                iter([json_str]),
+                media_type="application/json",
+                headers={"Content-Disposition": f"attachment; filename=campaign-report-{campaign_id}.json"}
+            )
+        
+        else:  # CSV format
+            output = StringIO()
+            
+            # Write summary section
+            writer = csv.writer(output)
+            writer.writerow(["CAMPAIGN ANALYTICS REPORT"])
+            writer.writerow(["Campaign Name", analytics_data["campaign_name"]])
+            writer.writerow(["Campaign ID", analytics_data["campaign_id"]])
+            writer.writerow([])
+            
+            # Write metrics
+            writer.writerow(["SUMMARY METRICS"])
+            writer.writerow(["Metric", "Count", "Percentage"])
+            writer.writerow(["Sent", analytics_data["sent"], "100%"])
+            writer.writerow(["Delivered", analytics_data["delivered"], f"{analytics_data['delivery_rate']}%"])
+            writer.writerow(["Opened", analytics_data["opened"], f"{analytics_data['open_rate']}%"])
+            writer.writerow(["Clicked", analytics_data["clicked"], f"{analytics_data['click_rate']}%"])
+            writer.writerow(["Bounced", analytics_data["bounced"], f"{analytics_data['bounce_rate']}%"])
+            writer.writerow(["Unsubscribed", analytics_data["unsubscribed"], f"{analytics_data['unsubscribe_rate']}%"])
+            writer.writerow(["Complained", analytics_data["complained"], f"{analytics_data['complaint_rate']}%"])
+            writer.writerow([])
+            
+            # Write events detail
+            writer.writerow(["DETAILED EVENTS"])
+            writer.writerow(["Timestamp", "Subscriber Email", "Event Type", "URL", "Reason", "User Agent", "IP Address"])
+            
+            for event in events_list:
+                writer.writerow([
+                    event["timestamp"],
+                    event["subscriber_email"],
+                    event["event_type"],
+                    event.get("url", ""),
+                    event.get("reason", ""),
+                    event.get("user_agent", ""),
+                    event.get("ip_address", "")
+                ])
+
+            csv_str = output.getvalue()
+            return StreamingResponse(
+                iter([csv_str]),
+                media_type="text/csv",
+                headers={"Content-Disposition": f"attachment; filename=campaign-report-{campaign_id}.csv"}
+            )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error exporting campaign analytics: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error")
