@@ -1,24 +1,9 @@
 // frontend/src/api.js
 import axios from "axios";
 
-const getBaseURL = () => {
-  // Priority 1: Use VITE_API_BASE_URL from .env if explicitly configured
-  if (import.meta.env.VITE_API_BASE_URL) {
-    console.log("📡 Using configured API URL:", import.meta.env.VITE_API_BASE_URL);
-    return import.meta.env.VITE_API_BASE_URL;
-  }
-  
-  // Priority 2: Use current hostname with backend port
-  // This works for: Replit environments, custom domains, and localhost
-  const protocol = window.location.protocol;
-  const hostname = window.location.hostname;
-  const backendUrl = `${protocol}//${hostname}:8000/api`;
-  console.log("🔗 Using current hostname for backend:", backendUrl);
-  return backendUrl;
-};
-
 const API = axios.create({
-  baseURL: getBaseURL(),
+  baseURL:
+    "https://1e3e51b5-d74b-43fc-9d8d-5d25ea6cb6c7-00-3fzv7fuo5ld08.picard.replit.dev:8000/api",
 });
 
 // ✅ SIMPLIFIED - REMOVED all slash manipulation logic
