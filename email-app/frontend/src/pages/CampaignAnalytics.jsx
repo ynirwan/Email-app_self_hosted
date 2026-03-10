@@ -3,6 +3,26 @@ import { useParams, Link } from 'react-router-dom';
 import API from '../api';
 import { useNavigate } from 'react-router-dom';
 
+const exportReport = async (campaignId, format) => {
+  try {
+    const response = await API.get(`/analytics/campaigns/${campaignId}/export?format=${format}`, {
+      responseType: format === 'pdf' ? 'blob' : 'text',
+    });
+
+    const url = window.URL.createObjectURL(new Blob([response.data]));
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', `campaign-report-${campaignId}.${format}`);
+    document.body.appendChild(link);
+    link.click();
+    link.parentNode.removeChild(link);
+    window.URL.revokeObjectURL(url);
+  } catch (error) {
+    console.error('Error exporting report:', error);
+    alert('Failed to export report');
+  }
+};
+
 
 
 
@@ -61,17 +81,35 @@ export default function CampaignAnalytics() {
                 </div>
               </div>
             </div>
-            <div className="flex space-x-3">
+            <div className="flex flex-col sm:flex-row gap-3">
+              <button 
+                onClick={() => exportReport(campaignId, 'csv')}
+                className="px-4 py-2 bg-green-100 text-green-700 rounded-lg hover:bg-green-200 transition-colors flex items-center space-x-2"
+                data-testid="button-export-csv"
+              >
+                <span>📥</span>
+                <span>Export CSV</span>
+              </button>
+              <button 
+                onClick={() => exportReport(campaignId, 'json')}
+                className="px-4 py-2 bg-blue-100 text-blue-700 rounded-lg hover:bg-blue-200 transition-colors flex items-center space-x-2"
+                data-testid="button-export-json"
+              >
+                <span>📥</span>
+                <span>Export JSON</span>
+              </button>
               <button 
                 onClick={fetchCampaignAnalytics}
                 className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors flex items-center space-x-2"
+                data-testid="button-refresh"
               >
                 <span>🔄</span>
                 <span>Refresh</span>
               </button>
               <button
                 onClick={() => navigate(-1)}
-                className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+                className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 flex items-center space-x-2"
+                data-testid="button-back"
               >        
                 <span>←</span>
                 <span>Back</span>
