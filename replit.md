@@ -125,7 +125,14 @@ Preferred communication style: Simple, everyday language.
 - Log rotation: 10MB per file, 5 backups kept
 - Console output also preserved for live monitoring
 
-## Recent Changes (2026-03-08)
+## Recent Changes (2026-03-10)
+- **Active Subscriber Count Display**: Enhanced subscriber list view to show both total and active subscriber counts
+  - Backend endpoint `/api/subscribers/lists` now returns `total_count` and `active_count` for each list
+  - Frontend displays: "X total" and "Y active" for each list in the subscriber management table
+  - Also shown in the "Add Subscriber" modal list dropdown
+  - Count updated when subscribers are added/edited (status="active" is counted as active)
+
+## Previous Changes (2026-03-08)
 - **Redis URL Centralization**: Consolidated all Redis configuration to single source
   - `backend/core/config.py` - Reads `REDIS_URL` from `.env` once
   - `backend/routes/webhooks.py` - Fixed hardcoded `"redis://redis:6379/0"` to use `settings.REDIS_URL`

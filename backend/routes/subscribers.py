@@ -1228,10 +1228,9 @@ async def list_subscriber_lists(simple: bool = Query(False)):
                 {"$sort": {"total_count": -1}},
                 {
                     "$project": {
-                        "name": "$_id",
+                        "_id": 1,
                         "total_count": 1,
-                        "active_count": 1,
-                        "_id": 0
+                        "active_count": 1
                     }
                 }
             ]
