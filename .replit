@@ -78,6 +78,7 @@ waitForPort = 5000
 [[workflows.workflow]]
 name = "Redis"
 author = "agent"
+mode = "sequential"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"

@@ -48,6 +48,8 @@ export default function Sidebar() {
     { to: '/segmentation', label: 'Segmentation', icon: '🎯', description: 'Target Groups' },
     { to: '/suppressions', label: 'Suppressions', icon: '🛡️', description: 'Blocked Emails' },
     { to: '/audit', label: 'Audit Trail', icon: '📋', description: 'Activity Logs' },
+    { to: '/forms', label: 'Forms', icon: '📋', description: 'Subscription Forms' },
+    { to: '/reports', label: 'Reports', icon: '📄', description: 'Export Reports' },
     { to: '/settings/email', label: 'Settings', icon: '⚙️', description: 'Configuration' }
   ];
 
