@@ -1880,27 +1880,18 @@ const EmailEditor = forwardRef((props, ref) => {
         {editMode === 'drag-drop' && (
           <div className="col-span-3 bg-gray-50 p-4 rounded-lg">
             <h3 className="text-lg font-semibold mb-4">Email Blocks</h3>
-            <div className="space-y-2">
+            <div className="grid grid-cols-4 gap-2">
               {emailBlockTypes.map((blockType) => (
                 <div
                   key={blockType.id}
                   draggable
                   onDragStart={(e) => handleDragStart(e, blockType)}
-                  className={`flex items-center gap-3 p-3 bg-white rounded-lg border border-gray-200 hover:border-blue-400 cursor-move transition-all ${blockType.id === 'button' ? 'ring-2 ring-blue-200 bg-blue-50' : ''
+                  className={`flex items-center justify-center p-4 bg-white rounded-lg border border-gray-200 hover:border-blue-400 cursor-move transition-all hover:shadow-md group ${blockType.id === 'button' ? 'ring-2 ring-blue-200 bg-blue-50' : ''
                     } ${blockType.id === 'image' ? 'ring-2 ring-green-200 bg-green-50' : ''
                     }`}
+                  title={blockType.name}
                 >
-                  <blockType.icon size={20} className="text-gray-600" />
-                  <span className="text-sm font-medium">{blockType.name}</span>
-                  {blockType.id === 'button' && (
-                    <span className="ml-auto text-xs bg-blue-600 text-white px-2 py-1 rounded">Enhanced</span>
-                  )}
-                  {blockType.id === 'image' && (
-                    <span className="ml-auto text-xs bg-green-600 text-white px-2 py-1 rounded">Upload Ready</span>
-                  )}
-                  {blockType.id === 'unsubscribe' && (
-                    <span className="ml-auto text-xs bg-amber-500 text-white px-2 py-1 rounded">Required</span>
-                  )}
+                  <blockType.icon size={24} className="text-gray-600 group-hover:text-blue-600 transition-colors" />
                 </div>
               ))}
             </div>

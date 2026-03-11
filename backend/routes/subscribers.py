@@ -1199,21 +1199,40 @@ async def cleanup_stuck_jobs():
 @router.get("/lists", dependencies=[Depends(rate_limit_check)])
 @PerformanceMonitor.track_operation("list_subscriber_lists")
 async def list_subscriber_lists(simple: bool = Query(False)):
-    """Get subscriber lists - matches your frontend exactly"""
+    """Get subscriber lists with total and active counts"""
     start_time = time.time()
     try:
         subscribers_collection = get_subscribers_collection()
 
         if simple:
-            pipeline = [{"$group": {"_id": "$list", "count": {"$sum": 1}}}]
+            pipeline = [
+                {"$group": {"_id": "$list", "count": {"$sum": 1}}},
+                {"$project": {"name": "$_id", "count": 1, "_id": 0}}
+            ]
             cursor = subscribers_collection.aggregate(pipeline)
             lists = []
             async for doc in cursor:
-                lists.append({"name": doc["_id"], "count": doc["count"]})
+                lists.append(doc)
         else:
+            # Get total count and active count per list
             pipeline = [
-                {"$group": {"_id": "$list", "count": {"$sum": 1}}},
-                {"$sort": {"count": -1}}
+                {
+                    "$group": {
+                        "_id": "$list",
+                        "total_count": {"$sum": 1},
+                        "active_count": {
+                            "$sum": {"$cond": [{"$eq": ["$status", "active"]}, 1, 0]}
+                        }
+                    }
+                },
+                {"$sort": {"total_count": -1}},
+                {
+                    "$project": {
+                        "_id": 1,
+                        "total_count": 1,
+                        "active_count": 1
+                    }
+                }
             ]
             cursor = subscribers_collection.aggregate(pipeline)
             lists = []

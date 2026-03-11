@@ -125,7 +125,28 @@ Preferred communication style: Simple, everyday language.
 - Log rotation: 10MB per file, 5 backups kept
 - Console output also preserved for live monitoring
 
-## Recent Changes (2026-02-28)
+## Recent Changes (2026-03-10)
+- **Active Subscriber Count Display**: Enhanced subscriber list view to show both total and active subscriber counts
+  - Backend endpoint `/api/subscribers/lists` now returns `total_count` and `active_count` for each list
+  - Frontend displays: "X total" and "Y active" for each list in the subscriber management table
+  - Also shown in the "Add Subscriber" modal list dropdown
+  - Count updated when subscribers are added/edited (status="active" is counted as active)
+
+## Previous Changes (2026-03-08)
+- **Redis URL Centralization**: Consolidated all Redis configuration to single source
+  - `backend/core/config.py` - Reads `REDIS_URL` from `.env` once
+  - `backend/routes/webhooks.py` - Fixed hardcoded `"redis://redis:6379/0"` to use `settings.REDIS_URL`
+  - All task files and modules now use `settings.REDIS_URL` from central config
+  - No scattered hardcoded URLs or direct `os.getenv` calls for Redis
+
+- **A/B Testing Celery Configuration**: Enhanced celery_app.py to support A/B tests
+  - Added `ab_tests` queue to task_routes (4 new routes for A/B test tasks)
+  - Added beat schedule for `check-ab-test-expiry` (runs every 15 minutes)
+  - Defined task_queues with Kombu Queue/Exchange for all 13 queues including `ab_tests`
+  - Tasks `tasks.ab_testing` included in celery_app.conf.include
+  - **Note**: Celery Worker still needs `--queues=...,ab_tests` in `.replit` command-line args
+
+## Previous Changes (2026-02-28)
 - **Configuration Consolidation**: Refactored all backend config into two clean files
   - `backend/core/config.py` — App-level settings only (DB, Redis, JWT, CORS, security, deployment)
   - `backend/tasks/task_config.py` — Task/Celery settings only (batch sizes, retries, timeouts, rate limits, DLQ, monitoring)

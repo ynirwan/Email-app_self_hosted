@@ -1048,7 +1048,8 @@ export default function Subscribers() {
         
         <td className="p-2">
           <div className="flex flex-col">
-            <span className="font-medium">{list.count.toLocaleString()}</span>
+            <span className="font-medium">{(list.total_count || list.count).toLocaleString()} total</span>
+            <span className="text-sm text-green-600">{(list.active_count || 0).toLocaleString()} active</span>
             {isProcessing && (
               <div className="text-xs text-gray-500">
                 <span className="text-blue-600">
@@ -1092,7 +1093,7 @@ export default function Subscribers() {
                   const confirmDelete = confirm(
                     `⚠️ LIST IS CURRENTLY PROCESSING\n\n` +
                     `List: ${list._id}\n` +
-                    `Current: ${list.count.toLocaleString()} subscribers\n` +
+                    `Current: ${(list.total_count || list.count).toLocaleString()} subscribers (${(list.active_count || 0).toLocaleString()} active)\n` +
                     `Processing: +${(job.processed || 0).toLocaleString()} being added\n\n` +
                     `❌ DELETING WILL:\n` +
                     `• Stop the current upload\n` +
@@ -1373,7 +1374,7 @@ export default function Subscribers() {
                     >
                       <option value="">Select a list...</option>
                       {lists.map((l) => (
-                        <option key={l._id} value={l._id}>{l._id} ({l.count.toLocaleString()})</option>
+                        <option key={l._id} value={l._id}>{l._id} ({(l.total_count || l.count).toLocaleString()} total, {(l.active_count || 0).toLocaleString()} active)</option>
                       ))}
                       <option value="__new__">+ Create new list</option>
                     </select>

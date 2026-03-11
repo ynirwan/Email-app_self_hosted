@@ -19,31 +19,33 @@ from .audit_logger import log_system_event, AuditEventType, AuditSeverity
 import redis
 from cryptography.fernet import Fernet
 
-
 logger = logging.getLogger(__name__)
 
 ENCRYPTION_KEY = settings.MASTER_ENCRYPTION_KEY
+
 
 def decrypt_smtp_password(encrypted_password: str) -> str:
     """Decrypt password using same key as email_settings.py"""
     try:
         if not encrypted_password:
             return ""
-        
+
         # If not encrypted (doesn't start with gAAAAA), return as-is
         if not encrypted_password.startswith("gAAAAA"):
             logger.info("Password not encrypted, using as-is")
             return encrypted_password
-        
+
         # Decrypt using Fernet
         fernet = Fernet(ENCRYPTION_KEY.encode())
         decrypted = fernet.decrypt(encrypted_password.encode())
         logger.info("✅ Password decrypted successfully")
         return decrypted.decode()
-        
+
     except Exception as e:
         logger.error(f"❌ Password decryption failed: {e}")
-        logger.error(f"Encrypted password prefix: {encrypted_password[:20] if encrypted_password else 'empty'}...")
+        logger.error(
+            f"Encrypted password prefix: {encrypted_password[:20] if encrypted_password else 'empty'}..."
+        )
         # Return as-is and let SMTP fail with clear error
         return encrypted_password
 
@@ -54,6 +56,7 @@ class ProviderStatus(Enum):
     FAILED = "failed"
     MAINTENANCE = "maintenance"
     DISABLED = "disabled"
+
 
 class ProviderType(Enum):
     SENDGRID = "sendgrid"
@@ -66,8 +69,13 @@ class EmailServiceInterface(ABC):
     """Abstract interface for email service providers"""
 
     @abstractmethod
-    def send_email(self, sender_email: str, recipient_email: str, subject: str, 
-                   html_content: str, text_content: str = None, **kwargs) -> Dict[str, Any]:
+    def send_email(self,
+                   sender_email: str,
+                   recipient_email: str,
+                   subject: str,
+                   html_content: str,
+                   text_content: str = None,
+                   **kwargs) -> Dict[str, Any]:
         """Send email through the provider"""
         pass
 
@@ -81,6 +89,7 @@ class EmailServiceInterface(ABC):
         """Get provider rate limits and quotas"""
         pass
 
+
 class SendGridEmailService(EmailServiceInterface):
     """SendGrid email service implementation"""
 
@@ -89,8 +98,13 @@ class SendGridEmailService(EmailServiceInterface):
         self.api_key = config.get("api_key")
         self.base_url = "https://api.sendgrid.com/v3"
 
-    def send_email(self, sender_email: str, recipient_email: str, subject: str, 
-                   html_content: str, text_content: str = None, **kwargs) -> Dict[str, Any]:
+    def send_email(self,
+                   sender_email: str,
+                   recipient_email: str,
+                   subject: str,
+                   html_content: str,
+                   text_content: str = None,
+                   **kwargs) -> Dict[str, Any]:
         """Send email via SendGrid API"""
         try:
             import requests
@@ -102,24 +116,33 @@ class SendGridEmailService(EmailServiceInterface):
 
             payload = {
                 "personalizations": [{
-                    "to": [{"email": recipient_email}],
+                    "to": [{
+                        "email": recipient_email
+                    }],
                     "subject": subject
                 }],
-                "from": {"email": sender_email},
+                "from": {
+                    "email": sender_email
+                },
                 "content": []
             }
 
             if text_content:
-                payload["content"].append({"type": "text/plain", "value": text_content})
+                payload["content"].append({
+                    "type": "text/plain",
+                    "value": text_content
+                })
             if html_content:
-                payload["content"].append({"type": "text/html", "value": html_content})
+                payload["content"].append({
+                    "type": "text/html",
+                    "value": html_content
+                })
 
             response = requests.post(
                 f"{self.base_url}/mail/send",
                 headers=headers,
                 json=payload,
-                timeout=task_settings.EMAIL_SEND_TIMEOUT_SECONDS
-            )
+                timeout=task_settings.EMAIL_SEND_TIMEOUT_SECONDS)
 
             if response.status_code == 202:  # SendGrid success code
                 return {
@@ -132,7 +155,8 @@ class SendGridEmailService(EmailServiceInterface):
                 return {
                     "success": False,
                     "message_id": None,
-                    "error": f"SendGrid API error: {response.status_code} - {response.text}",
+                    "error":
+                    f"SendGrid API error: {response.status_code} - {response.text}",
                     "provider": "sendgrid"
                 }
         except Exception as e:
@@ -152,8 +176,7 @@ class SendGridEmailService(EmailServiceInterface):
             response = requests.get(
                 f"{self.base_url}/user/profile",
                 headers={"Authorization": f"Bearer {self.api_key}"},
-                timeout=5
-            )
+                timeout=5)
             response_time = (time.time() - start_time) * 1000
 
             if response.status_code == 200:
@@ -180,6 +203,7 @@ class SendGridEmailService(EmailServiceInterface):
             "monthly_quota": 50000000
         }
 
+
 class SESEmailService(EmailServiceInterface):
     """Amazon SES email service implementation"""
 
@@ -189,35 +213,49 @@ class SESEmailService(EmailServiceInterface):
         self.access_key = config.get("access_key")
         self.secret_key = config.get("secret_key")
 
-    def send_email(self, sender_email: str, recipient_email: str, subject: str, 
-                   html_content: str, text_content: str = None, **kwargs) -> Dict[str, Any]:
+    def send_email(self,
+                   sender_email: str,
+                   recipient_email: str,
+                   subject: str,
+                   html_content: str,
+                   text_content: str = None,
+                   **kwargs) -> Dict[str, Any]:
         """Send email via AWS SES"""
         try:
             import boto3
 
-            ses_client = boto3.client(
-                'ses',
-                region_name=self.region,
-                aws_access_key_id=self.access_key,
-                aws_secret_access_key=self.secret_key
-            )
+            ses_client = boto3.client('ses',
+                                      region_name=self.region,
+                                      aws_access_key_id=self.access_key,
+                                      aws_secret_access_key=self.secret_key)
 
             message = {
-                'Subject': {'Data': subject, 'Charset': 'UTF-8'},
+                'Subject': {
+                    'Data': subject,
+                    'Charset': 'UTF-8'
+                },
                 'Body': {}
             }
 
             if text_content:
-                message['Body']['Text'] = {'Data': text_content, 'Charset': 'UTF-8'}
+                message['Body']['Text'] = {
+                    'Data': text_content,
+                    'Charset': 'UTF-8'
+                }
             if html_content:
-                message['Body']['Html'] = {'Data': html_content, 'Charset': 'UTF-8'}
+                message['Body']['Html'] = {
+                    'Data': html_content,
+                    'Charset': 'UTF-8'
+                }
 
             send_args = {
                 'Source': sender_email,
-                'Destination': {'ToAddresses': [recipient_email]},
+                'Destination': {
+                    'ToAddresses': [recipient_email]
+                },
                 'Message': message
             }
-            
+
             # SES Configuration Set support
             configuration_set = kwargs.get("configuration_set")
             if configuration_set:
@@ -245,17 +283,16 @@ class SESEmailService(EmailServiceInterface):
             import boto3
 
             start_time = time.time()
-            ses_client = boto3.client(
-                'ses',
-                region_name=self.region,
-                aws_access_key_id=self.access_key,
-                aws_secret_access_key=self.secret_key
-            )
+            ses_client = boto3.client('ses',
+                                      region_name=self.region,
+                                      aws_access_key_id=self.access_key,
+                                      aws_secret_access_key=self.secret_key)
 
             response = ses_client.get_send_quota()
             response_time = (time.time() - start_time) * 1000
 
-            quota_used_percent = (response['SentLast24Hours'] / response['Max24HourSend']) * 100
+            quota_used_percent = (response['SentLast24Hours'] /
+                                  response['Max24HourSend']) * 100
 
             status = ProviderStatus.HEALTHY
             if quota_used_percent > 90:
@@ -281,6 +318,7 @@ class SESEmailService(EmailServiceInterface):
             "monthly_quota": 6000
         }
 
+
 class SMTPEmailService(EmailServiceInterface):
     """SMTP email service implementation"""
 
@@ -292,8 +330,13 @@ class SMTPEmailService(EmailServiceInterface):
         self.password = config.get("password")
         self.use_tls = config.get("use_tls", True)
 
-    def send_email(self, sender_email: str, recipient_email: str, subject: str, 
-                   html_content: str, text_content: str = None, **kwargs) -> Dict[str, Any]:
+    def send_email(self,
+                   sender_email: str,
+                   recipient_email: str,
+                   subject: str,
+                   html_content: str,
+                   text_content: str = None,
+                   **kwargs) -> Dict[str, Any]:
         """Send email via SMTP"""
         try:
             import smtplib
@@ -327,7 +370,8 @@ class SMTPEmailService(EmailServiceInterface):
                 html_part = MIMEText(html_content, "html")
                 message.attach(html_part)
 
-            with smtplib.SMTP(self.smtp_server, self.smtp_port, timeout=10) as server:
+            with smtplib.SMTP(self.smtp_server, self.smtp_port,
+                              timeout=10) as server:
                 if self.use_tls:
                     server.starttls()
 
@@ -357,7 +401,8 @@ class SMTPEmailService(EmailServiceInterface):
 
             start_time = time.time()
 
-            with smtplib.SMTP(self.smtp_server, self.smtp_port, timeout=5) as server:
+            with smtplib.SMTP(self.smtp_server, self.smtp_port,
+                              timeout=5) as server:
                 if self.use_tls:
                     server.starttls()
 
@@ -391,6 +436,7 @@ class SMTPEmailService(EmailServiceInterface):
             "monthly_quota": 300000
         }
 
+
 class EmailProviderManager:
     """Email provider manager with failover and load balancing"""
 
@@ -410,28 +456,34 @@ class EmailProviderManager:
 
             # If not found, try alternative format (email_smtp)
             if not email_config:
-                email_config_alt = settings_collection.find_one({"type": "email_smtp"})
+                email_config_alt = settings_collection.find_one(
+                    {"type": "email_smtp"})
                 if email_config_alt and "config" in email_config_alt:
                     # Flatten nested config structure
                     config_data = email_config_alt["config"]
-                    
+
                     # DECRYPT PASSWORD HERE
-                    decrypted_password = decrypt_smtp_password(config_data.get("password", ""))
-                    
+                    decrypted_password = decrypt_smtp_password(
+                        config_data.get("password", ""))
+
                     email_config = {
                         "type": "smtp",
                         "email_service": "smtp",
                         "smtp_server": config_data.get("smtp_server"),
                         "smtp_port": config_data.get("smtp_port", 587),
                         "username": config_data.get("username"),
-                        "password": decrypted_password,  # Use decrypted password
+                        "password":
+                        decrypted_password,  # Use decrypted password
                         "use_tls": config_data.get("use_tls", True),
                     }
-                    logger.info("Loaded email config from 'email_smtp' format (nested config)")
+                    logger.info(
+                        "Loaded email config from 'email_smtp' format (nested config)"
+                    )
 
             if email_config:
                 # Determine provider type
-                service_type = email_config.get("email_service", "smtp").lower()
+                service_type = email_config.get("email_service",
+                                                "smtp").lower()
 
                 if service_type == "sendgrid":
                     self._setup_sendgrid_provider(email_config)
@@ -442,14 +494,19 @@ class EmailProviderManager:
                 elif service_type == "smtp":
                     self._setup_smtp_provider(email_config)
 
-                logger.info(f"✅ Loaded {len(self.providers)} email provider(s): {list(self.providers.keys())}")
+                logger.info(
+                    f"✅ Loaded {len(self.providers)} email provider(s): {list(self.providers.keys())}"
+                )
             else:
-                logger.warning("⚠️ No email provider configuration found in database. Backend will start in degraded mode.")
+                logger.warning(
+                    "⚠️ No email provider configuration found in database. Backend will start in degraded mode."
+                )
                 # We don't raise here to allow the backend to start
                 # raise Exception("No email provider configured. Please configure SMTP settings.")
 
         except Exception as e:
-            logger.error(f"Failed to load provider configurations: {e}", exc_info=True)
+            logger.error(f"Failed to load provider configurations: {e}",
+                         exc_info=True)
             raise
 
     def _setup_sendgrid_provider(self, config: Dict[str, Any]):
@@ -488,7 +545,10 @@ class EmailProviderManager:
         self.provider_configs["smtp"] = provider_config
         self.providers["smtp"] = SMTPEmailService(provider_config)
 
-    def get_best_provider(self, campaign_id: str = None) -> Optional[Tuple[str, EmailServiceInterface]]:
+    def get_best_provider(
+        self,
+        campaign_id: str = None
+    ) -> Optional[Tuple[str, EmailServiceInterface]]:
         """Get the best available provider based on health and load"""
         try:
             if not self.providers:
@@ -507,23 +567,25 @@ class EmailProviderManager:
                 except Exception as e:
                     provider_health[name] = {
                         "status": ProviderStatus.FAILED,
-                        "details": {"error": str(e)},
+                        "details": {
+                            "error": str(e)
+                        },
                         "provider": provider
                     }
 
             healthy_providers = [
                 (name, info) for name, info in provider_health.items()
-                if info["status"] in [ProviderStatus.HEALTHY, ProviderStatus.DEGRADED]
+                if info["status"] in
+                [ProviderStatus.HEALTHY, ProviderStatus.DEGRADED]
             ]
 
             if not healthy_providers:
                 logger.error("No healthy email providers available")
                 return None
 
-            healthy_providers.sort(key=lambda x: (
-                0 if x[1]["status"] == ProviderStatus.HEALTHY else 1,
-                x[1]["details"].get("response_time_ms", 1000)
-            ))
+            healthy_providers.sort(key=lambda x: (0 if x[1][
+                "status"] == ProviderStatus.HEALTHY else 1, x[1][
+                    "details"].get("response_time_ms", 1000)))
 
             best_provider_name, best_provider_info = healthy_providers[0]
             return best_provider_name, best_provider_info["provider"]
@@ -532,9 +594,14 @@ class EmailProviderManager:
             logger.error(f"Provider selection failed: {e}")
             return None
 
-    def send_email_with_failover(self, sender_email: str, recipient_email: str, subject: str,
-                                html_content: str, text_content: str = None, 
-                                campaign_id: str = None, **kwargs) -> Dict[str, Any]:
+    def send_email_with_failover(self,
+                                 sender_email: str,
+                                 recipient_email: str,
+                                 subject: str,
+                                 html_content: str,
+                                 text_content: str = None,
+                                 campaign_id: str = None,
+                                 **kwargs) -> Dict[str, Any]:
         """Send email with automatic failover between providers"""
 
         attempted_providers = []
@@ -557,24 +624,25 @@ class EmailProviderManager:
             try:
                 logger.debug(f"Attempting email send via {provider_name}")
 
-                result = provider.send_email(
-                    sender_email=sender_email,
-                    recipient_email=recipient_email,
-                    subject=subject,
-                    html_content=html_content,
-                    text_content=text_content,
-                    **kwargs
-                )
+                result = provider.send_email(sender_email=sender_email,
+                                             recipient_email=recipient_email,
+                                             subject=subject,
+                                             html_content=html_content,
+                                             text_content=text_content,
+                                             **kwargs)
 
                 result["attempted_providers"] = attempted_providers
                 result["selected_provider"] = provider_name
 
                 if result.get("success"):
-                    self._record_provider_result(provider_name, True, campaign_id)
-                    logger.debug(f"Email sent successfully via {provider_name}")
+                    self._record_provider_result(provider_name, True,
+                                                 campaign_id)
+                    logger.debug(
+                        f"Email sent successfully via {provider_name}")
                     return result
                 else:
-                    self._record_provider_result(provider_name, False, campaign_id)
+                    self._record_provider_result(provider_name, False,
+                                                 campaign_id)
                     last_error = result.get("error", "Unknown provider error")
 
                     if self._is_permanent_failure(result.get("error", "")):
@@ -582,13 +650,15 @@ class EmailProviderManager:
                         result["permanent_failure"] = True
                         return result
 
-                    logger.warning(f"Email send failed via {provider_name}: {last_error}")
+                    logger.warning(
+                        f"Email send failed via {provider_name}: {last_error}")
                     continue
 
             except Exception as e:
                 last_error = str(e)
                 self._record_provider_result(provider_name, False, campaign_id)
-                logger.error(f"Provider {provider_name} failed with exception: {e}")
+                logger.error(
+                    f"Provider {provider_name} failed with exception: {e}")
                 continue
 
         return {
@@ -599,10 +669,14 @@ class EmailProviderManager:
             "total_attempts": len(attempted_providers)
         }
 
-    def _record_provider_result(self, provider_name: str, success: bool, campaign_id: str = None):
+    def _record_provider_result(self,
+                                provider_name: str,
+                                success: bool,
+                                campaign_id: str = None):
         """Record provider send result for health monitoring"""
         try:
-            stats_key = get_redis_key(f"provider_stats_{provider_name}", "hourly")
+            stats_key = get_redis_key(f"provider_stats_{provider_name}",
+                                      "hourly")
 
             if success:
                 self.redis_client.hincrby(stats_key, "success_count", 1)
@@ -622,7 +696,9 @@ class EmailProviderManager:
         ]
 
         error_lower = error_message.lower()
-        return any(indicator in error_lower for indicator in permanent_failure_indicators)
+        return any(indicator in error_lower
+                   for indicator in permanent_failure_indicators)
+
 
 # Global provider manager instance
 email_provider_manager = EmailProviderManager()

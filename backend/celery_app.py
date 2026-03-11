@@ -4,6 +4,7 @@ from celery.signals import (
     worker_ready, worker_shutdown, after_setup_logger, worker_init
 )
 from celery.schedules import crontab
+from kombu import Exchange, Queue
 import os
 import logging
 from datetime import timedelta
@@ -143,6 +144,21 @@ celery_app.conf.update(
     task_default_routing_key='campaigns',
     task_queue_max_priority=10,
     task_default_priority=5,
+    task_queues=(
+        Queue('campaigns', Exchange('campaigns', type='direct'), routing_key='campaigns'),
+        Queue('automation', Exchange('automation', type='direct'), routing_key='automation'),
+        Queue('recovery', Exchange('recovery', type='direct'), routing_key='recovery'),
+        Queue('ses_events', Exchange('ses_events', type='direct'), routing_key='ses_events'),
+        Queue('webhooks', Exchange('webhooks', type='direct'), routing_key='webhooks'),
+        Queue('subscribers', Exchange('subscribers', type='direct'), routing_key='subscribers'),
+        Queue('suppressions', Exchange('suppressions', type='direct'), routing_key='suppressions'),
+        Queue('dlq', Exchange('dlq', type='direct'), routing_key='dlq'),
+        Queue('monitoring', Exchange('monitoring', type='direct'), routing_key='monitoring'),
+        Queue('analytics', Exchange('analytics', type='direct'), routing_key='analytics'),
+        Queue('templates', Exchange('templates', type='direct'), routing_key='templates'),
+        Queue('cleanup', Exchange('cleanup', type='direct'), routing_key='cleanup'),
+        Queue('ab_tests', Exchange('ab_tests', type='direct'), routing_key='ab_tests'),
+    ),
     
     # ===== MONITORING CONFIGURATION =====
     worker_send_task_events=True,
