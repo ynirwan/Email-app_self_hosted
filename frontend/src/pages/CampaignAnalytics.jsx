@@ -44,13 +44,16 @@ export default function CampaignAnalytics() {
           headers: { Authorization: `Bearer ${token}` }
         }
       );
+      const campaignTitle = (analyticsData?.campaign?.title || 'campaign')
+        .replace(/[^a-z0-9]/gi, '_')
+        .replace(/_+/g, '_')
+        .toLowerCase();
+      const filename = eventType === 'all'
+        ? `${campaignTitle}_full_report.csv`
+        : `${campaignTitle}_${eventType}.csv`;
       const url = window.URL.createObjectURL(new Blob([response.data]));
       const link = document.createElement('a');
       link.href = url;
-      const disposition = response.headers['content-disposition'];
-      const filename = disposition
-        ? disposition.split('filename=')[1]
-        : `campaign_${eventType}.csv`;
       link.setAttribute('download', filename);
       document.body.appendChild(link);
       link.click();
