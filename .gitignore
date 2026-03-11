@@ -4,3 +4,8 @@ dist
 server/public
 vite.config.ts.*
 *.tar.gz
+# MongoDB data files - too large for git
+data/db/
+data/redis/
+*.lock
+celerybeat-schedule
