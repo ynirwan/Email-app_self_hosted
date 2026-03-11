@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import API from '../api';
 import { useNavigate } from 'react-router-dom';
+import axios from 'axios';
 
 
 
@@ -12,6 +13,7 @@ export default function CampaignAnalytics() {
   const [analyticsData, setAnalyticsData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [downloading, setDownloading] = useState(null);
 
   useEffect(() => {
     fetchCampaignAnalytics();
@@ -28,6 +30,37 @@ export default function CampaignAnalytics() {
       setError(error.response?.data?.detail || 'Failed to load analytics');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const downloadReport = async (eventType = 'all') => {
+    setDownloading(eventType);
+    try {
+      const token = localStorage.getItem('token');
+      const response = await axios.get(
+        `/api/analytics/campaigns/${campaignId}/export?event_type=${eventType}`,
+        {
+          responseType: 'blob',
+          headers: { Authorization: `Bearer ${token}` }
+        }
+      );
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      const disposition = response.headers['content-disposition'];
+      const filename = disposition
+        ? disposition.split('filename=')[1]
+        : `campaign_${eventType}.csv`;
+      link.setAttribute('download', filename);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('Download failed:', err);
+      alert('Download failed. Please try again.');
+    } finally {
+      setDownloading(null);
     }
   };
 
@@ -61,7 +94,7 @@ export default function CampaignAnalytics() {
                 </div>
               </div>
             </div>
-            <div className="flex space-x-3">
+            <div className="flex flex-wrap gap-2">
               <button 
                 onClick={fetchCampaignAnalytics}
                 className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors flex items-center space-x-2"
@@ -70,11 +103,18 @@ export default function CampaignAnalytics() {
                 <span>Refresh</span>
               </button>
               <button
+                onClick={() => downloadReport('all')}
+                disabled={downloading === 'all'}
+                className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-60 flex items-center space-x-2 transition-colors"
+              >
+                <span>{downloading === 'all' ? '⏳' : '⬇️'}</span>
+                <span>{downloading === 'all' ? 'Downloading...' : 'Download Full Report'}</span>
+              </button>
+              <button
                 onClick={() => navigate(-1)}
                 className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
               >        
-                <span>←</span>
-                <span>Back</span>
+                <span>← Back</span>
               </button>
             </div>
           </div>
@@ -163,9 +203,11 @@ export default function CampaignAnalytics() {
 
       {/* Engagement Metrics - Clean */}
       <div className="mb-6">
-        <div className="flex items-center space-x-2 mb-4">
-          <span className="text-lg">📈</span>
-          <h2 className="text-lg font-semibold text-gray-900">Engagement Metrics</h2>
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center space-x-2">
+            <span className="text-lg">📈</span>
+            <h2 className="text-lg font-semibold text-gray-900">Engagement Metrics</h2>
+          </div>
         </div>
         
         {/* Positive Metrics */}
@@ -185,6 +227,8 @@ export default function CampaignAnalytics() {
             icon="👁️"
             color="text-green-600"
             bgColor="bg-green-50"
+            onDownload={() => downloadReport('opened')}
+            downloading={downloading === 'opened'}
           />
           <MetricCard
             title="Clicks"
@@ -193,6 +237,8 @@ export default function CampaignAnalytics() {
             icon="👆"
             color="text-purple-600"
             bgColor="bg-purple-50"
+            onDownload={() => downloadReport('clicked')}
+            downloading={downloading === 'clicked'}
           />
           <MetricCard
             title="Delivered"
@@ -201,6 +247,8 @@ export default function CampaignAnalytics() {
             icon="✅"
             color="text-teal-600"
             bgColor="bg-teal-50"
+            onDownload={() => downloadReport('delivered')}
+            downloading={downloading === 'delivered'}
           />
         </div>
 
@@ -218,6 +266,8 @@ export default function CampaignAnalytics() {
               icon="⚠️"
               color="text-red-600"
               bgColor="bg-red-100"
+              onDownload={() => downloadReport('bounced')}
+              downloading={downloading === 'bounced'}
             />
             <MetricCard
               title="Unsubscribes"
@@ -226,6 +276,8 @@ export default function CampaignAnalytics() {
               icon="🚫"
               color="text-orange-600"
               bgColor="bg-orange-100"
+              onDownload={() => downloadReport('unsubscribed')}
+              downloading={downloading === 'unsubscribed'}
             />
             <MetricCard
               title="Spam Reports"
@@ -234,6 +286,8 @@ export default function CampaignAnalytics() {
               icon="🚨"
               color="text-red-700"
               bgColor="bg-red-100"
+              onDownload={() => downloadReport('spam_report')}
+              downloading={downloading === 'spam_report'}
             />
           </div>
         </div>
@@ -270,8 +324,18 @@ const TimelineItem = ({ label, value }) => (
   </div>
 );
 
-const MetricCard = ({ title, value, subtitle, icon, color, bgColor }) => (
-  <div className={`bg-white ${bgColor} rounded-lg p-5 shadow-sm border hover:shadow-md transition-shadow`}>
+const MetricCard = ({ title, value, subtitle, icon, color, bgColor, onDownload, downloading }) => (
+  <div className={`bg-white ${bgColor} rounded-lg p-5 shadow-sm border hover:shadow-md transition-shadow relative`}>
+    {onDownload && (
+      <button
+        onClick={onDownload}
+        disabled={downloading}
+        title={`Download ${title} list`}
+        className="absolute top-3 right-3 p-1.5 bg-white rounded-md border border-gray-200 hover:bg-gray-50 disabled:opacity-50 transition-colors shadow-sm"
+      >
+        <span className="text-xs">{downloading ? '⏳' : '⬇️'}</span>
+      </button>
+    )}
     <div className="text-center">
       <div className="text-2xl mb-3">{icon}</div>
       <p className="text-sm font-medium text-gray-600 mb-2">{title}</p>
