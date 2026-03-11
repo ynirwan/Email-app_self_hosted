@@ -1,40 +1,19 @@
 // frontend/src/components/Sidebar.jsx
-import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom';
-import { useState, useEffect } from 'react';
-import API from '../api';
+import { NavLink, useLocation, useNavigate } from 'react-router-dom';
+import { useState } from 'react';
+import { useUser } from '../contexts/UserContext';
 import ZeniPostLogo from './ZeniPostLogo';
 
 export default function Sidebar() {
   const { pathname } = useLocation();
   const navigate = useNavigate();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const { user, userLoading: loading } = useUser();
 
   const handleLogout = () => {
     localStorage.removeItem('token');
     navigate('/login');
   };
-
-  // ✅ User state
-  const [user, setUser] = useState(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    const fetchUser = async () => {
-      try {
-        const res = await API.get('/auth/me');
-        setUser(res.data);
-      } catch (err) {
-        console.error('Failed to fetch user in sidebar:', err);
-        if (err.response?.status === 401) {
-          localStorage.removeItem('token');
-          navigate('/login');
-        }
-      } finally {
-        setLoading(false);
-      }
-    };
-    fetchUser();
-  }, [navigate]);
 
   // Navigation items
   const navigationItems = [

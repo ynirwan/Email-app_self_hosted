@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
 import API from '../api'
 import { useNavigate } from 'react-router-dom'
+import { useUser } from '../contexts/UserContext'
 
 export default function Dashboard() {
-  const [user, setUser] = useState(null)
+  const { user, userLoading } = useUser()
   const [loading, setLoading] = useState(true)
   const [stats, setStats] = useState({
     total_subscribers: 0,
@@ -19,36 +20,21 @@ export default function Dashboard() {
   const navigate = useNavigate()
 
   useEffect(() => {
-    // ✅ Verify token exists before fetching
     const token = localStorage.getItem('token')
     if (!token) {
-      console.log('⚠️  No token found, redirecting to login...')
       navigate('/login', { replace: true })
       return
     }
-
-    fetchUserAndStats()
+    fetchStats()
   }, [navigate])
 
-  const fetchUserAndStats = async () => {
+  const fetchStats = async () => {
     try {
-      console.log('📊 Fetching dashboard data...')
-
-      // Fetch user info first
-      const userResponse = await API.get('/auth/me')
-      console.log('✅ User data loaded:', userResponse.data.email)
-      setUser(userResponse.data)
-
-      // Then fetch stats
       const statsResponse = await API.get('/stats/summary')
-      console.log('✅ Stats loaded')
       setStats(statsResponse.data)
-
     } catch (err) {
-      console.error('❌ Error fetching dashboard data:', err)
-
+      console.error('❌ Error fetching dashboard stats:', err)
       if (err.response?.status === 401) {
-        console.log('🔒 Unauthorized, redirecting to login...')
         localStorage.removeItem('token')
         navigate('/login', { replace: true })
       } else {
@@ -70,8 +56,7 @@ export default function Dashboard() {
     }
   }
 
-  // ✅ Show loading screen while fetching data
-  if (loading) {
+  if (loading || userLoading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
         <div className="text-center">
