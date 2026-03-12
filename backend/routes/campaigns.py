@@ -335,12 +335,9 @@ async def delete_campaign(campaign_id: str):
         campaigns_collection = get_campaigns_collection()
         if not ObjectId.is_valid(campaign_id):
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid campaign ID format")
-        campaign = await campaigns_collection.find_one({"_id": ObjectId(campaign_id)})
-        if not campaign:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaign not found")
         result = await campaigns_collection.delete_one({"_id": ObjectId(campaign_id)})
         if result.deleted_count == 0:
-            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to delete campaign")
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaign not found")
         logger.info(f"Campaign deleted: {campaign_id}")
         return {
             "message": "Campaign deleted successfully",
@@ -488,7 +485,10 @@ async def send_campaign(campaign_id: str):
         if not ObjectId.is_valid(campaign_id):
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid campaign ID format")
 
-        campaign = await campaigns_collection.find_one({"_id": ObjectId(campaign_id)})
+        campaign = await campaigns_collection.find_one(
+            {"_id": ObjectId(campaign_id)},
+            {"status": 1}
+        )
         if not campaign:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaign not found")
 

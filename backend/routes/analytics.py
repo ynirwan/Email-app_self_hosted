@@ -24,8 +24,16 @@ async def get_campaign_analytics(campaign_id: str):
         events_collection = get_email_events_collection()
         campaigns_collection = get_campaigns_collection()
 
-        # Get campaign details and sent count from campaigns collection
-        campaign = await campaigns_collection.find_one({"_id": ObjectId(campaign_id)})
+        # Get only the fields needed for the analytics response
+        campaign = await campaigns_collection.find_one(
+            {"_id": ObjectId(campaign_id)},
+            {
+                "title": 1, "subject": 1, "sender_name": 1, "sender_email": 1,
+                "reply_to": 1, "status": 1, "target_lists": 1, "target_list_count": 1,
+                "sent_count": 1, "processed_count": 1, "queued_count": 1,
+                "created_at": 1, "started_at": 1, "completed_at": 1, "last_batch_at": 1
+            }
+        )
         if not campaign:
             raise HTTPException(status_code=404, detail="Campaign not found")
 
