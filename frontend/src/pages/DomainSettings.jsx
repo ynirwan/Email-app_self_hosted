@@ -1,341 +1,276 @@
-// frontend/src/pages/DomainSettings.jsx
-import { Link } from 'react-router-dom';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import API from '../api';
 
-export default function DomainSettings() {
-  const [domains, setDomains] = useState([]);
-  const [newDomain, setNewDomain] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [verificationDetails, setVerificationDetails] = useState(null);
-  const [selectedDomain, setSelectedDomain] = useState(null);
-
-  useEffect(() => {
-    fetchDomains();
+// ─── helpers ────────────────────────────────────────────────
+function useToast() {
+  const [msg, setMsg] = useState(null);
+  const show = useCallback((text, type = 'info') => {
+    setMsg({ text, type });
+    setTimeout(() => setMsg(null), 4000);
   }, []);
+  return { msg, show };
+}
+
+function InlineMsg({ msg }) {
+  if (!msg) return null;
+  return (
+    <div className={`flex items-center gap-2 px-4 py-3 rounded-lg text-sm font-medium ${msg.type === 'success' ? 'bg-green-50 border border-green-200 text-green-800' : msg.type === 'error' ? 'bg-red-50 border border-red-200 text-red-800' : 'bg-blue-50 border border-blue-200 text-blue-800'}`}>
+      {msg.type === 'success' ? '✓' : msg.type === 'error' ? '✕' : 'ℹ'} {msg.text}
+    </div>
+  );
+}
+
+function CopyButton({ value }) {
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    try { await navigator.clipboard.writeText(value); setCopied(true); setTimeout(() => setCopied(false), 2000); } catch { /* ignore */ }
+  };
+  return (
+    <button onClick={copy} title="Copy to clipboard"
+      className="flex-shrink-0 px-2 py-1 text-xs border border-gray-200 rounded hover:bg-gray-100 text-gray-500 transition-colors">
+      {copied ? '✓ Copied' : 'Copy'}
+    </button>
+  );
+}
+
+function DnsRecord({ title, records }) {
+  return (
+    <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 space-y-3">
+      <h4 className="text-sm font-semibold text-gray-700">{title}</h4>
+      {records.map(({ label, value }) => (
+        <div key={label}>
+          <p className="text-xs font-medium text-gray-500 mb-1">{label}</p>
+          <div className="flex items-start gap-2">
+            <code className="flex-1 bg-white border border-gray-200 px-3 py-1.5 rounded-lg text-xs break-all text-gray-800 font-mono leading-relaxed">
+              {value}
+            </code>
+            <CopyButton value={value} />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+const STATUS_STYLE = {
+  pending:  'bg-yellow-100 text-yellow-800',
+  verified: 'bg-green-100  text-green-800',
+  failed:   'bg-red-100    text-red-800',
+};
+
+export default function DomainSettings() {
+  const [domains,             setDomains]             = useState([]);
+  const [newDomain,           setNewDomain]           = useState('');
+  const [loading,             setLoading]             = useState(false);
+  const [fetchError,          setFetchError]          = useState(null);
+  const [verificationDetails, setVerificationDetails] = useState(null);
+  const [selectedDomain,      setSelectedDomain]      = useState(null);
+  const { msg, show: toast }                          = useToast();
+
+  useEffect(() => { fetchDomains(); }, []);
 
   const fetchDomains = async () => {
+    setFetchError(null);
     try {
-      const response = await API.get(`/domains`);
-      // Add safety check to ensure response.data is an array
-      const domainsData = Array.isArray(response.data) ? response.data : [];
-      setDomains(domainsData);
-      console.log('Fetched domains:', domainsData); // Debug log
-    } catch (error) {
-      console.error('Error fetching domains:', error);
-      // Set empty array on error to prevent map error
+      const res = await API.get('/domains');
+      setDomains(Array.isArray(res.data) ? res.data : []);
+    } catch {
+      setFetchError('Failed to load domains. Please refresh.');
       setDomains([]);
     }
   };
 
   const addDomain = async () => {
     if (!newDomain.trim()) return;
-
     setLoading(true);
     try {
-      console.log('Adding domain:', newDomain.trim().toLowerCase());
-      const response = await API.post(`/domains`, {
-        domain: newDomain.trim().toLowerCase()
-      });
-
-      console.log('Add domain response:', response.data);
-      
-      // Ensure domains is always an array before spreading
-      setDomains(prevDomains => [...(Array.isArray(prevDomains) ? prevDomains : []), response.data]);
+      const res = await API.post('/domains', { domain: newDomain.trim().toLowerCase() });
+      setDomains(p => [...p, res.data]);
       setNewDomain('');
-      setVerificationDetails(response.data.verification_records);
-      setSelectedDomain(response.data);
-    } catch (error) {
-      console.error('Error adding domain:', error);
-      console.error('Error response:', error.response?.data);
-      console.error('Error status:', error.response?.status);
-      
-      // Show more specific error message if available
-      const errorMessage = error.response?.data?.detail || error.response?.data?.message || 'Failed to add domain. Please try again.';
-      alert(errorMessage);
-    } finally {
-      setLoading(false);
-    }
+      setVerificationDetails(res.data.verification_records);
+      setSelectedDomain(res.data);
+      toast('Domain added! Add the DNS records below to verify.', 'success');
+    } catch (err) {
+      toast(err.response?.data?.detail || 'Failed to add domain.', 'error');
+    } finally { setLoading(false); }
   };
 
   const verifyDomain = async (domainId) => {
     setLoading(true);
     try {
-      const response = await API.post(`/domains/${domainId}/verify`);
-
-      // Update the domain in the list with safety check
-      setDomains(prevDomains =>
-        Array.isArray(prevDomains)
-          ? prevDomains.map(d => d.id === domainId ? { ...d, status: response.data.status } : d)
-          : []
-      );
-
-      if (response.data.status === 'verified') {
-        alert('Domain verified successfully!');
+      const res = await API.post(`/domains/${domainId}/verify`);
+      setDomains(p => p.map(d => d.id === domainId ? { ...d, status: res.data.status } : d));
+      if (res.data.status === 'verified') {
+        toast('Domain verified successfully! ✓', 'success');
       } else {
-        alert('Domain verification failed. Please check your DNS records and try again.');
+        toast('Verification failed — check your DNS records and try again.', 'error');
       }
-    } catch (error) {
-      console.error('Error verifying domain:', error);
-      alert('Verification failed. Please try again.');
-    } finally {
-      setLoading(false);
-    }
+    } catch {
+      toast('Verification failed. Please try again.', 'error');
+    } finally { setLoading(false); }
   };
 
-  const deleteDomain = async (domainId) => {
-    if (!confirm('Are you sure you want to delete this domain?')) return;
-
+  const deleteDomain = async (domainId, domainName) => {
+    if (!confirm(`Delete domain "${domainName}"?`)) return;
     try {
       await API.delete(`/domains/${domainId}`);
-      // Filter with safety check
-      setDomains(prevDomains =>
-        Array.isArray(prevDomains)
-          ? prevDomains.filter(d => d.id !== domainId)
-          : []
-      );
-    } catch (error) {
-      console.error('Error deleting domain:', error);
-      alert('Failed to delete domain. Please try again.');
+      setDomains(p => p.filter(d => d.id !== domainId));
+      if (selectedDomain?.id === domainId) { setVerificationDetails(null); setSelectedDomain(null); }
+      toast('Domain deleted', 'success');
+    } catch {
+      toast('Failed to delete domain.', 'error');
     }
   };
 
   const showVerificationDetails = async (domain) => {
     try {
-      const response = await API.get(`/domains/${domain.id}/verification-records`);
-      setVerificationDetails(response.data.verification_records);
+      const res = await API.get(`/domains/${domain.id}/verification-records`);
+      setVerificationDetails(res.data.verification_records);
       setSelectedDomain(domain);
-    } catch (error) {
-      console.error('Error fetching verification details:', error);
-    }
+    } catch { toast('Failed to load DNS records.', 'error'); }
   };
-
-  const getStatusBadge = (status) => {
-    const statusStyles = {
-      pending: 'bg-yellow-100 text-yellow-800',
-      verified: 'bg-green-100 text-green-800',
-      failed: 'bg-red-100 text-red-800'
-    };
-
-    return (
-      <span className={`px-2 py-1 rounded-full text-xs font-medium ${statusStyles[status]}`}>
-        {status.charAt(0).toUpperCase() + status.slice(1)}
-      </span>
-    );
-  };
-
-  // Safety check before rendering
-  const safeDomainsArray = Array.isArray(domains) ? domains : [];
 
   return (
-    <div className="space-y-8">
-      <h2 className="text-2xl font-bold">🌐 Domain Settings</h2>
+    <div className="max-w-3xl space-y-6">
 
-      {/* Top Navigation Buttons */}
-      <div className="flex gap-4 mb-6">
-        <Link
-          to="/settings/email"
-          className="px-4 py-2 rounded-lg bg-gray-200 hover:bg-gray-300"
-        >
-          📧 Email Settings
-        </Link>
-        <Link
-          to="/settings/domain"
-          className="px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700"
-        >
-          🌐 Domain Settings
-        </Link>
-      </div>
+      <InlineMsg msg={msg} />
 
-      {/* Domain List */}
-      <div className="bg-white p-6 rounded-lg shadow">
-        <h3 className="text-lg font-semibold mb-4">Your Domains</h3>
-        {safeDomainsArray.length === 0 ? (
-          <p className="text-gray-500 text-center py-8">No domains added yet. Add your first domain below.</p>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full border">
-              <thead>
-                <tr className="bg-gray-100 text-left">
-                  <th className="p-3 border">Domain</th>
-                  <th className="p-3 border">Status</th>
-                  <th className="p-3 border">Added</th>
-                  <th className="p-3 border">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {safeDomainsArray.map((domain) => (
-                  <tr key={domain.id} className="hover:bg-gray-50">
-                    <td className="p-3 border font-medium">{domain.domain}</td>
-                    <td className="p-3 border">{getStatusBadge(domain.status)}</td>
-                    <td className="p-3 border text-sm text-gray-600">
-                      {new Date(domain.created_at).toLocaleDateString()}
-                    </td>
-                    <td className="p-3 border">
-                      <div className="flex gap-2">
-                        {domain.status === 'pending' && (
-                          <>
-                            <button
-                              onClick={() => showVerificationDetails(domain)}
-                              className="px-3 py-1 bg-blue-600 text-white text-xs rounded hover:bg-blue-700"
-                            >
-                              View Records
-                            </button>
-                            <button
-                              onClick={() => verifyDomain(domain.id)}
-                              disabled={loading}
-                              className="px-3 py-1 bg-green-600 text-white text-xs rounded hover:bg-green-700 disabled:opacity-50"
-                            >
-                              Verify
-                            </button>
-                          </>
-                        )}
-                        {domain.status === 'failed' && (
-                          <button
-                            onClick={() => verifyDomain(domain.id)}
-                            disabled={loading}
-                            className="px-3 py-1 bg-orange-600 text-white text-xs rounded hover:bg-orange-700 disabled:opacity-50"
-                          >
-                            Retry
-                          </button>
-                        )}
-                        <button
-                          onClick={() => deleteDomain(domain.id)}
-                          className="px-3 py-1 bg-red-600 text-white text-xs rounded hover:bg-red-700"
-                        >
-                          Delete
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+      {fetchError && (
+        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm flex items-center justify-between">
+          {fetchError}
+          <button onClick={fetchDomains} className="underline ml-2">Retry</button>
+        </div>
+      )}
+
+      {/* ── Domain List ── */}
+      <div className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
+        <div className="px-5 py-4 border-b border-gray-100">
+          <h2 className="text-sm font-semibold text-gray-700">Your Domains</h2>
+        </div>
+
+        {domains.length === 0 ? (
+          <div className="py-12 text-center">
+            <p className="text-3xl mb-2">🌐</p>
+            <p className="text-sm text-gray-500">No domains added yet</p>
+            <p className="text-xs text-gray-400 mt-1">Add a domain below to set up custom sending</p>
           </div>
+        ) : (
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-gray-50 border-b border-gray-100">
+                <th className="px-5 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Domain</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-24">Status</th>
+                <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider w-24">Added</th>
+                <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider w-48">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-50">
+              {domains.map(domain => (
+                <tr key={domain.id} className="hover:bg-gray-50 transition-colors">
+                  <td className="px-5 py-3.5 font-medium text-gray-900">{domain.domain}</td>
+                  <td className="px-4 py-3.5">
+                    <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium ${STATUS_STYLE[domain.status] || STATUS_STYLE.pending}`}>
+                      {domain.status?.charAt(0).toUpperCase() + domain.status?.slice(1)}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3.5 text-xs text-gray-400 text-right whitespace-nowrap">
+                    {new Date(domain.created_at).toLocaleDateString()}
+                  </td>
+                  <td className="px-4 py-3.5">
+                    <div className="flex items-center justify-end gap-2">
+                      {domain.status === 'pending' && (
+                        <button onClick={() => showVerificationDetails(domain)}
+                          className="px-2.5 py-1.5 text-xs font-medium border border-blue-200 rounded-lg hover:bg-blue-50 text-blue-700">
+                          DNS Records
+                        </button>
+                      )}
+                      {(domain.status === 'pending' || domain.status === 'failed') && (
+                        <button onClick={() => verifyDomain(domain.id)} disabled={loading}
+                          className="px-2.5 py-1.5 text-xs font-medium border border-green-200 rounded-lg hover:bg-green-50 text-green-700 disabled:opacity-50">
+                          {loading ? '⏳' : domain.status === 'failed' ? 'Retry' : 'Verify'}
+                        </button>
+                      )}
+                      {domain.status === 'verified' && (
+                        <button onClick={() => showVerificationDetails(domain)}
+                          className="px-2.5 py-1.5 text-xs font-medium border border-gray-200 rounded-lg hover:bg-gray-50 text-gray-600">
+                          Records
+                        </button>
+                      )}
+                      <button onClick={() => deleteDomain(domain.id, domain.domain)}
+                        className="px-2.5 py-1.5 text-xs font-medium border border-red-200 rounded-lg hover:bg-red-50 text-red-600">
+                        Delete
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         )}
       </div>
 
-      {/* Add New Domain */}
-      <div className="bg-white p-6 rounded-lg shadow">
-        <h3 className="text-lg font-semibold mb-4">Add New Domain</h3>
-        <div className="flex gap-4">
-          <input
-            type="text"
-            placeholder="Enter domain (e.g., example.com)"
-            value={newDomain}
-            onChange={(e) => setNewDomain(e.target.value)}
-            className="flex-1 p-3 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-            onKeyPress={(e) => e.key === 'Enter' && addDomain()}
-          />
-          <button
-            onClick={addDomain}
-            disabled={loading || !newDomain.trim()}
-            className="px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {loading ? '⏳ Adding...' : '➕ Add Domain'}
+      {/* ── Add domain ── */}
+      <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-5">
+        <h2 className="text-sm font-semibold text-gray-700 mb-3">Add New Domain</h2>
+        <div className="flex gap-3">
+          <input type="text" placeholder="example.com" value={newDomain}
+            onChange={e => setNewDomain(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && addDomain()}
+            className="flex-1 px-3 py-2.5 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500" />
+          <button onClick={addDomain} disabled={loading || !newDomain.trim()}
+            className="px-5 py-2.5 bg-green-600 text-white text-sm font-semibold rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap">
+            {loading ? '⏳ Adding…' : '+ Add Domain'}
           </button>
         </div>
       </div>
 
-      {/* Verification Details Modal/Panel */}
+      {/* ── DNS Records panel ── */}
       {verificationDetails && selectedDomain && (
-        <div className="bg-white p-6 rounded-lg shadow border-l-4 border-blue-500">
-          <div className="flex justify-between items-center mb-4">
-            <h3 className="text-lg font-semibold">DNS Verification Records for {selectedDomain.domain}</h3>
-            <button
-              onClick={() => {
-                setVerificationDetails(null);
-                setSelectedDomain(null);
-              }}
-              className="text-gray-500 hover:text-gray-700"
-            >
-              ✕
-            </button>
+        <div className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
+          <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+            <div>
+              <h3 className="text-sm font-semibold text-gray-700">DNS Records — {selectedDomain.domain}</h3>
+              <p className="text-xs text-gray-400 mt-0.5">Add all records to your DNS provider, then click Verify</p>
+            </div>
+            <button onClick={() => { setVerificationDetails(null); setSelectedDomain(null); }}
+              className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
           </div>
 
-          <div className="space-y-6">
-            <div className="bg-yellow-50 p-4 rounded-lg border border-yellow-200">
-              <p className="text-sm text-yellow-800 mb-2">
-                <strong>⚠️ Important:</strong> Add these DNS records to your domain's DNS settings to verify ownership.
-              </p>
+          <div className="p-5 space-y-4">
+            <div className="bg-amber-50 border border-amber-200 px-4 py-3 rounded-lg text-xs text-amber-800">
+              ⚠️ DNS changes can take 5–30 minutes to propagate. Click Verify after adding all records.
             </div>
 
-            {/* SPF Record */}
-            <div className="bg-gray-50 p-4 rounded-lg">
-              <h4 className="font-semibold mb-2 text-gray-800">📧 SPF Record (TXT)</h4>
-              <div className="space-y-2 text-sm">
-                <div><strong>Name:</strong> @ (or leave blank)</div>
-                <div><strong>Type:</strong> TXT</div>
-                <div><strong>Value:</strong>
-                  <code className="bg-white px-2 py-1 rounded ml-2 break-all">
-                    {verificationDetails.spf_record}
-                  </code>
-                </div>
-              </div>
-            </div>
+            <DnsRecord title="📧 SPF Record (TXT)" records={[
+              { label: 'Name', value: '@' },
+              { label: 'Type', value: 'TXT' },
+              { label: 'Value', value: verificationDetails.spf_record },
+            ]} />
 
-            {/* DKIM Record */}
-            <div className="bg-gray-50 p-4 rounded-lg">
-              <h4 className="font-semibold mb-2 text-gray-800">🔐 DKIM Record (TXT)</h4>
-              <div className="space-y-2 text-sm">
-                <div><strong>Name:</strong>
-                  <code className="bg-white px-2 py-1 rounded ml-2">
-                    {verificationDetails.dkim_selector}._domainkey
-                  </code>
-                </div>
-                <div><strong>Type:</strong> TXT</div>
-                <div><strong>Value:</strong>
-                  <code className="bg-white px-2 py-1 rounded ml-2 break-all text-xs">
-                    {verificationDetails.dkim_record}
-                  </code>
-                </div>
-              </div>
-            </div>
+            <DnsRecord title="🔐 DKIM Record (TXT)" records={[
+              { label: 'Name', value: `${verificationDetails.dkim_selector}._domainkey` },
+              { label: 'Type', value: 'TXT' },
+              { label: 'Value', value: verificationDetails.dkim_record },
+            ]} />
 
-            {/* DMARC Record */}
-            <div className="bg-gray-50 p-4 rounded-lg">
-              <h4 className="font-semibold mb-2 text-gray-800">🛡️ DMARC Record (TXT)</h4>
-              <div className="space-y-2 text-sm">
-                <div><strong>Name:</strong>
-                  <code className="bg-white px-2 py-1 rounded ml-2">_dmarc</code>
-                </div>
-                <div><strong>Type:</strong> TXT</div>
-                <div><strong>Value:</strong>
-                  <code className="bg-white px-2 py-1 rounded ml-2 break-all">
-                    {verificationDetails.dmarc_record}
-                  </code>
-                </div>
-              </div>
-            </div>
+            <DnsRecord title="🛡️ DMARC Record (TXT)" records={[
+              { label: 'Name', value: '_dmarc' },
+              { label: 'Type', value: 'TXT' },
+              { label: 'Value', value: verificationDetails.dmarc_record },
+            ]} />
 
-            {/* Verification Record */}
-            <div className="bg-gray-50 p-4 rounded-lg">
-              <h4 className="font-semibold mb-2 text-gray-800">✅ Domain Verification (TXT)</h4>
-              <div className="space-y-2 text-sm">
-                <div><strong>Name:</strong>
-                  <code className="bg-white px-2 py-1 rounded ml-2">
-                    _emailverify
-                  </code>
-                </div>
-                <div><strong>Type:</strong> TXT</div>
-                <div><strong>Value:</strong>
-                  <code className="bg-white px-2 py-1 rounded ml-2 break-all">
-                    {verificationDetails.verification_token}
-                  </code>
-                </div>
-              </div>
-            </div>
-          </div>
+            <DnsRecord title="✅ Domain Verification (TXT)" records={[
+              { label: 'Name', value: '_emailverify' },
+              { label: 'Type', value: 'TXT' },
+              { label: 'Value', value: verificationDetails.verification_token },
+            ]} />
 
-          <div className="mt-6 p-4 bg-blue-50 rounded-lg border border-blue-200">
-            <p className="text-sm text-blue-800">
-              <strong>💡 Next Steps:</strong>
-            </p>
-            <ol className="text-sm text-blue-700 mt-2 space-y-1 list-decimal list-inside">
-              <li>Add all the DNS records above to your domain's DNS settings</li>
-              <li>Wait for DNS propagation (usually 5-30 minutes)</li>
-              <li>Click the "Verify" button to check if the records are properly configured</li>
-            </ol>
+            <div className="flex justify-end pt-2">
+              <button onClick={() => verifyDomain(selectedDomain.id)} disabled={loading}
+                className="px-5 py-2.5 bg-green-600 text-white text-sm font-semibold rounded-lg hover:bg-green-700 disabled:opacity-50">
+                {loading ? '⏳ Verifying…' : '✓ Verify Domain Now'}
+              </button>
+            </div>
           </div>
         </div>
       )}

@@ -12,6 +12,9 @@ from database import (
 from routes.smtp_services.email_service_factory import get_email_service_sync
 from celery_app import celery_app
 
+# Reuse the same template renderer used by normal campaigns
+from tasks.template_cache import template_processor
+
 logger = logging.getLogger(__name__)
 
 # ============================================================
@@ -58,14 +61,12 @@ def send_ab_test_batch(self, test_id: str, variant_assignments: dict):
 
         logger.info(f"A/B test batch queued: {test_id}")
         return {
-            "success":
-            True,
-            "variant_a_processed":
-            variant_a_results["processed"],
-            "variant_b_processed":
-            variant_b_results["processed"],
-            "total_queued":
-            (variant_a_results["processed"] + variant_b_results["processed"]),
+            "success": True,
+            "variant_a_processed": variant_a_results["processed"],
+            "variant_b_processed": variant_b_results["processed"],
+            "total_queued": (
+                variant_a_results["processed"] + variant_b_results["processed"]
+            ),
         }
 
     except Exception as e:
@@ -93,14 +94,9 @@ def process_variant_emails(
                 queue="ab_tests",
             )
             task_ids.append(task.id)
-        return {
-            "processed": len(subscribers),
-            "suppressed": 0,
-            "task_ids": task_ids
-        }
+        return {"processed": len(subscribers), "suppressed": 0, "task_ids": task_ids}
     except Exception as e:
-        logger.error(
-            f"Variant processing failed: {test_id} {variant_name}, error: {e}")
+        logger.error(f"Variant processing failed: {test_id} {variant_name}, error: {e}")
         return {"processed": 0, "suppressed": 0, "task_ids": []}
 
 
@@ -135,21 +131,20 @@ def send_ab_test_single_email(
 
         template = None
         if test.get("template_id"):
-            template = col_templates.find_one(
-                {"_id": ObjectId(test["template_id"])})
+            template = col_templates.find_one({"_id": ObjectId(test["template_id"])})
 
         subject = variant_config.get("subject") or test.get("subject", "")
-        sender_name = variant_config.get("sender_name") or test.get(
-            "sender_name", "")
+        sender_name = variant_config.get("sender_name") or test.get("sender_name", "")
         sender_email = variant_config.get("sender_email") or test.get(
-            "sender_email", "")
-        reply_to = (variant_config.get("reply_to")
-                    or test.get("reply_to", sender_email))
+            "sender_email", ""
+        )
+        reply_to = variant_config.get("reply_to") or test.get("reply_to", sender_email)
 
         html_content = ""
         if template:
-            html_content = (template.get("html_content", "")
-                            or template.get("content", ""))
+            html_content = template.get("html_content", "") or template.get(
+                "content", ""
+            )
             first_name = subscriber.get("first_name", "")
             email = subscriber.get("email", "")
             custom_fields = subscriber.get("custom_fields", {})
@@ -161,9 +156,11 @@ def send_ab_test_single_email(
                 html_content = html_content.replace(f"{{{{{k}}}}}", str(v))
 
         if not html_content:
-            html_content = (f"<html><body><p>Hello "
-                            f"{subscriber.get('first_name', 'there')},</p>"
-                            f"<p>{subject}</p></body></html>")
+            html_content = (
+                f"<html><body><p>Hello "
+                f"{subscriber.get('first_name', 'there')},</p>"
+                f"<p>{subject}</p></body></html>"
+            )
 
         email_service = get_email_service_sync(col_settings)
         result = email_service.send_email(
@@ -175,56 +172,46 @@ def send_ab_test_single_email(
             reply_to=reply_to,
         )
 
-        message_id = (getattr(result, "message_id", None)
-                      or getattr(result, "MessageId", None))
+        message_id = getattr(result, "message_id", None) or getattr(
+            result, "MessageId", None
+        )
 
         if getattr(result, "success", False):
-            ab_test_results_collection.insert_one({
-                "test_id":
-                test_id,
-                "variant":
-                variant,
-                "subscriber_id":
-                str(subscriber.get("_id") or subscriber.get("id", "")),
-                "subscriber_email":
-                subscriber["email"],
-                "email_sent":
-                True,
-                "sent_at":
-                datetime.utcnow(),
-                "message_id":
-                message_id,
-                "email_opened":
-                False,
-                "email_clicked":
-                False,
-                "conversion":
-                False,
-            })
-            logger.info(
-                f"A/B email sent: {test_id} {variant} {subscriber['email']}")
+            ab_test_results_collection.insert_one(
+                {
+                    "test_id": test_id,
+                    "variant": variant,
+                    "subscriber_id": str(
+                        subscriber.get("_id") or subscriber.get("id", "")
+                    ),
+                    "subscriber_email": subscriber["email"],
+                    "email_sent": True,
+                    "sent_at": datetime.utcnow(),
+                    "message_id": message_id,
+                    "email_opened": False,
+                    "email_clicked": False,
+                    "conversion": False,
+                }
+            )
+            logger.info(f"A/B email sent: {test_id} {variant} {subscriber['email']}")
         else:
             raise Exception(getattr(result, "error", "Send failed"))
 
     except Exception as e:
-        ab_test_results_collection.insert_one({
-            "test_id":
-            test_id,
-            "variant":
-            variant,
-            "subscriber_id":
-            str(subscriber.get("_id") or subscriber.get("id", "")),
-            "subscriber_email":
-            subscriber["email"],
-            "email_sent":
-            False,
-            "error":
-            str(e),
-            "sent_at":
-            datetime.utcnow(),
-        })
-        logger.error(f"A/B email failed: {test_id} {variant} "
-                     f"{subscriber.get('email', '?')}: {e}")
+        ab_test_results_collection.insert_one(
+            {
+                "test_id": test_id,
+                "variant": variant,
+                "subscriber_id": str(subscriber.get("_id") or subscriber.get("id", "")),
+                "subscriber_email": subscriber["email"],
+                "email_sent": False,
+                "error": str(e),
+                "sent_at": datetime.utcnow(),
+            }
+        )
+        logger.error(
+            f"A/B email failed: {test_id} {variant} {subscriber.get('email', '?')}: {e}"
+        )
         raise
 
 
@@ -259,8 +246,10 @@ def check_ab_test_expiry(self):
 
             elapsed = (now - start_date).total_seconds() / 3600
             if elapsed < duration_hours:
-                logger.debug(f"[AB Expiry] {test_id} not expired "
-                             f"({elapsed:.1f}h / {duration_hours}h)")
+                logger.debug(
+                    f"[AB Expiry] {test_id} not expired "
+                    f"({elapsed:.1f}h / {duration_hours}h)"
+                )
                 continue
 
             logger.info(f"[AB Expiry] {test_id} expired — auto-completing")
@@ -308,8 +297,7 @@ def auto_complete_ab_test(self, test_id: str, apply_to_campaign: bool = True):
             return {"success": True, "skipped": True}
 
         results = calculate_test_results_sync(test_id)
-        winner = determine_winner(results,
-                                  test.get("winner_criteria", "open_rate"))
+        winner = determine_winner(results, test.get("winner_criteria", "open_rate"))
 
         col.update_one(
             {"_id": ObjectId(test_id)},
@@ -324,15 +312,21 @@ def auto_complete_ab_test(self, test_id: str, apply_to_campaign: bool = True):
             },
         )
 
-        logger.info(f"[AB Complete] {test_id} completed — "
-                    f"winner={winner.get('winner')}, "
-                    f"improvement={winner.get('improvement')}%")
+        logger.info(
+            f"[AB Complete] {test_id} completed — "
+            f"winner={winner.get('winner')}, "
+            f"improvement={winner.get('improvement')}%"
+        )
 
         campaign_applied = False
-        if (apply_to_campaign and test.get("campaign_id")
-                and winner.get("winner") != "TIE"):
-            apply_winner_to_campaign_sync(test_id, str(test["campaign_id"]),
-                                          winner["winner"])
+        if (
+            apply_to_campaign
+            and test.get("campaign_id")
+            and winner.get("winner") != "TIE"
+        ):
+            apply_winner_to_campaign_sync(
+                test_id, str(test["campaign_id"]), winner["winner"]
+            )
             campaign_applied = True
 
         return {
@@ -344,6 +338,5 @@ def auto_complete_ab_test(self, test_id: str, apply_to_campaign: bool = True):
         }
 
     except Exception as e:
-        logger.error(
-            f"[AB Complete] auto_complete_ab_test failed for {test_id}: {e}")
+        logger.error(f"[AB Complete] auto_complete_ab_test failed for {test_id}: {e}")
         return {"success": False, "error": str(e)}

@@ -1,16 +1,34 @@
 // frontend/src/pages/AutomationAnalytics.jsx
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from "react";
 import {
-  BarChart, Bar, LineChart, Line, PieChart, Pie, Cell,
-  XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer
-} from 'recharts';
+  BarChart,
+  Bar,
+  LineChart,
+  Line,
+  PieChart,
+  Pie,
+  Cell,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+  ResponsiveContainer,
+} from "recharts";
 import {
-  TrendingUp, Users, Mail, CheckCircle, XCircle,
-  Clock, DollarSign, Activity, Download
-} from 'lucide-react';
-import API from '../api';
+  TrendingUp,
+  Users,
+  Mail,
+  CheckCircle,
+  XCircle,
+  Clock,
+  DollarSign,
+  Activity,
+  Download,
+} from "lucide-react";
+import API from "../api";
 
-const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6'];
+const COLORS = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6"];
 
 const AutomationAnalytics = () => {
   const [loading, setLoading] = useState(true);
@@ -34,21 +52,24 @@ const AutomationAnalytics = () => {
       setLoading(true);
       setError(null);
 
-      const [overviewRes, performanceRes, triggerRes, realtimeRes] = await Promise.all([
-        API.get(`/automation/analytics/overview?days=${selectedPeriod}`),
-        API.get(`/automation/analytics/rules/performance?days=${selectedPeriod}&limit=10`),
-        API.get(`/automation/analytics/triggers/comparison?days=${selectedPeriod}`),
-        API.get('/automation/analytics/realtime')
-      ]);
+      const [overviewRes, performanceRes, triggerRes, realtimeRes] =
+        await Promise.all([
+          API.get(`/automation/analytics/overview?days=${selectedPeriod}`),
+          API.get(
+            `/automation/analytics/rules/performance?days=${selectedPeriod}&limit=10`,
+          ),
+          API.get(
+            `/automation/analytics/triggers/comparison?days=${selectedPeriod}`,
+          ),
+          API.get("/automation/analytics/realtime"),
+        ]);
 
       setOverview(overviewRes.data);
       setRulesPerformance(performanceRes.data.rules || []);
       setTriggerComparison(triggerRes.data.triggers || []);
       setRealtimeStats(realtimeRes.data);
-
     } catch (err) {
-      console.error('Failed to load analytics:', err);
-      setError('Failed to load analytics data');
+      setError("Failed to load analytics data");
     } finally {
       setLoading(false);
     }
@@ -56,29 +77,32 @@ const AutomationAnalytics = () => {
 
   const loadRealtimeStats = async () => {
     try {
-      const res = await API.get('/automation/analytics/realtime');
+      const res = await API.get("/automation/analytics/realtime");
       setRealtimeStats(res.data);
-    } catch (err) {
-      console.error('Failed to load realtime stats:', err);
-    }
+    } catch (err) {}
   };
 
   const exportCSV = async () => {
     try {
-      const response = await API.get(`/automation/analytics/export/csv?days=${selectedPeriod}`, {
-        responseType: 'blob'
-      });
+      const response = await API.get(
+        `/automation/analytics/export/csv?days=${selectedPeriod}`,
+        {
+          responseType: "blob",
+        },
+      );
 
       const url = window.URL.createObjectURL(new Blob([response.data]));
-      const link = document.createElement('a');
+      const link = document.createElement("a");
       link.href = url;
-      link.setAttribute('download', `automation_analytics_${new Date().toISOString().split('T')[0]}.csv`);
+      link.setAttribute(
+        "download",
+        `automation_analytics_${new Date().toISOString().split("T")[0]}.csv`,
+      );
       document.body.appendChild(link);
       link.click();
       link.remove();
     } catch (err) {
-      console.error('Failed to export CSV:', err);
-      alert('Failed to export analytics');
+      setError("Failed to export analytics");
     }
   };
 
@@ -108,7 +132,9 @@ const AutomationAnalytics = () => {
       {/* Header */}
       <div className="flex justify-between items-center">
         <div>
-          <h1 className="text-3xl font-bold text-gray-900">Automation Analytics</h1>
+          <h1 className="text-3xl font-bold text-gray-900">
+            Automation Analytics
+          </h1>
           <p className="text-gray-600 mt-1">Performance insights and metrics</p>
         </div>
 
@@ -143,17 +169,23 @@ const AutomationAnalytics = () => {
           <div className="grid grid-cols-3 gap-6">
             <div>
               <p className="text-blue-100 text-sm">Last Hour</p>
-              <p className="text-3xl font-bold">{realtimeStats.last_hour.workflows_started}</p>
+              <p className="text-3xl font-bold">
+                {realtimeStats.last_hour.workflows_started}
+              </p>
               <p className="text-sm">Workflows Started</p>
             </div>
             <div>
               <p className="text-blue-100 text-sm">Last Hour</p>
-              <p className="text-3xl font-bold">{realtimeStats.last_hour.emails_sent}</p>
+              <p className="text-3xl font-bold">
+                {realtimeStats.last_hour.emails_sent}
+              </p>
               <p className="text-sm">Emails Sent</p>
             </div>
             <div>
               <p className="text-blue-100 text-sm">Currently</p>
-              <p className="text-3xl font-bold">{realtimeStats.current.active_workflows}</p>
+              <p className="text-3xl font-bold">
+                {realtimeStats.current.active_workflows}
+              </p>
               <p className="text-sm">Active Workflows</p>
             </div>
           </div>
@@ -196,7 +228,9 @@ const AutomationAnalytics = () => {
 
       {/* Top Performing Rules */}
       <div className="bg-white rounded-lg shadow-sm border p-6">
-        <h2 className="text-xl font-semibold mb-4">Top Performing Automations</h2>
+        <h2 className="text-xl font-semibold mb-4">
+          Top Performing Automations
+        </h2>
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead>
@@ -215,7 +249,9 @@ const AutomationAnalytics = () => {
                 <tr key={rule.rule_id} className="border-b hover:bg-gray-50">
                   <td className="py-3 px-4">
                     <div className="flex items-center gap-2">
-                      <span className="text-sm font-medium text-gray-700">{index + 1}.</span>
+                      <span className="text-sm font-medium text-gray-700">
+                        {index + 1}.
+                      </span>
                       <span className="font-medium">{rule.rule_name}</span>
                     </div>
                   </td>
@@ -224,15 +260,21 @@ const AutomationAnalytics = () => {
                       {rule.trigger}
                     </span>
                   </td>
-                  <td className="text-right py-3 px-4">{rule.workflows_started}</td>
+                  <td className="text-right py-3 px-4">
+                    {rule.workflows_started}
+                  </td>
                   <td className="text-right py-3 px-4">{rule.emails_sent}</td>
                   <td className="text-right py-3 px-4">
-                    <span className={`font-medium ${rule.open_rate >= 20 ? 'text-green-600' : 'text-gray-600'}`}>
+                    <span
+                      className={`font-medium ${rule.open_rate >= 20 ? "text-green-600" : "text-gray-600"}`}
+                    >
                       {rule.open_rate}%
                     </span>
                   </td>
                   <td className="text-right py-3 px-4">
-                    <span className={`font-medium ${rule.click_rate >= 5 ? 'text-green-600' : 'text-gray-600'}`}>
+                    <span
+                      className={`font-medium ${rule.click_rate >= 5 ? "text-green-600" : "text-gray-600"}`}
+                    >
                       {rule.click_rate}%
                     </span>
                   </td>
@@ -251,7 +293,9 @@ const AutomationAnalytics = () => {
       {/* Trigger Comparison */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="bg-white rounded-lg shadow-sm border p-6">
-          <h2 className="text-xl font-semibold mb-4">Performance by Trigger Type</h2>
+          <h2 className="text-xl font-semibold mb-4">
+            Performance by Trigger Type
+          </h2>
           <ResponsiveContainer width="100%" height={300}>
             <BarChart data={triggerComparison}>
               <CartesianGrid strokeDasharray="3 3" />
@@ -259,7 +303,11 @@ const AutomationAnalytics = () => {
               <YAxis />
               <Tooltip />
               <Legend />
-              <Bar dataKey="workflows_started" fill="#3b82f6" name="Workflows" />
+              <Bar
+                dataKey="workflows_started"
+                fill="#3b82f6"
+                name="Workflows"
+              />
               <Bar dataKey="emails_sent" fill="#10b981" name="Emails" />
             </BarChart>
           </ResponsiveContainer>
@@ -279,7 +327,10 @@ const AutomationAnalytics = () => {
                 label
               >
                 {triggerComparison.map((entry, index) => (
-                  <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                  <Cell
+                    key={`cell-${index}`}
+                    fill={COLORS[index % COLORS.length]}
+                  />
                 ))}
               </Pie>
               <Tooltip />
@@ -295,10 +346,10 @@ const AutomationAnalytics = () => {
 // Stat Card Component
 const StatCard = ({ icon, title, value, subtitle, color }) => {
   const colorClasses = {
-    blue: 'bg-blue-50 border-blue-200',
-    green: 'bg-green-50 border-green-200',
-    purple: 'bg-purple-50 border-purple-200',
-    orange: 'bg-orange-50 border-orange-200'
+    blue: "bg-blue-50 border-blue-200",
+    green: "bg-green-50 border-green-200",
+    purple: "bg-purple-50 border-purple-200",
+    orange: "bg-orange-50 border-orange-200",
   };
 
   return (
@@ -307,7 +358,9 @@ const StatCard = ({ icon, title, value, subtitle, color }) => {
         <div className="p-2 bg-white rounded-lg">{icon}</div>
       </div>
       <h3 className="text-gray-600 text-sm font-medium mb-1">{title}</h3>
-      <p className="text-3xl font-bold text-gray-900 mb-1">{value.toLocaleString()}</p>
+      <p className="text-3xl font-bold text-gray-900 mb-1">
+        {value.toLocaleString()}
+      </p>
       <p className="text-sm text-gray-600">{subtitle}</p>
     </div>
   );

@@ -1,6 +1,31 @@
-import React, { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import API from "../api";
+
+function useToast() {
+  const [toasts, setToasts] = useState([]);
+  const show = useCallback((message, type = "info") => {
+    const id = Date.now();
+    setToasts(p => [...p, { id, message, type }]);
+    setTimeout(() => setToasts(p => p.filter(t => t.id !== id)), 4000);
+  }, []);
+  const dismiss = (id) => setToasts(p => p.filter(t => t.id !== id));
+  return { toasts, show, dismiss };
+}
+
+function ToastContainer({ toasts, dismiss }) {
+  return (
+    <div className="fixed top-4 right-4 z-50 space-y-2 pointer-events-none">
+      {toasts.map(t => (
+        <div key={t.id} onClick={() => dismiss(t.id)}
+          className={`pointer-events-auto flex items-center gap-2 px-4 py-3 rounded-lg shadow-lg text-sm font-medium cursor-pointer max-w-sm
+            ${t.type === "success" ? "bg-green-600 text-white" : t.type === "error" ? "bg-red-600 text-white" : "bg-gray-800 text-white"}`}>
+          {t.type === "success" ? "✓" : t.type === "error" ? "✕" : "ℹ"} {t.message}
+        </div>
+      ))}
+    </div>
+  );
+}
 
 // ── Helper: time remaining until auto-declare ──────────────
 const getTimeRemaining = (startDate, durationHours) => {
@@ -18,6 +43,7 @@ const ABTestResults = () => {
   const { testId } = useParams();
   const navigate = useNavigate();
 
+  const { toasts, show: toast, dismiss } = useToast();
   const [results, setResults] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -70,10 +96,10 @@ const ABTestResults = () => {
       const res = await API.post(`/ab-tests/${testId}/complete`, {
         apply_to_campaign: applyWinner,
       });
-      alert(res.data.message || "Test completed.");
+      toast(res.data.message || "Test completed.", "success");
       fetchResults();
     } catch (err) {
-      alert(err.response?.data?.detail || "Failed to complete test");
+      toast(err.response?.data?.detail || "Failed to complete test", "error");
     } finally {
       setCompleting(false);
     }
@@ -92,10 +118,10 @@ const ABTestResults = () => {
     setSending(true);
     try {
       await API.post(`/campaigns/${results.campaign_id}/send`);
-      alert("Campaign send initiated! Redirecting to Campaigns...");
+      toast("Campaign send initiated!", "success");
       navigate("/campaigns");
     } catch (err) {
-      alert(err.response?.data?.detail || "Failed to send campaign");
+      toast(err.response?.data?.detail || "Failed to send campaign", "error");
     } finally {
       setSending(false);
     }
@@ -105,16 +131,16 @@ const ABTestResults = () => {
 
   if (loading) {
     return (
-      <div className="max-w-6xl mx-auto mt-10 p-6 text-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
-        <p className="mt-4 text-gray-600">Loading results...</p>
-      </div>
+      <div className="flex items-center justify-center py-24 gap-3 text-gray-400">
+    <div className="animate-spin h-5 w-5 border-2 border-gray-300 border-t-blue-500 rounded-full" />
+    Loading results…
+  </div>
     );
   }
 
   if (error) {
     return (
-      <div className="max-w-6xl mx-auto mt-10 p-6">
+      <div className="py-6">
         <div className="bg-red-50 border border-red-200 rounded p-4">
           <p className="text-red-800">{error}</p>
           <button
@@ -160,20 +186,19 @@ const ABTestResults = () => {
   };
 
   return (
-    <div className="max-w-6xl mx-auto p-6 space-y-6">
+    <div className="space-y-6">
+      <ToastContainer toasts={toasts} dismiss={dismiss} />
       {/* ── Header ── */}
-      <div className="flex justify-between items-center">
+      <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold text-gray-900">
-            📊 A/B Test Results
-          </h1>
-          <p className="text-gray-500 text-sm mt-1">{results.test_name}</p>
+          <p className="text-base font-semibold text-gray-900">{results.test_name}</p>
+          <p className="text-xs text-gray-400 mt-0.5">{results.test_type?.replace("_", " ")} test</p>
         </div>
         <button
           onClick={() => navigate("/ab-testing")}
-          className="bg-gray-600 text-white px-4 py-2 rounded-lg hover:bg-gray-700 text-sm"
+          className="px-4 py-2 border border-gray-200 text-sm font-medium rounded-lg hover:bg-gray-50 text-gray-600"
         >
-          ← Back to Dashboard
+          ← Back
         </button>
       </div>
 

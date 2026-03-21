@@ -1,15 +1,23 @@
-import { useState, useEffect } from 'react';
-import { useParams, Link } from 'react-router-dom';
-import API from '../api';
-import { useNavigate } from 'react-router-dom';
-import axios from 'axios';
+import { useState, useEffect } from "react";
+import { useParams, Link, useNavigate } from "react-router-dom";
+import API from "../api";
+import axios from "axios";
 
-
-
+const fmt = (n) => Number(n ?? 0).toLocaleString();
+const fmtD = (iso) =>
+  iso
+    ? new Date(iso).toLocaleString(undefined, {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      })
+    : "—";
 
 export default function CampaignAnalytics() {
   const { campaignId } = useParams();
-  const navigate = useNavigate();       
+  const navigate = useNavigate();
   const [analyticsData, setAnalyticsData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -23,205 +31,176 @@ export default function CampaignAnalytics() {
     try {
       setLoading(true);
       setError(null);
-      const response = await API.get(`/analytics/campaigns/${campaignId}`);
-      setAnalyticsData(response.data);
-    } catch (error) {
-      console.error('Error fetching campaign analytics:', error);
-      setError(error.response?.data?.detail || 'Failed to load analytics');
+      const res = await API.get(`/analytics/campaigns/${campaignId}`);
+      setAnalyticsData(res.data);
+    } catch (err) {
+      setError(err.response?.data?.detail || "Failed to load analytics");
     } finally {
       setLoading(false);
     }
   };
 
-  const downloadReport = async (eventType = 'all') => {
+  const downloadReport = async (eventType = "all") => {
     setDownloading(eventType);
     try {
-      const token = localStorage.getItem('token');
+      const token = localStorage.getItem("token");
       const response = await axios.get(
         `/api/analytics/campaigns/${campaignId}/export?event_type=${eventType}`,
         {
-          responseType: 'blob',
-          headers: { Authorization: `Bearer ${token}` }
-        }
+          responseType: "blob",
+          headers: { Authorization: `Bearer ${token}` },
+        },
       );
-      const campaignTitle = (analyticsData?.campaign?.title || 'campaign')
-        .replace(/[^a-z0-9]/gi, '_')
-        .replace(/_+/g, '_')
+      const title = (analyticsData?.campaign?.title || "campaign")
+        .replace(/[^a-z0-9]/gi, "_")
+        .replace(/_+/g, "_")
         .toLowerCase();
-      const filename = eventType === 'all'
-        ? `${campaignTitle}_full_report.csv`
-        : `${campaignTitle}_${eventType}.csv`;
+      const filename =
+        eventType === "all"
+          ? `${title}_full_report.csv`
+          : `${title}_${eventType}.csv`;
       const url = window.URL.createObjectURL(new Blob([response.data]));
-      const link = document.createElement('a');
+      const link = document.createElement("a");
       link.href = url;
-      link.setAttribute('download', filename);
+      link.setAttribute("download", filename);
       document.body.appendChild(link);
       link.click();
       link.remove();
       window.URL.revokeObjectURL(url);
     } catch (err) {
-      console.error('Download failed:', err);
-      alert('Download failed. Please try again.');
+      alert("Download failed. Please try again.");
     } finally {
       setDownloading(null);
     }
   };
 
-  if (loading) {
-    return <LoadingSkeleton />;
-  }
-
-  if (error) {
+  if (loading) return <LoadingSkeleton />;
+  if (error)
     return <ErrorState error={error} onRetry={fetchCampaignAnalytics} />;
-  }
 
   const { campaign, analytics, recent_events, top_links } = analyticsData || {};
+  const progress =
+    campaign?.target_list_count > 0
+      ? Math.round((campaign.sent_count / campaign.target_list_count) * 100)
+      : 0;
 
   return (
     <div className="space-y-6">
-      {/* Clean Header */}
-      <div className="bg-white rounded-lg shadow-sm border mb-6">
-        <div className="px-6 py-5">
-          <div className="flex flex-col lg:flex-row lg:justify-between lg:items-center space-y-4 lg:space-y-0">
+      {/* ── Header ── */}
+      <div className="bg-white rounded-xl border border-gray-200 shadow-sm px-6 py-5">
+        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+          <div className="flex items-center gap-3">
             <div>
-              <div className="flex items-center space-x-3 mb-2">
-                <div className="w-10 h-10 bg-blue-600 rounded-lg flex items-center justify-center">
-                  <span className="text-white text-xl">📊</span>
-                </div>
-                <div>
-                  <h1 className="text-2xl font-bold text-gray-900">Campaign Analytics</h1>
-                  <div className="flex items-center space-x-3 mt-1">
-                    <p className="text-gray-600">{campaign?.title}</p>
-                    <CampaignStatusBadge status={campaign?.status} />
-                  </div>
-                </div>
+              <div className="flex items-center gap-3 flex-wrap">
+                <h1 className="text-lg font-bold text-gray-900">
+                  {campaign?.title || "Campaign Analytics"}
+                </h1>
+                <CampaignStatusBadge status={campaign?.status} />
               </div>
+              <p className="text-sm text-gray-500 mt-0.5">
+                {campaign?.subject}
+              </p>
             </div>
-            <div className="flex flex-wrap gap-2">
-              <button 
-                onClick={fetchCampaignAnalytics}
-                className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors flex items-center space-x-2"
-              >
-                <span>🔄</span>
-                <span>Refresh</span>
-              </button>
-              <button
-                onClick={() => downloadReport('all')}
-                disabled={downloading === 'all'}
-                className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-60 flex items-center space-x-2 transition-colors"
-              >
-                <span>{downloading === 'all' ? '⏳' : '⬇️'}</span>
-                <span>{downloading === 'all' ? 'Downloading...' : 'Download Full Report'}</span>
-              </button>
-              <button
-                onClick={() => navigate(-1)}
-                className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
-              >        
-                <span>← Back</span>
-              </button>
-            </div>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button
+              onClick={fetchCampaignAnalytics}
+              className="flex items-center gap-2 px-4 py-2 border border-gray-200 text-sm font-medium rounded-lg hover:bg-gray-50 text-gray-600"
+            >
+              🔄 Refresh
+            </button>
+            <button
+              onClick={() => downloadReport("all")}
+              disabled={downloading === "all"}
+              className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white text-sm font-semibold rounded-lg hover:bg-green-700 disabled:opacity-60"
+            >
+              {downloading === "all" ? "⏳ Downloading…" : "⬇️ Full Report"}
+            </button>
+            <button
+              onClick={() => navigate(-1)}
+              className="flex items-center gap-2 px-4 py-2 border border-gray-200 text-sm font-medium rounded-lg hover:bg-gray-50 text-gray-600"
+            >
+              ← Back
+            </button>
           </div>
         </div>
       </div>
 
-      {/* Campaign Progress - Simplified */}
-      <div className="bg-white rounded-lg shadow-sm border mb-6">
-        <div className="px-6 py-5 border-b border-gray-200">
-          <div className="flex items-center space-x-2">
-            <span className="text-lg">📤</span>
-            <h2 className="text-lg font-semibold text-gray-900">Campaign Progress</h2>
-          </div>
+      {/* ── Progress ── */}
+      <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
+        <h2 className="text-sm font-semibold text-gray-700 mb-5">
+          Campaign Progress
+        </h2>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+          <ProgressCard
+            title="Target"
+            value={campaign?.target_list_count || 0}
+            subtitle="Total to send"
+            icon="🎯"
+            color="bg-blue-50   text-blue-700   border-blue-200"
+          />
+          <ProgressCard
+            title="Processed"
+            value={campaign?.processed_count || 0}
+            subtitle="Processed"
+            icon="⚙️"
+            color="bg-green-50  text-green-700  border-green-200"
+          />
+          <ProgressCard
+            title="Sent"
+            value={campaign?.sent_count || 0}
+            subtitle="Successfully"
+            icon="✅"
+            color="bg-purple-50 text-purple-700 border-purple-200"
+          />
+          <ProgressCard
+            title="Queued"
+            value={campaign?.queued_count || 0}
+            subtitle="Waiting"
+            icon="⏳"
+            color="bg-orange-50 text-orange-700 border-orange-200"
+          />
         </div>
-        
-        <div className="p-6">
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-            <ProgressCard
-              title="Target Subscribers"
-              value={campaign?.target_list_count || 0}
-              subtitle="Total to send to"
-              icon="🎯"
-              color="bg-blue-50 text-blue-700 border-blue-200"
-            />
-            <ProgressCard
-              title="Processed"
-              value={campaign?.processed_count || 0}
-              subtitle="Emails processed"
-              icon="⚙️"
-              color="bg-green-50 text-green-700 border-green-200"
-            />
-            <ProgressCard
-              title="Sent Successfully"
-              value={campaign?.sent_count || 0}
-              subtitle="Successfully sent"
-              icon="✅"
-              color="bg-purple-50 text-purple-700 border-purple-200"
-            />
-            <ProgressCard
-              title="In Queue"
-              value={campaign?.queued_count || 0}
-              subtitle="Waiting to send"
-              icon="⏳"
-              color="bg-orange-50 text-orange-700 border-orange-200"
-            />
-          </div>
-
-          {/* Simple Progress Bar */}
-          <div className="mb-4">
-            <div className="flex justify-between items-center mb-2">
-              <span className="text-sm font-medium text-gray-700">Progress</span>
-              <span className="text-sm text-gray-600">
-                {campaign?.target_list_count > 0 
-                  ? `${Math.round((campaign?.sent_count / campaign?.target_list_count) * 100)}%`
-                  : '0%'
-                }
-              </span>
-            </div>
-            <div className="bg-gray-200 rounded-full h-2">
-              <div 
-                className="bg-blue-600 h-2 rounded-full transition-all duration-500"
-                style={{ 
-                  width: `${campaign?.target_list_count > 0 ? (campaign?.sent_count / campaign?.target_list_count) * 100 : 0}%` 
-                }}
-              ></div>
-            </div>
-          </div>
-
-          {/* Simple Timeline */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-4 border-t border-gray-200">
-            <TimelineItem
-              label="Started"
-              value={campaign?.started_at ? new Date(campaign.started_at).toLocaleString() : 'Not started'}
-            />
-            <TimelineItem
-              label="Last Batch"
-              value={campaign?.last_batch_at ? new Date(campaign.last_batch_at).toLocaleString() : 'N/A'}
-            />
-            <TimelineItem
-              label="Completed"
-              value={campaign?.completed_at ? new Date(campaign.completed_at).toLocaleString() : 'In progress'}
-            />
-          </div>
+        <div className="mb-1 flex justify-between text-xs text-gray-500">
+          <span>Progress</span>
+          <span>{progress}%</span>
+        </div>
+        <div className="bg-gray-100 rounded-full h-2 mb-5">
+          <div
+            className="bg-blue-600 h-2 rounded-full transition-all duration-500"
+            style={{ width: `${progress}%` }}
+          />
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-4 border-t border-gray-100">
+          <TimelineItem label="Started" value={fmtD(campaign?.started_at)} />
+          <TimelineItem
+            label="Last Batch"
+            value={fmtD(campaign?.last_batch_at)}
+          />
+          <TimelineItem
+            label="Completed"
+            value={
+              campaign?.completed_at
+                ? fmtD(campaign.completed_at)
+                : "In progress"
+            }
+          />
         </div>
       </div>
 
-      {/* Engagement Metrics - Clean */}
-      <div className="mb-6">
-        <div className="flex items-center justify-between mb-4">
-          <div className="flex items-center space-x-2">
-            <span className="text-lg">📈</span>
-            <h2 className="text-lg font-semibold text-gray-900">Engagement Metrics</h2>
-          </div>
-        </div>
-        
-        {/* Positive Metrics */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+      {/* ── Engagement metrics ── */}
+      <div>
+        <h2 className="text-sm font-semibold text-gray-700 mb-4">
+          Engagement Metrics
+        </h2>
+        <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
           <MetricCard
-            title="Total Sent"
+            title="Sent"
             value={analytics?.total_sent || 0}
-            subtitle="From campaign data"
+            subtitle="From campaign"
             icon="📧"
             color="text-blue-600"
-            bgColor="bg-blue-50"
+            bg="bg-blue-50"
           />
           <MetricCard
             title="Opens"
@@ -229,9 +208,9 @@ export default function CampaignAnalytics() {
             subtitle={`${analytics?.open_rate || 0}% open rate`}
             icon="👁️"
             color="text-green-600"
-            bgColor="bg-green-50"
-            onDownload={() => downloadReport('opened')}
-            downloading={downloading === 'opened'}
+            bg="bg-green-50"
+            onDownload={() => downloadReport("opened")}
+            downloading={downloading === "opened"}
           />
           <MetricCard
             title="Clicks"
@@ -239,48 +218,49 @@ export default function CampaignAnalytics() {
             subtitle={`${analytics?.click_rate || 0}% click rate`}
             icon="👆"
             color="text-purple-600"
-            bgColor="bg-purple-50"
-            onDownload={() => downloadReport('clicked')}
-            downloading={downloading === 'clicked'}
+            bg="bg-purple-50"
+            onDownload={() => downloadReport("clicked")}
+            downloading={downloading === "clicked"}
           />
           <MetricCard
             title="Delivered"
-            value={analytics?.total_delivered || (analytics?.total_sent - analytics?.total_bounced) || 0}
-            subtitle={`${analytics?.delivery_rate || 0}% delivery rate`}
+            value={
+              analytics?.total_delivered ||
+              analytics?.total_sent - analytics?.total_bounced ||
+              0
+            }
+            subtitle={`${analytics?.delivery_rate || 0}% delivery`}
             icon="✅"
             color="text-teal-600"
-            bgColor="bg-teal-50"
-            onDownload={() => downloadReport('delivered')}
-            downloading={downloading === 'delivered'}
+            bg="bg-teal-50"
+            onDownload={() => downloadReport("delivered")}
+            downloading={downloading === "delivered"}
           />
         </div>
-
-        {/* Negative Metrics grouped */}
-        <div className="bg-red-50 border border-red-100 rounded-lg p-5">
-          <h3 className="text-md font-semibold text-red-800 mb-4 flex items-center space-x-2">
-            <span>⚠️</span>
-            <span>Issues & Failures</span>
+        <div className="bg-red-50 border border-red-100 rounded-xl p-5">
+          <h3 className="text-sm font-semibold text-red-800 mb-4">
+            ⚠️ Issues & Failures
           </h3>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <MetricCard
               title="Bounces"
               value={analytics?.total_bounced || 0}
-              subtitle={`${analytics?.bounce_rate || 0}% bounce rate`}
+              subtitle={`${analytics?.bounce_rate || 0}% bounce`}
               icon="⚠️"
               color="text-red-600"
-              bgColor="bg-red-100"
-              onDownload={() => downloadReport('bounced')}
-              downloading={downloading === 'bounced'}
+              bg="bg-red-100"
+              onDownload={() => downloadReport("bounced")}
+              downloading={downloading === "bounced"}
             />
             <MetricCard
               title="Unsubscribes"
               value={analytics?.total_unsubscribed || 0}
-              subtitle={`${analytics?.unsubscribe_rate || 0}% unsubscribe rate`}
+              subtitle={`${analytics?.unsubscribe_rate || 0}% unsub`}
               icon="🚫"
               color="text-orange-600"
-              bgColor="bg-orange-100"
-              onDownload={() => downloadReport('unsubscribed')}
-              downloading={downloading === 'unsubscribed'}
+              bg="bg-orange-100"
+              onDownload={() => downloadReport("unsubscribed")}
+              downloading={downloading === "unsubscribed"}
             />
             <MetricCard
               title="Spam Reports"
@@ -288,268 +268,284 @@ export default function CampaignAnalytics() {
               subtitle="Marked as spam"
               icon="🚨"
               color="text-red-700"
-              bgColor="bg-red-100"
-              onDownload={() => downloadReport('spam_report')}
-              downloading={downloading === 'spam_report'}
+              bg="bg-red-100"
+              onDownload={() => downloadReport("spam_report")}
+              downloading={downloading === "spam_report"}
             />
           </div>
         </div>
       </div>
 
-      {/* Performance Overview - Clean */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+      {/* ── Links + Activity ── */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <TopClickedLinks links={top_links} />
         <RecentActivity events={recent_events} />
       </div>
 
-      {/* Campaign Details - Clean */}
+      {/* ── Campaign details ── */}
       <CampaignDetails campaign={campaign} />
     </div>
   );
 }
 
-// Simplified Components
+// ─── sub-components ──────────────────────────────────────────
 const ProgressCard = ({ title, value, subtitle, icon, color }) => (
-  <div className={`${color} border rounded-lg p-4 hover:shadow-sm transition-shadow`}>
-    <div className="text-center">
-      <div className="text-2xl mb-2">{icon}</div>
-      <p className="text-sm font-medium mb-1">{title}</p>
-      <p className="text-2xl font-bold mb-1">{value?.toLocaleString()}</p>
-      <p className="text-xs opacity-75">{subtitle}</p>
-    </div>
+  <div className={`${color} border rounded-xl p-4 text-center`}>
+    <p className="text-2xl mb-1">{icon}</p>
+    <p className="text-xs font-medium mb-0.5">{title}</p>
+    <p className="text-2xl font-bold tabular-nums">{fmt(value)}</p>
+    <p className="text-xs opacity-70 mt-0.5">{subtitle}</p>
   </div>
 );
 
 const TimelineItem = ({ label, value }) => (
   <div>
-    <p className="text-sm font-medium text-gray-900 mb-1">{label}</p>
-    <p className="text-sm text-gray-600">{value}</p>
+    <p className="text-xs font-medium text-gray-500 mb-0.5">{label}</p>
+    <p className="text-sm text-gray-800">{value}</p>
   </div>
 );
 
-const MetricCard = ({ title, value, subtitle, icon, color, bgColor, onDownload, downloading }) => (
-  <div className={`bg-white ${bgColor} rounded-lg p-5 shadow-sm border hover:shadow-md transition-shadow relative`}>
+const MetricCard = ({
+  title,
+  value,
+  subtitle,
+  icon,
+  color,
+  bg,
+  onDownload,
+  downloading,
+}) => (
+  <div
+    className={`bg-white ${bg} rounded-xl p-5 border hover:shadow-sm transition-shadow relative`}
+  >
     {onDownload && (
       <button
         onClick={onDownload}
         disabled={downloading}
         title={`Download ${title} list`}
-        className="absolute top-3 right-3 p-1.5 bg-white rounded-md border border-gray-200 hover:bg-gray-50 disabled:opacity-50 transition-colors shadow-sm"
+        className="absolute top-3 right-3 p-1.5 bg-white rounded-lg border border-gray-200 hover:bg-gray-50 disabled:opacity-50 shadow-sm text-xs"
       >
-        <span className="text-xs">{downloading ? '⏳' : '⬇️'}</span>
+        {downloading ? "⏳" : "⬇️"}
       </button>
     )}
     <div className="text-center">
-      <div className="text-2xl mb-3">{icon}</div>
-      <p className="text-sm font-medium text-gray-600 mb-2">{title}</p>
-      <p className={`text-3xl font-bold ${color} mb-2`}>
-        {typeof value === 'number' ? value.toLocaleString() : value}
+      <p className="text-2xl mb-2">{icon}</p>
+      <p className="text-xs font-medium text-gray-500 mb-1">{title}</p>
+      <p className={`text-3xl font-bold tabular-nums ${color} mb-1`}>
+        {fmt(value)}
       </p>
-      {subtitle && <p className="text-sm text-gray-500">{subtitle}</p>}
+      {subtitle && <p className="text-xs text-gray-400">{subtitle}</p>}
     </div>
   </div>
 );
 
 const TopClickedLinks = ({ links }) => (
-  <div className="bg-white rounded-lg shadow-sm border">
-    <div className="px-6 py-4 border-b border-gray-200">
-      <h3 className="text-lg font-semibold text-gray-900 flex items-center space-x-2">
-        <span>🔗</span>
-        <span>Top Clicked Links</span>
+  <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+    <div className="px-5 py-4 border-b border-gray-100">
+      <h3 className="text-sm font-semibold text-gray-700">
+        🔗 Top Clicked Links
       </h3>
     </div>
-    <div className="p-6">
+    <div className="p-5">
       {links?.length > 0 ? (
-        <div className="space-y-3">
-          {links.map((link, index) => (
-            <div key={index} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors">
-              <div className="flex items-center space-x-3 flex-1 min-w-0">
-                <div className="w-6 h-6 bg-blue-600 text-white rounded-md flex items-center justify-center text-xs font-bold">
-                  {index + 1}
+        <div className="space-y-2">
+          {links.map((link, i) => (
+            <div
+              key={i}
+              className="flex items-center justify-between p-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors"
+            >
+              <div className="flex items-center gap-3 flex-1 min-w-0">
+                <div className="w-6 h-6 bg-blue-600 text-white rounded-md flex items-center justify-center text-xs font-bold flex-shrink-0">
+                  {i + 1}
                 </div>
-                <p className="text-sm font-medium text-gray-900 truncate" title={link.url}>
-                  {link.url || 'Unknown URL'}
+                <p className="text-sm text-gray-800 truncate">
+                  {link.url || "Unknown URL"}
                 </p>
               </div>
-              <span className="px-3 py-1 bg-blue-100 text-blue-800 text-sm font-medium rounded-full">
-                {link.clicks} clicks
+              <span className="px-2.5 py-1 bg-blue-100 text-blue-800 text-xs font-semibold rounded-full ml-3 flex-shrink-0">
+                {fmt(link.clicks)}
               </span>
             </div>
           ))}
         </div>
       ) : (
         <div className="text-center py-8">
-          <div className="text-4xl text-gray-300 mb-3">🔗</div>
-          <p className="text-gray-500 mb-1">No link clicks recorded yet</p>
-          <p className="text-sm text-gray-400">Links will appear here once users start clicking</p>
+          <p className="text-3xl text-gray-200 mb-2">🔗</p>
+          <p className="text-sm text-gray-400">No link clicks recorded yet</p>
         </div>
       )}
     </div>
   </div>
 );
 
+const EVENT_ICONS = {
+  opened: { icon: "👁️", bg: "bg-green-100", color: "text-green-600" },
+  clicked: { icon: "👆", bg: "bg-purple-100", color: "text-purple-600" },
+  bounced: { icon: "⚠️", bg: "bg-red-100", color: "text-red-600" },
+  delivered: { icon: "✅", bg: "bg-green-100", color: "text-green-600" },
+  unsubscribed: { icon: "🚫", bg: "bg-orange-100", color: "text-orange-600" },
+  spam_report: { icon: "🚨", bg: "bg-red-100", color: "text-red-600" },
+};
+
 const RecentActivity = ({ events }) => (
-  <div className="bg-white rounded-lg shadow-sm border">
-    <div className="px-6 py-4 border-b border-gray-200">
-      <h3 className="text-lg font-semibold text-gray-900 flex items-center space-x-2">
-        <span>📈</span>
-        <span>Recent Activity</span>
+  <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+    <div className="px-5 py-4 border-b border-gray-100">
+      <h3 className="text-sm font-semibold text-gray-700">
+        📈 Recent Activity
       </h3>
     </div>
-    <div className="p-6">
+    <div className="p-5">
       {events?.length > 0 ? (
-        <div className="space-y-3 max-h-80 overflow-y-auto">
-          {events.slice(0, 15).map((event, index) => (
-            <div key={index} className="flex items-center space-x-3 p-2 hover:bg-gray-50 rounded-lg transition-colors">
-              <EventIcon eventType={event.event_type} />
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium text-gray-900">
-                  <span className="capitalize">{event.event_type}</span>
-                  {event.subscriber_email && (
-                    <span className="text-gray-500 ml-2">• {event.subscriber_email}</span>
-                  )}
-                </p>
-                <p className="text-xs text-gray-500">
-                  {new Date(event.timestamp).toLocaleString()}
-                </p>
-                {event.url && event.event_type === 'clicked' && (
-                  <p className="text-xs text-blue-600 truncate mt-1" title={event.url}>
-                    🔗 {event.url}
+        <div className="space-y-2 max-h-72 overflow-y-auto">
+          {events.slice(0, 15).map((event, i) => {
+            const cfg = EVENT_ICONS[event.event_type] || {
+              icon: "📧",
+              bg: "bg-gray-100",
+              color: "text-gray-600",
+            };
+            return (
+              <div
+                key={i}
+                className="flex items-center gap-3 p-2 hover:bg-gray-50 rounded-lg"
+              >
+                <div
+                  className={`w-7 h-7 ${cfg.bg} rounded-lg flex items-center justify-center flex-shrink-0`}
+                >
+                  <span className="text-xs">{cfg.icon}</span>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-medium text-gray-800 capitalize">
+                    {event.event_type}
+                    {event.subscriber_email && (
+                      <span className="text-gray-400 font-normal ml-1">
+                        · {event.subscriber_email}
+                      </span>
+                    )}
                   </p>
-                )}
+                  <p className="text-xs text-gray-400">
+                    {fmtD(event.timestamp)}
+                  </p>
+                  {event.url && event.event_type === "clicked" && (
+                    <p className="text-xs text-blue-500 truncate mt-0.5">
+                      {event.url}
+                    </p>
+                  )}
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       ) : (
         <div className="text-center py-8">
-          <div className="text-4xl text-gray-300 mb-3">📊</div>
-          <p className="text-gray-500 mb-1">No recent activity</p>
-          <p className="text-sm text-gray-400">Activity will appear here as subscribers interact</p>
+          <p className="text-3xl text-gray-200 mb-2">📊</p>
+          <p className="text-sm text-gray-400">No recent activity</p>
         </div>
       )}
     </div>
   </div>
 );
 
-const EventIcon = ({ eventType }) => {
-  const iconConfig = {
-    opened: { icon: '👁️', bg: 'bg-green-100', color: 'text-green-600' },
-    clicked: { icon: '👆', bg: 'bg-purple-100', color: 'text-purple-600' },
-    bounced: { icon: '⚠️', bg: 'bg-red-100', color: 'text-red-600' },
-    delivered: { icon: '✅', bg: 'bg-green-100', color: 'text-green-600' },
-    unsubscribed: { icon: '🚫', bg: 'bg-orange-100', color: 'text-orange-600' },
-    spam_report: { icon: '🚨', bg: 'bg-red-100', color: 'text-red-600' }
-  };
-  
-  const config = iconConfig[eventType] || { icon: '📧', bg: 'bg-gray-100', color: 'text-gray-600' };
-  
-  return (
-    <div className={`w-8 h-8 ${config.bg} rounded-lg flex items-center justify-center flex-shrink-0`}>
-      <span className={`text-sm ${config.color}`}>{config.icon}</span>
+const CampaignDetails = ({ campaign }) => (
+  <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+    <div className="px-5 py-4 border-b border-gray-100">
+      <h3 className="text-sm font-semibold text-gray-700">
+        📧 Campaign Details
+      </h3>
     </div>
+    <div className="p-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+      {[
+        { label: "Title", value: campaign?.title },
+        { label: "Subject", value: campaign?.subject },
+        { label: "Sender", value: campaign?.sender_name },
+        { label: "From", value: campaign?.sender_email },
+        {
+          label: "Reply To",
+          value: campaign?.reply_to || campaign?.sender_email,
+        },
+        { label: "Lists", value: campaign?.target_lists?.join(", ") || "None" },
+        { label: "Target", value: fmt(campaign?.target_list_count) },
+        { label: "Sent", value: fmt(campaign?.sent_count) },
+        { label: "Created", value: fmtD(campaign?.created_at) },
+        { label: "Started", value: fmtD(campaign?.started_at) },
+        {
+          label: "Completed",
+          value: campaign?.completed_at
+            ? fmtD(campaign.completed_at)
+            : "In progress",
+        },
+      ].map(({ label, value }) => (
+        <div key={label}>
+          <p className="text-xs font-medium text-gray-400 mb-1">{label}</p>
+          <div className="text-sm text-gray-800 font-medium">
+            {value || "—"}
+          </div>
+        </div>
+      ))}
+      <div>
+        <p className="text-xs font-medium text-gray-400 mb-1">Status</p>
+        <CampaignStatusBadge status={campaign?.status} />
+      </div>
+    </div>
+  </div>
+);
+
+const CampaignStatusBadge = ({ status }) => {
+  const cfg = {
+    sent: { bg: "bg-green-100", text: "text-green-800", label: "✅ Sent" },
+    completed: {
+      bg: "bg-green-100",
+      text: "text-green-800",
+      label: "✅ Completed",
+    },
+    draft: { bg: "bg-yellow-100", text: "text-yellow-800", label: "📝 Draft" },
+    sending: { bg: "bg-blue-100", text: "text-blue-800", label: "📤 Sending" },
+    paused: {
+      bg: "bg-orange-100",
+      text: "text-orange-800",
+      label: "⏸️ Paused",
+    },
+    stopped: { bg: "bg-gray-100", text: "text-gray-700", label: "🛑 Stopped" },
+    failed: { bg: "bg-red-100", text: "text-red-800", label: "❌ Failed" },
+  }[status] || {
+    bg: "bg-gray-100",
+    text: "text-gray-700",
+    label: status || "Unknown",
+  };
+  return (
+    <span
+      className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold ${cfg.bg} ${cfg.text}`}
+    >
+      {cfg.label}
+    </span>
   );
 };
 
-const CampaignDetails = ({ campaign }) => (
-  <div className="bg-white rounded-lg shadow-sm border">
-    <div className="px-6 py-4 border-b border-gray-200">
-      <div className="flex items-center space-x-2">
-        <span className="text-lg">📧</span>
-        <h3 className="text-lg font-semibold text-gray-900">Campaign Details</h3>
-      </div>
-    </div>
-    <div className="p-6">
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        <DetailItem label="Campaign Title" value={campaign?.title || 'Untitled Campaign'} />
-        <DetailItem label="Subject Line" value={campaign?.subject || 'No subject'} />
-        <DetailItem label="Sender Name" value={campaign?.sender_name || 'Unknown'} />
-        <DetailItem label="Sender Email" value={campaign?.sender_email || 'Unknown'} />
-        <DetailItem label="Reply To" value={campaign?.reply_to || campaign?.sender_email || 'N/A'} />
-        <DetailItem 
-          label="Status" 
-          value={<CampaignStatusBadge status={campaign?.status} />} 
-        />
-        <DetailItem label="Target Lists" value={campaign?.target_lists?.join(', ') || 'None'} />
-        <DetailItem label="Target Count" value={campaign?.target_list_count?.toLocaleString() || '0'} />
-        <DetailItem label="Successfully Sent" value={campaign?.sent_count?.toLocaleString() || '0'} />
-        <DetailItem 
-          label="Created" 
-          value={campaign?.created_at ? new Date(campaign.created_at).toLocaleString() : 'Unknown'} 
-        />
-        <DetailItem 
-          label="Started" 
-          value={campaign?.started_at ? new Date(campaign.started_at).toLocaleString() : 'Not started'} 
-        />
-        <DetailItem 
-          label="Completed" 
-          value={campaign?.completed_at ? new Date(campaign.completed_at).toLocaleString() : 'In progress'} 
-        />
-      </div>
-    </div>
-  </div>
-);
-
-const DetailItem = ({ label, value }) => (
-  <div>
-    <h4 className="text-sm font-medium text-gray-500 mb-2">{label}</h4>
-    <div className="text-gray-900 font-medium">
-      {typeof value === 'string' || typeof value === 'number' ? value : value}
-    </div>
-  </div>
-);
-
-// Simple Loading and Error Components
 const LoadingSkeleton = () => (
-  <div className="min-h-screen bg-gray-50">
-    <div className="max-w-7xl mx-auto px-4 py-6">
-      <div className="animate-pulse space-y-6">
-        <div className="bg-white rounded-lg shadow-sm h-20"></div>
-        <div className="bg-white rounded-lg shadow-sm h-64"></div>
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          {[...Array(4)].map((_, i) => (
-            <div key={i} className="bg-white rounded-lg shadow-sm h-32"></div>
-          ))}
-        </div>
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <div className="bg-white rounded-lg shadow-sm h-96"></div>
-          <div className="bg-white rounded-lg shadow-sm h-96"></div>
-        </div>
-      </div>
+  <div className="space-y-6 animate-pulse">
+    <div className="h-24 bg-gray-200 rounded-xl" />
+    <div className="h-48 bg-gray-200 rounded-xl" />
+    <div className="grid grid-cols-4 gap-4">
+      {[...Array(4)].map((_, i) => (
+        <div key={i} className="h-32 bg-gray-200 rounded-xl" />
+      ))}
     </div>
   </div>
 );
 
 const ErrorState = ({ error, onRetry }) => (
-  <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-    <div className="text-center bg-white rounded-lg shadow-sm p-8 max-w-md mx-4">
-      <div className="text-red-500 text-4xl mb-4">⚠️</div>
-      <h2 className="text-xl font-semibold text-gray-900 mb-2">Something went wrong</h2>
-      <p className="text-gray-600 mb-4">{error}</p>
+  <div className="flex items-center justify-center min-h-[60vh]">
+    <div className="text-center max-w-sm">
+      <p className="text-4xl mb-3">⚠️</p>
+      <p className="font-semibold text-gray-800 mb-1">
+        Failed to load analytics
+      </p>
+      <p className="text-sm text-gray-500 mb-4">{error}</p>
       <button
         onClick={onRetry}
-        className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+        className="px-5 py-2 bg-blue-600 text-white text-sm font-semibold rounded-lg hover:bg-blue-700"
       >
         Try Again
       </button>
     </div>
   </div>
 );
-
-const CampaignStatusBadge = ({ status }) => {
-  const statusConfig = {
-    sent: { bg: 'bg-green-100', text: 'text-green-800', label: '✅ Sent' },
-    draft: { bg: 'bg-yellow-100', text: 'text-yellow-800', label: '📝 Draft' },
-    sending: { bg: 'bg-blue-100', text: 'text-blue-800', label: '📤 Sending' },
-    failed: { bg: 'bg-red-100', text: 'text-red-800', label: '❌ Failed' }
-  };
-  
-  const config = statusConfig[status] || statusConfig.draft;
-  
-  return (
-    <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${config.bg} ${config.text}`}>
-      {config.label}
-    </span>
-  );
-};
-

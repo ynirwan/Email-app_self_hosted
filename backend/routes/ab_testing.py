@@ -13,6 +13,7 @@ from database import (
     get_templates_collection,
     get_sync_ab_tests_collection,
     get_sync_ab_test_results_collection,
+    get_campaigns_collection,
 )
 from tasks.ab_testing import send_ab_test_batch
 
@@ -65,15 +66,24 @@ class ABTestCreate(BaseModel):
     split_percentage: int = 50
     sample_size: int = 1000
     winner_criteria: str = "open_rate"
-    # ── new fields ──────────────────────────────────────────
     test_duration_hours: Optional[int] = Field(
         default=24,
         ge=1,
         le=168,
-        description="Hours to run before auto-declaring winner")
+        description="Hours to run before auto-declaring winner",
+    )
     auto_send_winner: bool = Field(
-        default=True,
-        description="Auto-send winning variant to remaining subscribers")
+        default=True, description="Auto-send winning variant to remaining subscribers"
+    )
+    # ── personalisation ──────────────────────────────────────
+    field_map: Optional[Dict[str, str]] = Field(
+        default_factory=dict,
+        description="Maps template {{variables}} to subscriber data columns",
+    )
+    fallback_values: Optional[Dict[str, str]] = Field(
+        default_factory=dict,
+        description="Default values used when mapped field is empty",
+    )
 
 
 class CompleteTestRequest(BaseModel):
@@ -90,9 +100,13 @@ def convert_objectid_to_str(document):
         return [convert_objectid_to_str(item) for item in document]
     elif isinstance(document, dict):
         return {
-            k: (str(v) if isinstance(v, ObjectId) else
-                convert_objectid_to_str(v) if isinstance(v,
-                                                         (dict, list)) else v)
+            k: (
+                str(v)
+                if isinstance(v, ObjectId)
+                else convert_objectid_to_str(v)
+                if isinstance(v, (dict, list))
+                else v
+            )
             for k, v in document.items()
         }
     elif isinstance(document, ObjectId):
@@ -107,39 +121,23 @@ def convert_objectid_to_str(document):
 
 async def get_ab_test_target_count(target_lists: List[str]) -> int:
     subscribers_collection = get_subscribers_collection()
-    return await subscribers_collection.count_documents({
-        "$or": [
-            {
-                "lists": {
-                    "$in": target_lists
-                }
-            },
-            {
-                "list": {
-                    "$in": target_lists
-                }
-            },
-        ],
-        "status":
-        "active",
-    })
+    return await subscribers_collection.count_documents(
+        {
+            "$or": [
+                {"lists": {"$in": target_lists}},
+                {"list": {"$in": target_lists}},
+            ],
+            "status": "active",
+        }
+    )
 
 
-async def get_test_subscribers(target_lists: List[str],
-                               sample_size: int) -> List[dict]:
+async def get_test_subscribers(target_lists: List[str], sample_size: int) -> List[dict]:
     subscribers_collection = get_subscribers_collection()
     query = {
         "$or": [
-            {
-                "lists": {
-                    "$in": target_lists
-                }
-            },
-            {
-                "list": {
-                    "$in": target_lists
-                }
-            },
+            {"lists": {"$in": target_lists}},
+            {"list": {"$in": target_lists}},
         ],
         "status": "active",
     }
@@ -155,16 +153,14 @@ def assign_variants(subscribers: List[dict], split_percentage: int) -> Dict:
     for sub in subscribers:
         bucket = hash(sub["_id"]) % 100
         variant = "A" if bucket < split_percentage else "B"
-        assignments[variant].append({
-            "id":
-            sub["_id"],
-            "email":
-            sub["email"],
-            "first_name":
-            sub.get("standard_fields", {}).get("first_name", ""),
-            "custom_fields":
-            sub.get("custom_fields", {}),
-        })
+        assignments[variant].append(
+            {
+                "id": sub["_id"],
+                "email": sub["email"],
+                "first_name": sub.get("standard_fields", {}).get("first_name", ""),
+                "custom_fields": sub.get("custom_fields", {}),
+            }
+        )
     return assignments
 
 
@@ -176,15 +172,13 @@ def assign_variants(subscribers: List[dict], split_percentage: int) -> Dict:
 async def calculate_test_results(test_id: str) -> Dict:
     ab_test_results_collection = get_ab_test_results_collection()
 
-    results_a = await ab_test_results_collection.find({
-        "test_id": test_id,
-        "variant": "A"
-    }).to_list(None)
+    results_a = await ab_test_results_collection.find(
+        {"test_id": test_id, "variant": "A"}
+    ).to_list(None)
 
-    results_b = await ab_test_results_collection.find({
-        "test_id": test_id,
-        "variant": "B"
-    }).to_list(None)
+    results_b = await ab_test_results_collection.find(
+        {"test_id": test_id, "variant": "B"}
+    ).to_list(None)
 
     def metrics(results):
         if not results:
@@ -194,7 +188,7 @@ async def calculate_test_results(test_id: str) -> Dict:
                 "clicked": 0,
                 "open_rate": 0,
                 "click_rate": 0,
-                "ctr": 0
+                "ctr": 0,
             }
         sent = len([r for r in results if r.get("email_sent")])
         opened = len([r for r in results if r.get("email_opened")])
@@ -225,7 +219,7 @@ def calculate_test_results_sync(test_id: str) -> Dict:
                 "clicked": 0,
                 "open_rate": 0,
                 "click_rate": 0,
-                "ctr": 0
+                "ctr": 0,
             }
         sent = len([r for r in results if r.get("email_sent")])
         opened = len([r for r in results if r.get("email_opened")])
@@ -271,7 +265,7 @@ def determine_winner(results: Dict, criteria: str = "open_rate") -> Dict:
         "winner": "TIE",
         "improvement": 0,
         "improvement_percentage": 0,
-        "criteria": criteria
+        "criteria": criteria,
     }
 
 
@@ -281,8 +275,7 @@ def determine_winner(results: Dict, criteria: str = "open_rate") -> Dict:
 
 
 def calculate_statistical_significance(results: Dict) -> Dict:
-    total = (results["variant_a"].get("sent", 0) +
-             results["variant_b"].get("sent", 0))
+    total = results["variant_a"].get("sent", 0) + results["variant_b"].get("sent", 0)
     level = "low"
     if total > 1000:
         level = "high"
@@ -300,8 +293,7 @@ def calculate_statistical_significance(results: Dict) -> Dict:
 # ============================================================
 
 
-def apply_winner_to_campaign_sync(test_id: str, campaign_id: str,
-                                  winner_variant: str):
+def apply_winner_to_campaign_sync(test_id: str, campaign_id: str, winner_variant: str):
     """Update campaign with winner config then trigger remaining-subscriber send."""
     from database import get_sync_campaigns_collection
     from tasks.email_campaign_tasks import send_campaign_batch
@@ -311,21 +303,25 @@ def apply_winner_to_campaign_sync(test_id: str, campaign_id: str,
 
     test = col_tests.find_one({"_id": ObjectId(test_id)})
     if not test or not ObjectId.is_valid(campaign_id):
-        logger.error(
-            f"apply_winner: bad ids test={test_id} campaign={campaign_id}")
+        logger.error(f"apply_winner: bad ids test={test_id} campaign={campaign_id}")
         return
 
     variant_index = 0 if winner_variant == "A" else 1
     variants = test.get("variants", [])
     if variant_index >= len(variants):
-        logger.error(
-            f"apply_winner: variant index {variant_index} out of range")
+        logger.error(f"apply_winner: variant index {variant_index} out of range")
         return
 
     winning = variants[variant_index]
     update: Dict = {"winner_variant_applied": winner_variant}
-    for field in ("subject", "sender_name", "sender_email", "reply_to",
-                  "content", "template_id"):
+    for field in (
+        "subject",
+        "sender_name",
+        "sender_email",
+        "reply_to",
+        "content",
+        "template_id",
+    ):
         if field in winning and winning[field]:
             update[field] = winning[field]
 
@@ -356,33 +352,42 @@ async def get_all_ab_tests():
         return {"tests": tests, "total": len(tests)}
     except Exception as e:
         logger.error(f"Failed to list A/B tests: {e}")
-        raise HTTPException(status_code=500,
-                            detail="Failed to retrieve A/B tests")
+        raise HTTPException(status_code=500, detail="Failed to retrieve A/B tests")
 
 
 @router.get("/ab-tests/lists")
 async def get_available_lists():
     try:
         col = get_subscribers_collection()
+        # Support subscribers that store list membership as a single string field
+        # ("list") OR as an array field ("lists") — unify with $facet then merge.
         pipeline = [
+            {"$match": {"status": "active"}},
             {
-                "$match": {
-                    "status": "active"
+                "$facet": {
+                    "from_list_field": [
+                        {"$match": {"list": {"$exists": True, "$ne": None, "$ne": ""}}},
+                        {"$group": {"_id": "$list", "count": {"$sum": 1}}},
+                    ],
+                    "from_lists_field": [
+                        {"$match": {"lists": {"$exists": True, "$not": {"$size": 0}}}},
+                        {"$unwind": "$lists"},
+                        {"$match": {"lists": {"$ne": None, "$ne": ""}}},
+                        {"$group": {"_id": "$lists", "count": {"$sum": 1}}},
+                    ],
                 }
             },
             {
-                "$group": {
-                    "_id": "$list",
-                    "count": {
-                        "$sum": 1
+                "$project": {
+                    "combined": {
+                        "$concatArrays": ["$from_list_field", "$from_lists_field"]
                     }
                 }
             },
-            {
-                "$sort": {
-                    "_id": 1
-                }
-            },
+            {"$unwind": "$combined"},
+            {"$replaceRoot": {"newRoot": "$combined"}},
+            {"$group": {"_id": "$_id", "count": {"$sum": "$count"}}},
+            {"$sort": {"_id": 1}},
         ]
         lists = []
         async for doc in col.aggregate(pipeline):
@@ -399,21 +404,20 @@ async def get_available_templates():
     try:
         col = get_templates_collection()
         templates = []
-        async for doc in col.find({}, {
-                "_id": 1,
-                "name": 1,
-                "subject": 1
-        }).sort("updated_at", -1):
-            templates.append({
-                "_id": str(doc["_id"]),
-                "name": doc.get("name", "Untitled"),
-                "subject": doc.get("subject", ""),
-            })
+        async for doc in col.find({}, {"_id": 1, "name": 1, "subject": 1}).sort(
+            "updated_at", -1
+        ):
+            templates.append(
+                {
+                    "_id": str(doc["_id"]),
+                    "name": doc.get("name", "Untitled"),
+                    "subject": doc.get("subject", ""),
+                }
+            )
         return {"templates": templates}
     except Exception as e:
         logger.error(f"Failed to fetch templates for A/B testing: {e}")
-        raise HTTPException(status_code=500,
-                            detail="Failed to fetch templates")
+        raise HTTPException(status_code=500, detail="Failed to fetch templates")
 
 
 @router.post("/ab-tests")
@@ -422,22 +426,22 @@ async def create_ab_test(test: ABTestCreate):
         col = get_ab_tests_collection()
 
         if not test.target_lists:
-            raise HTTPException(status_code=400,
-                                detail="At least one target list is required")
+            raise HTTPException(
+                status_code=400, detail="At least one target list is required"
+            )
         if not test.template_id:
             raise HTTPException(status_code=400, detail="Template is required")
         if not test.subject.strip():
-            raise HTTPException(status_code=400,
-                                detail="Subject line is required")
+            raise HTTPException(status_code=400, detail="Subject line is required")
         if not test.sender_email.strip():
-            raise HTTPException(status_code=400,
-                                detail="Sender email is required")
+            raise HTTPException(status_code=400, detail="Sender email is required")
 
         total_subscribers = await get_ab_test_target_count(test.target_lists)
         if total_subscribers == 0:
             raise HTTPException(
                 status_code=400,
-                detail="No active subscribers found in the selected lists")
+                detail="No active subscribers found in the selected lists",
+            )
 
         min_sample = min(1000, max(100, int(total_subscribers * 0.1)))
         if test.sample_size > total_subscribers:
@@ -458,9 +462,11 @@ async def create_ab_test(test: ABTestCreate):
             "split_percentage": test.split_percentage,
             "sample_size": test.sample_size,
             "winner_criteria": test.winner_criteria,
-            # ── new fields ──────────────────────────────────
             "test_duration_hours": test.test_duration_hours,
             "auto_send_winner": test.auto_send_winner,
+            # ── personalisation ─────────────────────────────
+            "field_map": test.field_map or {},
+            "fallback_values": test.fallback_values or {},
             # ────────────────────────────────────────────────
             "status": TestStatus.DRAFT,
             "total_target_subscribers": total_subscribers,
@@ -469,14 +475,49 @@ async def create_ab_test(test: ABTestCreate):
         }
 
         result = await col.insert_one(test_doc)
-        test_doc["_id"] = str(result.inserted_id)
+        test_id_str = str(result.inserted_id)
 
-        logger.info(
-            f"A/B test created: {result.inserted_id} lists={test.target_lists}"
-        )
+        # ── Create a linked campaign so the winner can be auto-applied ──
+        try:
+            campaigns_col = get_campaigns_collection()
+            campaign_doc = {
+                "title": f"[A/B Test] {test.test_name}",
+                "subject": test.subject,
+                "sender_name": test.sender_name,
+                "sender_email": test.sender_email,
+                "reply_to": test.reply_to or test.sender_email,
+                "target_lists": test.target_lists,
+                "template_id": test.template_id,
+                "field_map": test.field_map or {},
+                "fallback_values": test.fallback_values or {},
+                "status": "draft",
+                "ab_test_id": test_id_str,
+                "created_at": datetime.utcnow(),
+                "updated_at": datetime.utcnow(),
+            }
+            campaign_result = await campaigns_col.insert_one(campaign_doc)
+            campaign_id_str = str(campaign_result.inserted_id)
+            # Link campaign back to the test document
+            await col.update_one(
+                {"_id": result.inserted_id},
+                {"$set": {"campaign_id": campaign_result.inserted_id}},
+            )
+            test_doc["campaign_id"] = campaign_id_str
+            logger.info(
+                f"Linked campaign {campaign_id_str} created for A/B test {test_id_str}"
+            )
+        except Exception as camp_err:
+            logger.warning(
+                f"Could not create linked campaign for A/B test {test_id_str}: {camp_err}"
+            )
+            campaign_id_str = None
+
+        test_doc["_id"] = test_id_str
+
+        logger.info(f"A/B test created: {result.inserted_id} lists={test.target_lists}")
         return {
             "message": "A/B test created successfully",
-            "test_id": str(result.inserted_id),
+            "test_id": test_id_str,
             "test": test_doc,
         }
 
@@ -484,8 +525,9 @@ async def create_ab_test(test: ABTestCreate):
         raise
     except Exception as e:
         logger.error(f"Failed to create A/B test: {e}")
-        raise HTTPException(status_code=500,
-                            detail=f"Failed to create A/B test: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to create A/B test: {str(e)}"
+        )
 
 
 @router.get("/ab-tests/{test_id}")
@@ -493,8 +535,7 @@ async def get_ab_test(test_id: str):
     try:
         col = get_ab_tests_collection()
         if not ObjectId.is_valid(test_id):
-            raise HTTPException(status_code=400,
-                                detail="Invalid test ID format")
+            raise HTTPException(status_code=400, detail="Invalid test ID format")
         test = await col.find_one({"_id": ObjectId(test_id)})
         if not test:
             raise HTTPException(status_code=404, detail="A/B test not found")
@@ -503,8 +544,9 @@ async def get_ab_test(test_id: str):
         raise
     except Exception as e:
         logger.error(f"Failed to get A/B test {test_id}: {e}")
-        raise HTTPException(status_code=500,
-                            detail=f"Failed to retrieve A/B test: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to retrieve A/B test: {str(e)}"
+        )
 
 
 @router.post("/ab-tests/{test_id}/start")
@@ -518,19 +560,20 @@ async def start_ab_test(test_id: str):
         if not test:
             raise HTTPException(status_code=404, detail="A/B test not found")
         if test["status"] != TestStatus.DRAFT:
-            raise HTTPException(status_code=400,
-                                detail="Test must be in draft status to start")
+            raise HTTPException(
+                status_code=400, detail="Test must be in draft status to start"
+            )
 
         subscribers = await get_test_subscribers(
             test.get("target_lists", []),
             test["sample_size"],
         )
         if not subscribers:
-            raise HTTPException(status_code=400,
-                                detail="No subscribers found for this test")
+            raise HTTPException(
+                status_code=400, detail="No subscribers found for this test"
+            )
 
-        variant_assignments = assign_variants(subscribers,
-                                              test["split_percentage"])
+        variant_assignments = assign_variants(subscribers, test["split_percentage"])
 
         await col.update_one(
             {"_id": ObjectId(test_id)},
@@ -559,8 +602,9 @@ async def start_ab_test(test_id: str):
         raise
     except Exception as e:
         logger.error(f"Failed to start A/B test: {e}")
-        raise HTTPException(status_code=500,
-                            detail=f"Failed to start A/B test: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to start A/B test: {str(e)}"
+        )
 
 
 @router.get("/ab-tests/{test_id}/results")
@@ -575,54 +619,34 @@ async def get_ab_test_results(test_id: str):
             raise HTTPException(status_code=404, detail="A/B test not found")
 
         results = await calculate_test_results(test_id)
-        winner = determine_winner(results,
-                                  test.get("winner_criteria", "open_rate"))
+        winner = determine_winner(results, test.get("winner_criteria", "open_rate"))
         significance = calculate_statistical_significance(results)
 
         response_data = {
-            "test_id":
-            test_id,
-            "test_name":
-            test["test_name"],
-            "status":
-            test["status"],
-            "test_type":
-            test["test_type"],
-            "target_lists":
-            test.get("target_lists", []),
-            "subject":
-            test.get("subject", ""),
-            "sender_name":
-            test.get("sender_name", ""),
-            "results":
-            results,
-            "winner":
-            winner,
-            "winner_info":
-            winner,  # alias for frontend compat
-            "statistical_significance":
-            significance,
-            "start_date":
-            test.get("start_date"),
-            "end_date":
-            test.get("end_date"),
-            "sample_size":
-            test.get("sample_size"),
-            "split_percentage":
-            test.get("split_percentage"),
-            "winner_criteria":
-            test.get("winner_criteria", "open_rate"),
+            "test_id": test_id,
+            "test_name": test["test_name"],
+            "status": test["status"],
+            "test_type": test["test_type"],
+            "target_lists": test.get("target_lists", []),
+            "subject": test.get("subject", ""),
+            "sender_name": test.get("sender_name", ""),
+            "results": results,
+            "winner": winner,
+            "winner_info": winner,  # alias for frontend compat
+            "statistical_significance": significance,
+            "start_date": test.get("start_date"),
+            "end_date": test.get("end_date"),
+            "sample_size": test.get("sample_size"),
+            "split_percentage": test.get("split_percentage"),
+            "winner_criteria": test.get("winner_criteria", "open_rate"),
             # ── new fields ──────────────────────────────────
-            "test_duration_hours":
-            test.get("test_duration_hours"),
-            "auto_send_winner":
-            test.get("auto_send_winner", True),
-            "winner_variant":
-            test.get("winner_variant"),
-            "winner_variant_applied":
-            test.get("winner_variant_applied"),
-            "campaign_id":
-            str(test["campaign_id"]) if test.get("campaign_id") else None,
+            "test_duration_hours": test.get("test_duration_hours"),
+            "auto_send_winner": test.get("auto_send_winner", True),
+            "winner_variant": test.get("winner_variant"),
+            "winner_variant_applied": test.get("winner_variant_applied"),
+            "campaign_id": str(test["campaign_id"])
+            if test.get("campaign_id")
+            else None,
         }
 
         return convert_objectid_to_str(response_data)
@@ -631,8 +655,7 @@ async def get_ab_test_results(test_id: str):
         raise
     except Exception as e:
         logger.error(f"Failed to get A/B test results: {e}")
-        raise HTTPException(status_code=500,
-                            detail=f"Failed to get results: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to get results: {str(e)}")
 
 
 @router.post("/ab-tests/{test_id}/complete")
@@ -651,19 +674,16 @@ async def complete_ab_test(test_id: str, request: CompleteTestRequest):
             raise HTTPException(status_code=404, detail="A/B test not found")
 
         if test["status"] == TestStatus.COMPLETED:
-            raise HTTPException(status_code=400,
-                                detail="Test is already completed")
+            raise HTTPException(status_code=400, detail="Test is already completed")
 
         if test["status"] != TestStatus.RUNNING:
             raise HTTPException(
                 status_code=400,
-                detail=
-                f"Test must be running to complete (current: {test['status']})",
+                detail=f"Test must be running to complete (current: {test['status']})",
             )
 
         results = await calculate_test_results(test_id)
-        winner = determine_winner(results,
-                                  test.get("winner_criteria", "open_rate"))
+        winner = determine_winner(results, test.get("winner_criteria", "open_rate"))
 
         await col.update_one(
             {"_id": ObjectId(test_id)},
@@ -680,15 +700,16 @@ async def complete_ab_test(test_id: str, request: CompleteTestRequest):
 
         campaign_applied = False
 
-        if (request.apply_to_campaign and test.get("campaign_id")
-                and winner.get("winner") != "TIE"):
+        if (
+            request.apply_to_campaign
+            and test.get("campaign_id")
+            and winner.get("winner") != "TIE"
+        ):
             # Fire Celery task so we don't block the API response
             from tasks.ab_testing import auto_complete_ab_test
+
             auto_complete_ab_test.apply_async(
-                kwargs={
-                    "test_id": test_id,
-                    "apply_to_campaign": True
-                },
+                kwargs={"test_id": test_id, "apply_to_campaign": True},
                 countdown=1,
             )
             campaign_applied = True
@@ -711,8 +732,9 @@ async def complete_ab_test(test_id: str, request: CompleteTestRequest):
         raise
     except Exception as e:
         logger.error(f"Failed to complete A/B test {test_id}: {e}")
-        raise HTTPException(status_code=500,
-                            detail=f"Failed to complete test: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to complete test: {str(e)}"
+        )
 
 
 @router.post("/ab-tests/{test_id}/stop")
@@ -761,14 +783,10 @@ async def delete_ab_test(test_id: str):
             raise HTTPException(status_code=404, detail="A/B test not found")
 
         logger.info(f"A/B test deleted: {test_id}")
-        return {
-            "message": "A/B test deleted successfully",
-            "deleted_test_id": test_id
-        }
+        return {"message": "A/B test deleted successfully", "deleted_test_id": test_id}
 
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Failed to delete A/B test: {e}")
-        raise HTTPException(status_code=500,
-                            detail="Failed to delete A/B test")
+        raise HTTPException(status_code=500, detail="Failed to delete A/B test")

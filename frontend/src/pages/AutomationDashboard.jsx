@@ -16,7 +16,6 @@ const AutomationDashboard = () => {
   const [searchQuery, setSearchQuery] = useState('');
 
   useEffect(() => {
-    console.log('🏠 AutomationDashboard mounted, fetching automations...');
     fetchAutomations();
   }, []);
 
@@ -24,10 +23,8 @@ const AutomationDashboard = () => {
     try {
       setLoading(true);
       setError(null);
-      console.log('🔄 Fetching automations from dashboard...');
 
       const response = await API.get('/automation/rules');
-      console.log('📋 Raw automations response:', response);
 
       // ⭐ FIXED: Correct response structure handling
       let actualAutomations = [];
@@ -41,16 +38,13 @@ const AutomationDashboard = () => {
       } else if (Array.isArray(response)) {
         actualAutomations = response;
       } else {
-        console.warn('⚠️ Unexpected response format:', response);
         actualAutomations = [];
       }
 
       setAutomations(actualAutomations);
-      console.log(`✅ Loaded ${actualAutomations.length} automations in dashboard`);
 
     } catch (error) {
       setError('Failed to fetch automations');
-      console.error('❌ Failed to fetch automations:', error);
       setAutomations([]);
     } finally {
       setLoading(false);
@@ -60,15 +54,12 @@ const AutomationDashboard = () => {
   const toggleAutomation = async (id, currentStatus) => {
     const newStatus = currentStatus === 'active' ? 'paused' : 'active';
     try {
-      console.log(`🔄 Toggling automation ${id} from ${currentStatus} to ${newStatus}`);
 
       // ⭐ FIXED: Correct endpoint method
       await API.post(`/automation/rules/${id}/status`, { status: newStatus });
 
       await fetchAutomations();
-      console.log('✅ Automation status updated successfully');
     } catch (error) {
-      console.error('❌ Failed to toggle automation:', error);
       setError('Failed to update automation status');
       setTimeout(() => setError(null), 3000);
     }
@@ -92,9 +83,7 @@ const AutomationDashboard = () => {
 
       await API.post('/automation/rules', duplicatedData);
       await fetchAutomations();
-      console.log('✅ Automation duplicated successfully');
     } catch (error) {
-      console.error('❌ Failed to duplicate automation:', error);
       setError('Failed to duplicate automation');
       setTimeout(() => setError(null), 3000);
     }
@@ -104,12 +93,9 @@ const AutomationDashboard = () => {
     if (!window.confirm('Are you sure you want to delete this automation? This action cannot be undone.')) return;
 
     try {
-      console.log(`🗑️ Deleting automation ${id}`);
       await API.delete(`/automation/rules/${id}`);
       await fetchAutomations(); // Refresh list after delete
-      console.log('✅ Automation deleted successfully');
     } catch (error) {
-      console.error('❌ Failed to delete automation:', error);
       setError('Failed to delete automation');
       setTimeout(() => setError(null), 3000);
     }
@@ -230,7 +216,7 @@ const AutomationDashboard = () => {
             <div>
               <p className="text-gray-600 text-sm">Total Emails Sent</p>
               <p className="text-2xl font-bold">{stats.totalSent.toLocaleString()}</p>
-              <p className="text-xs text-green-600 mt-1">+{Math.floor(Math.random() * 20)}% this week</p>
+              <p className="text-xs text-gray-400 mt-1">all time</p>
             </div>
           </div>
         </div>
@@ -470,19 +456,7 @@ const AutomationDashboard = () => {
         )}
       </div>
 
-      {/* Quick Tips */}
-      <div className="mt-8 bg-blue-50 border border-blue-200 rounded-lg p-6">
-        <h3 className="font-semibold text-blue-900 mb-3 flex items-center gap-2">
-          <Eye size={20} />
-          💡 Quick Tips
-        </h3>
-        <ul className="space-y-2 text-sm text-blue-800">
-          <li>• Start automations in <strong>draft mode</strong> to test before activating</li>
-          <li>• Monitor <strong>open and click rates</strong> to optimize your email sequence</li>
-          <li>• Use <strong>segments</strong> to target specific audience groups</li>
-          <li>• Duplicate well-performing automations to save time</li>
-        </ul>
-      </div>
+
     </div>
   );
 };

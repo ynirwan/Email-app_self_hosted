@@ -1,917 +1,685 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import API from '../api';
 
-export default function Segmentation() {
-  const [segments, setSegments] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [showCreateModal, setShowCreateModal] = useState(false);
-  const [showPreviewModal, setShowPreviewModal] = useState(false);
-  const [previewData, setPreviewData] = useState([]);
-  const [selectedSegment, setSelectedSegment] = useState(null);
-  const [lists, setLists] = useState([]);
+// ─── helpers ─────────────────────────────────────────────────
+const fmt  = (n) => Number(n ?? 0).toLocaleString();
+const fmtD = (iso) => iso ? new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
 
-  // Enhanced segment form with 8 segmentation types
-  const [segmentForm, setSegmentForm] = useState({
-    name: '',
-    description: '',
-    criteria: {
-      status: [],                    // 📊 Subscriber Status
-      lists: [],                     // 📋 Lists
-      dateRange: null,               // 📅 Subscription Date
-      profileCompleteness: {},       // 👤 Profile Completeness
-      geographic: {                  // 🌍 Geographic
-        country: '',
-        city: ''
-      },
-      engagement: [],                // 📈 Engagement Level
-      emailDomain: [],               // 📧 Email Domain
-      industry: '',                  // 🏷️ Custom Fields - Industry
-      companySize: '',               // 🏷️ Custom Fields - Company Size
-      customFields: {}               // 🏷️ Additional Custom Fields
-    }
-  });
+const STATUS_STYLE = {
+  active:       'bg-green-100 text-green-700',
+  inactive:     'bg-gray-100  text-gray-600',
+  bounced:      'bg-red-100   text-red-700',
+  unsubscribed: 'bg-orange-100 text-orange-700',
+};
 
-  useEffect(() => {
-    fetchSegments();
-    fetchLists();
-  }, []);
+const CRITERIA_LABELS = {
+  status:              'Status',
+  lists:               'Lists',
+  dateRange:           'Date',
+  profileCompleteness: 'Profile',
+  geographic:          'Geographic',
+  engagement:          'Engagement',
+  emailDomain:         'Domain',
+  industry:            'Custom',
+  companySize:         'Custom',
+  customFields:        'Custom',
+};
 
-  const fetchSegments = async () => {
-    try {
-      setLoading(true);
-      const response = await API.get('/segments');
-      console.log('Segments API Response:', response.data);
-      
-      let segmentsData = [];
-      if (response.data) {
-        if (Array.isArray(response.data)) {
-          segmentsData = response.data;
-        } else if (response.data.segments && Array.isArray(response.data.segments)) {
-          segmentsData = response.data.segments;
-        }
-      }
-      setSegments(segmentsData);
-    } catch (error) {
-      console.error('Failed to fetch segments:', error);
-      setSegments([]);
-    } finally {
-      setLoading(false);
-    }
-  };
+function getCriteriaTypes(criteria) {
+  if (!criteria) return [];
+  const types = new Set();
+  if (criteria.status?.length)          types.add('Status');
+  if (criteria.lists?.length)           types.add('Lists');
+  if (criteria.dateRange)               types.add('Date');
+  if (Object.keys(criteria.profileCompleteness || {}).length) types.add('Profile');
+  if (criteria.geographic?.country || criteria.geographic?.city) types.add('Geographic');
+  if (criteria.engagement?.length)      types.add('Engagement');
+  if (criteria.emailDomain?.length)     types.add('Domain');
+  if (criteria.industry || criteria.companySize || Object.keys(criteria.customFields || {}).length) types.add('Custom');
+  return [...types];
+}
 
-  const fetchLists = async () => {
-    try {
-      const response = await API.get('/subscribers/lists');
-      console.log('Lists API Response:', response.data);
-      
-      let listsData = [];
-      if (Array.isArray(response.data)) {
-        listsData = response.data;
-      } else if (response.data && Array.isArray(response.data.lists)) {
-        listsData = response.data.lists;
-      }
-      setLists(listsData);
-    } catch (error) {
-      console.error('Failed to fetch lists:', error);
-      setLists([]);
-    }
-  };
-
-  const handleDeleteSegment = async (segmentId, segmentName) => {
-    if (!window.confirm(`Are you sure you want to delete segment "${segmentName}"?`)) return;
-
-    try {
-      await API.delete(`/segments/${segmentId}`);
-      setSegments(segments.filter(s => s._id !== segmentId));
-      alert('Segment deleted successfully ✅');
-    } catch (error) {
-      console.error('Delete failed:', error);
-      alert('Failed to delete segment');
-    }
-  };
-
-  const handlePreviewSegment = async (segment) => {
-    try {
-      setLoading(true);
-      const response = await API.post('/segments/preview', {
-        criteria: segment.criteria || segment.query
-      });
-      setPreviewData(response.data.subscribers || []);
-      setSelectedSegment(segment);
-      setShowPreviewModal(true);
-    } catch (error) {
-      console.error('Preview failed:', error);
-      alert('Failed to load segment preview');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleEditSegment = (segment) => {
-    setSelectedSegment(segment);
-    setSegmentForm({
-      name: segment.name,
-      description: segment.description,
-      criteria: segment.criteria || {
-        status: [],
-        lists: [],
-        dateRange: null,
-        profileCompleteness: {},
-        geographic: { country: '', city: '' },
-        engagement: [],
-        emailDomain: [],
-        industry: '',
-        companySize: '',
-        customFields: {}
-      }
-    });
-    setShowCreateModal(true);
-  };
-
-  // Reset form helper
-  const resetForm = () => {
-    setSegmentForm({
-      name: '',
-      description: '',
-      criteria: {
-        status: [],
-        lists: [],
-        dateRange: null,
-        profileCompleteness: {},
-        geographic: { country: '', city: '' },
-        engagement: [],
-        emailDomain: [],
-        industry: '',
-        companySize: '',
-        customFields: {}
-      }
-    });
-  };
-
-  if (loading && segments.length === 0) {
-    return (
-      <div className="text-center py-20">
-        <div className="text-4xl mb-4">🔄</div>
-        <p className="text-lg">Loading segments...</p>
-      </div>
-    );
+const emptyForm = () => ({
+  name: '',
+  description: '',
+  criteria: {
+    status: [], lists: [], dateRange: null,
+    profileCompleteness: {},
+    geographic: { country: '', city: '' },
+    engagement: [], emailDomain: [],
+    industry: '', companySize: '', customFields: {}
   }
+});
 
+// ─── Toast ────────────────────────────────────────────────────
+function Toast({ toasts, onDismiss }) {
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex justify-between items-center mb-6">
-        <div>
-          <h2 className="text-2xl font-bold">🎯 Advanced Segmentation</h2>
-          <p className="text-gray-600">Create targeted segments with 8 different criteria types</p>
+    <div className="fixed top-4 right-4 z-50 space-y-2 pointer-events-none">
+      {toasts.map(t => (
+        <div key={t.id} onClick={() => onDismiss(t.id)}
+          className={`pointer-events-auto flex items-center gap-2 px-4 py-3 rounded-lg shadow-lg text-sm font-medium cursor-pointer
+            ${t.type === 'success' ? 'bg-green-600 text-white' : t.type === 'error' ? 'bg-red-600 text-white' : 'bg-gray-800 text-white'}`}>
+          {t.type === 'success' ? '✓' : t.type === 'error' ? '✕' : 'ℹ'} {t.message}
         </div>
-        <button
-          onClick={() => {
-            setSelectedSegment(null);
-            resetForm();
-            setShowCreateModal(true);
-          }}
-          className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 flex items-center gap-2"
-        >
-          <span>➕</span> Create Segment
-        </button>
-      </div>
-
-      {/* Enhanced Stats Overview */}
-      <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-6">
-        <div className="bg-white p-4 rounded-lg shadow">
-          <div className="text-2xl font-bold text-blue-600">{segments?.length || 0}</div>
-          <div className="text-sm text-gray-600">Total Segments</div>
-        </div>
-        <div className="bg-white p-4 rounded-lg shadow">
-          <div className="text-2xl font-bold text-green-600">
-            {Array.isArray(segments) ? segments.filter(s => s.is_active).length : 0}
-          </div>
-          <div className="text-sm text-gray-600">Active Segments</div>
-        </div>
-        <div className="bg-white p-4 rounded-lg shadow">
-          <div className="text-2xl font-bold text-orange-600">
-            {Array.isArray(segments) ? 
-              segments.reduce((sum, s) => sum + (s.subscriber_count || 0), 0).toLocaleString() : 
-              0
-            }
-          </div>
-          <div className="text-sm text-gray-600">Total Segmented</div>
-        </div>
-        <div className="bg-white p-4 rounded-lg shadow">
-          <div className="text-2xl font-bold text-purple-600">{lists?.length || 0}</div>
-          <div className="text-sm text-gray-600">Available Lists</div>
-        </div>
-        <div className="bg-white p-4 rounded-lg shadow">
-          <div className="text-2xl font-bold text-indigo-600">8</div>
-          <div className="text-sm text-gray-600">Segmentation Types</div>
-        </div>
-      </div>
-
-      {/* Segments Table */}
-      <div className="bg-white shadow rounded-lg">
-        <div className="p-4 border-b">
-          <h3 className="font-semibold">Your Segments</h3>
-        </div>
-        
-        {!Array.isArray(segments) || segments.length === 0 ? (
-          <div className="p-8 text-center text-gray-500">
-            <div className="text-4xl mb-4">🎯</div>
-            <h3 className="text-lg font-semibold mb-2">No segments created yet</h3>
-            <p className="mb-4">Create your first segment with our 8 powerful segmentation types.</p>
-            <button
-              onClick={() => setShowCreateModal(true)}
-              className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700"
-            >
-              Create Your First Segment
-            </button>
-          </div>
-        ) : (
-          <>
-            <table className="w-full table-auto text-sm">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th className="p-3 text-left">Segment Details</th>
-                  <th className="p-3 text-left">Size</th>
-                  <th className="p-3 text-left">Criteria Types</th>
-                  <th className="p-3 text-left">Status</th>
-                  <th className="p-3 text-left">Actions</th>
-                </tr>
-              </thead>
-            </table>
-            <EnhancedSegmentTable 
-              data={segments} 
-              onPreview={handlePreviewSegment}
-              onEdit={handleEditSegment}
-              onDelete={handleDeleteSegment}
-            />
-          </>
-        )}
-      </div>
-
-      {/* Enhanced Create/Edit Modal */}
-      <EnhancedSegmentModal
-        show={showCreateModal}
-        onClose={() => setShowCreateModal(false)}
-        segmentForm={segmentForm}
-        setSegmentForm={setSegmentForm}
-        lists={lists}
-        onSave={fetchSegments}
-        isEditing={!!selectedSegment}
-        segmentId={selectedSegment?._id}
-      />
-
-      {/* Preview Modal */}
-      <SegmentPreviewModal
-        show={showPreviewModal}
-        onClose={() => setShowPreviewModal(false)}
-        segment={selectedSegment}
-        previewData={previewData}
-      />
+      ))}
     </div>
   );
 }
 
-// Enhanced Segment Table Component
-const EnhancedSegmentTable = ({ data, height = 400, onPreview, onEdit, onDelete }) => {
-  const [scrollTop, setScrollTop] = useState(0);
-  const rowHeight = 60;
-  const visibleRows = Math.ceil(height / rowHeight);
-  const buffer = 5;
-
-  const start = Math.max(0, Math.floor(scrollTop / rowHeight) - buffer);
-  const end = Math.min(data.length, start + visibleRows + buffer * 2);
-  const visible = data.slice(start, end);
-
-  // Helper to display criteria types
-  const getCriteriaTypes = (criteria) => {
-    const types = [];
-    if (criteria?.status?.length > 0) types.push('Status');
-    if (criteria?.lists?.length > 0) types.push('Lists');
-    if (criteria?.dateRange) types.push('Date');
-    if (criteria?.profileCompleteness && Object.keys(criteria.profileCompleteness).length > 0) types.push('Profile');
-    if (criteria?.geographic && (criteria.geographic.country || criteria.geographic.city)) types.push('Geographic');
-    if (criteria?.engagement?.length > 0) types.push('Engagement');
-    if (criteria?.emailDomain?.length > 0) types.push('Domain');
-    if (criteria?.industry || criteria?.companySize || (criteria?.customFields && Object.keys(criteria.customFields).length > 0)) types.push('Custom');
-    return types;
-  };
-
+// ─── CustomFieldInput — replaces prompt() ────────────────────
+function CustomFieldRow({ field, value, onChange, onRemove }) {
   return (
-    <div 
-      style={{ height, overflow: "auto" }} 
-      onScroll={(e) => setScrollTop(e.target.scrollTop)}
-    >
-      <div style={{ height: `${data.length * rowHeight}px`, position: "relative" }}>
-        <table className="w-full table-auto text-sm absolute top-0 left-0">
-          <tbody style={{ transform: `translateY(${start * rowHeight}px)` }}>
-            {visible.map((segment, index) => (
-              <tr key={segment._id || index} className="border-t hover:bg-gray-50" style={{ height: rowHeight }}>
-                <td className="p-3">
-                  <div className="flex flex-col">
-                    <span className="font-semibold text-blue-800">{segment.name}</span>
-                    <span className="text-xs text-gray-600">{segment.description}</span>
-                    <span className="text-xs text-gray-500 mt-1">
-                      Updated: {segment.updated_at ? new Date(segment.updated_at).toLocaleDateString() : 'N/A'}
-                    </span>
-                  </div>
-                </td>
-                <td className="p-3">
-                  <div className="flex flex-col">
-                    <span className="font-medium text-lg">{segment.subscriber_count?.toLocaleString() || '0'}</span>
-                    <span className="text-xs text-gray-500">subscribers</span>
-                  </div>
-                </td>
-                <td className="p-3">
-                  <div className="flex flex-wrap gap-1">
-                    {getCriteriaTypes(segment.criteria).map(type => (
-                      <span key={type} className="bg-purple-100 text-purple-800 px-2 py-1 rounded text-xs">
-                        {type}
-                      </span>
-                    ))}
-                  </div>
-                </td>
-                <td className="p-3">
-                  <span className={`px-2 py-1 rounded text-xs ${
-                    segment.is_active 
-                      ? 'bg-green-100 text-green-800' 
-                      : 'bg-gray-100 text-gray-800'
-                  }`}>
-                    {segment.is_active ? 'Active' : 'Inactive'}
-                  </span>
-                </td>
-                <td className="p-3">
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => onPreview(segment)}
-                      className="text-blue-600 hover:underline text-sm"
-                    >
-                      Preview
-                    </button>
-                    <button
-                      onClick={() => onDelete(segment._id, segment.name)}
-                      className="text-red-600 hover:underline text-sm"
-                    >
-                      Delete
-                    </button>
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+    <div className="flex gap-2 items-center">
+      <input type="text" placeholder="Field name" value={field}
+        className="flex-1 px-2 py-1.5 border rounded-lg text-sm bg-gray-50" readOnly />
+      <input type="text" placeholder="Value" value={value}
+        onChange={e => onChange(e.target.value)}
+        className="flex-1 px-2 py-1.5 border rounded-lg text-sm focus:ring-1 focus:ring-blue-500" />
+      <button onClick={onRemove} className="px-2 py-1 text-red-500 hover:text-red-700 text-sm">✕</button>
     </div>
   );
-};
+}
 
-// Enhanced Segment Builder Modal with 8 Segmentation Types
-const EnhancedSegmentModal = ({ 
-  show, 
-  onClose, 
-  segmentForm, 
-  setSegmentForm, 
-  lists, 
-  onSave, 
-  isEditing,
-  segmentId 
-}) => {
-  const [previewCount, setPreviewCount] = useState(0);
+function AddCustomFieldInput({ onAdd }) {
+  const [name, setName] = useState('');
+  return (
+    <div className="flex gap-2 mt-1">
+      <input type="text" placeholder="New field name…" value={name}
+        onChange={e => setName(e.target.value)}
+        onKeyDown={e => { if (e.key === 'Enter' && name.trim()) { onAdd(name.trim()); setName(''); } }}
+        className="flex-1 px-2 py-1.5 border rounded-lg text-sm focus:ring-1 focus:ring-blue-500" />
+      <button onClick={() => { if (name.trim()) { onAdd(name.trim()); setName(''); } }}
+        className="px-3 py-1.5 text-xs bg-blue-600 text-white rounded-lg hover:bg-blue-700 whitespace-nowrap">
+        Add
+      </button>
+    </div>
+  );
+}
+
+// ─── SegmentModal ─────────────────────────────────────────────
+function SegmentModal({ show, onClose, segmentForm, setSegmentForm, lists, onSave, isEditing, segmentId, showToast }) {
+  const [previewCount, setPreviewCount] = useState(null);
   const [previewLoading, setPreviewLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
 
-  const handleCriteriaChange = (field, value) => {
+  const set = (field, value) => {
     if (field.includes('.')) {
-      // Handle nested fields like geographic.country
       const [parent, child] = field.split('.');
-      setSegmentForm({
-        ...segmentForm,
-        criteria: {
-          ...segmentForm.criteria,
-          [parent]: {
-            ...segmentForm.criteria[parent],
-            [child]: value
-          }
-        }
-      });
+      setSegmentForm(f => ({ ...f, criteria: { ...f.criteria, [parent]: { ...f.criteria[parent], [child]: value } } }));
     } else {
-      setSegmentForm({
-        ...segmentForm,
-        criteria: {
-          ...segmentForm.criteria,
-          [field]: value
-        }
-      });
+      setSegmentForm(f => ({ ...f, criteria: { ...f.criteria, [field]: value } }));
     }
+  };
+
+  const toggleArr = (field, val) => {
+    const cur = segmentForm.criteria[field] || [];
+    set(field, cur.includes(val) ? cur.filter(v => v !== val) : [...cur, val]);
   };
 
   const handlePreviewCount = async () => {
+    setPreviewLoading(true);
     try {
-      setPreviewLoading(true);
-      const response = await API.post('/segments/count', {
-        criteria: segmentForm.criteria
-      });
-      setPreviewCount(response.data.count || 0);
-    } catch (error) {
-      console.error('Preview count failed:', error);
-      setPreviewCount(0);
-    } finally {
-      setPreviewLoading(false);
-    }
+      const res = await API.post('/segments/count', { criteria: segmentForm.criteria });
+      setPreviewCount(res.data.count ?? 0);
+    } catch { setPreviewCount(null); } finally { setPreviewLoading(false); }
   };
 
   const handleSave = async () => {
-    if (!segmentForm.name.trim()) {
-      alert('Segment name is required');
-      return;
-    }
-
+    if (!segmentForm.name.trim()) { showToast('Segment name is required', 'error'); return; }
+    setSaving(true);
     try {
-      const payload = {
-        name: segmentForm.name.trim(),
-        description: segmentForm.description.trim(),
-        criteria: segmentForm.criteria,
-        is_active: true
-      };
-
+      const payload = { name: segmentForm.name.trim(), description: segmentForm.description.trim(), criteria: segmentForm.criteria, is_active: true };
       if (isEditing) {
         await API.put(`/segments/${segmentId}`, payload);
-        alert('Segment updated successfully ✅');
+        showToast('Segment updated', 'success');
       } else {
         await API.post('/segments', payload);
-        alert('Segment created successfully ✅');
+        showToast('Segment created', 'success');
       }
-
-      onSave();
-      onClose();
-    } catch (error) {
-      console.error('Save failed:', error);
-      alert('Failed to save segment');
-    }
+      onSave(); onClose();
+    } catch (err) { showToast(err.response?.data?.detail || 'Failed to save segment', 'error');
+    } finally { setSaving(false); }
   };
 
   if (!show) return null;
 
+  const c = segmentForm.criteria;
+  const readOnly = false; // editing is now always allowed
+
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-start pt-5 z-50">
-      <div className="bg-white p-6 rounded-lg shadow-xl w-full max-w-6xl max-h-[95vh] overflow-y-auto">
-        <div className="flex justify-between items-center mb-6">
-          <h3 className="text-xl font-bold">
-            {isEditing ? '✏️ View Segment Details' : '➕ Create New Segment'}
-            <span className="text-sm font-normal text-gray-600 ml-2">(8 Segmentation Types Available)</span>
-          </h3>
-          <button onClick={onClose} className="text-gray-600 hover:text-black text-xl">✖</button>
+    <div className="fixed inset-0 bg-black/50 flex items-start justify-center pt-4 z-50 p-4">
+      <div className="bg-white rounded-xl shadow-xl w-full max-w-4xl max-h-[94vh] overflow-y-auto">
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 py-4 border-b sticky top-0 bg-white z-10">
+          <div>
+            <h3 className="text-base font-semibold">{isEditing ? 'Edit Segment' : 'Create Segment'}</h3>
+            <p className="text-xs text-gray-400 mt-0.5">8 criteria types available</p>
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
         </div>
-        {isEditing && (
-          <div className="mb-4 p-4 bg-orange-100 border-l-4 border-orange-500 text-orange-900 rounded shadow-sm flex items-start gap-3">
-            <span className="text-xl">⚠️</span>
+
+        <div className="p-6 space-y-6">
+          {/* Name + Description */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
-              <p className="font-bold">Immutable Segment</p>
-              <p className="text-sm">Segments cannot be modified once created to maintain data integrity. You are viewing the current configuration.</p>
+              <label className="block text-sm font-medium mb-1">Segment Name *</label>
+              <input type="text" value={segmentForm.name}
+                onChange={e => setSegmentForm(f => ({ ...f, name: e.target.value }))}
+                placeholder="e.g. High Value Tech Users"
+                className="w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500" />
             </div>
-          </div>
-        )}
-
-        <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-          {/* Left Column - Basic Info & Preview */}
-          <div className="lg:col-span-1">
-            <div className={`space-y-4 ${isEditing ? 'pointer-events-none opacity-80' : ''}`}>
-              <div>
-                <label className="block font-semibold mb-2">Segment Name *</label>
-                <input
-                  type="text"
-                  value={segmentForm.name}
-                  onChange={(e) => setSegmentForm({...segmentForm, name: e.target.value})}
-                  className="w-full border rounded p-2"
-                  placeholder="e.g., High Value Tech Users"
-                  disabled={isEditing}
-                />
-              </div>
-
-              <div>
-                <label className="block font-semibold mb-2">Description</label>
-                <textarea
-                  value={segmentForm.description}
-                  onChange={(e) => setSegmentForm({...segmentForm, description: e.target.value})}
-                  className="w-full border rounded p-2 h-20"
-                  placeholder="Describe this segment..."
-                  disabled={isEditing}
-                />
-              </div>
-
-              <div className="bg-blue-50 p-4 rounded">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="font-semibold">Preview Count</span>
-                  {!isEditing && (
-                    <button
-                      onClick={handlePreviewCount}
-                      disabled={previewLoading}
-                      className="text-sm bg-blue-600 text-white px-3 py-1 rounded hover:bg-blue-700 disabled:opacity-50"
-                    >
-                      {previewLoading ? '⏳' : '🔄'} Count
-                    </button>
-                  )}
-                </div>
-                <div className="text-2xl font-bold text-blue-600">
-                  {previewCount.toLocaleString()} subscribers
-                </div>
-              </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">Description</label>
+              <input type="text" value={segmentForm.description}
+                onChange={e => setSegmentForm(f => ({ ...f, description: e.target.value }))}
+                placeholder="Describe this segment…"
+                className="w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500" />
             </div>
           </div>
 
-          {/* Right Column - 8 Segmentation Types */}
-          <div className={`lg:col-span-3 ${isEditing ? 'pointer-events-none opacity-80' : ''}`}>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              
-              {/* 1. 📊 Subscriber Status */}
-              <div>
-                <label className="block font-semibold mb-3">📊 Subscriber Status</label>
-                <div className="grid grid-cols-2 gap-2">
-                  {['active', 'inactive', 'unsubscribed', 'bounced'].map(status => (
-                    <label key={status} className="flex items-center bg-gray-50 p-2 rounded hover:bg-gray-100">
-                      <input
-                        type="checkbox"
-                        checked={segmentForm.criteria.status?.includes(status)}
-                        onChange={(e) => {
-                          const currentStatus = segmentForm.criteria.status || [];
-                          const newStatus = e.target.checked
-                            ? [...currentStatus, status]
-                            : currentStatus.filter(s => s !== status);
-                          handleCriteriaChange('status', newStatus);
-                        }}
-                        className="mr-2"
-                      />
-                      <span className="capitalize text-sm">{status}</span>
-                    </label>
-                  ))}
-                </div>
-              </div>
+          {/* 8 criteria types */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
 
-              {/* 2. 📋 Lists */}
-              <div>
-                <label className="block font-semibold mb-3">📋 Lists</label>
-                <div className="border rounded p-3 max-h-32 overflow-y-auto">
-                  {lists.length === 0 ? (
-                    <div className="text-center py-2">
-                      <p className="text-gray-500 text-sm">No lists available</p>
-                    </div>
-                  ) : (
-                    <div className="space-y-1">
-                      {lists.map(list => (
-                        <label key={list._id} className="flex items-center justify-between hover:bg-gray-50 p-1 rounded">
-                          <div className="flex items-center">
-                            <input
-                              type="checkbox"
-                              checked={segmentForm.criteria.lists?.includes(list._id)}
-                              onChange={(e) => {
-                                const currentLists = segmentForm.criteria.lists || [];
-                                const newLists = e.target.checked
-                                  ? [...currentLists, list._id]
-                                  : currentLists.filter(l => l !== list._id);
-                                handleCriteriaChange('lists', newLists);
-                              }}
-                              className="mr-2"
-                            />
-                            <span className="text-sm font-medium">{list._id}</span>
-                          </div>
-                          <span className="text-xs text-gray-500">{list.count || 0}</span>
-                        </label>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* 3. 📅 Subscription Date */}
-              <div>
-                <label className="block font-semibold mb-3">📅 Subscription Date</label>
-                <div className="grid grid-cols-2 gap-2">
-                  {[
-                    { label: 'Last 7 days', value: 7 },
-                    { label: 'Last 30 days', value: 30 },
-                    { label: 'Last 90 days', value: 90 },
-                    { label: 'Last 6 months', value: 180 },
-                    { label: 'Last year', value: 365 },
-                    { label: 'All time', value: null }
-                  ].map(option => (
-                    <label key={option.label} className="flex items-center bg-gray-50 p-2 rounded hover:bg-gray-100">
-                      <input
-                        type="radio"
-                        name="dateRange"
-                        checked={segmentForm.criteria.dateRange === option.value}
-                        onChange={() => handleCriteriaChange('dateRange', option.value)}
-                        className="mr-2"
-                      />
-                      <span className="text-sm">{option.label}</span>
-                    </label>
-                  ))}
-                </div>
-              </div>
-
-              {/* 4. 👤 Profile Completeness */}
-              <div>
-                <label className="block font-semibold mb-3">👤 Profile Completeness</label>
-                <div className="space-y-2">
-                  {[
-                    { field: 'first_name', label: 'Has First Name' },
-                    { field: 'last_name', label: 'Has Last Name' },
-                  ].map(item => (
-                    <label key={item.field} className="flex items-center bg-gray-50 p-2 rounded hover:bg-gray-100">
-                      <input
-                        type="checkbox"
-                        checked={segmentForm.criteria.profileCompleteness?.[item.field] === true}
-                        onChange={(e) => {
-                          const currentFields = segmentForm.criteria.profileCompleteness || {};
-                          const newFields = { ...currentFields };
-                          if (e.target.checked) {
-                            newFields[item.field] = true;
-                          } else {
-                            delete newFields[item.field];
-                          }
-                          handleCriteriaChange('profileCompleteness', newFields);
-                        }}
-                        className="mr-2"
-                      />
-                      <span className="text-sm">{item.label}</span>
-                    </label>
-                  ))}
-                </div>
-              </div>
-
-              {/* 5. 🌍 Geographic */}
-              <div>
-                <label className="block font-semibold mb-3">🌍 Geographic</label>
-                <div className="space-y-2">
-                  <input
-                    type="text"
-                    placeholder="Country (e.g., United States)"
-                    value={segmentForm.criteria.geographic?.country || ''}
-                    onChange={(e) => handleCriteriaChange('geographic.country', e.target.value)}
-                    className="w-full border rounded p-2 text-sm"
-                  />
-                  <input
-                    type="text"
-                    placeholder="City (e.g., New York)"
-                    value={segmentForm.criteria.geographic?.city || ''}
-                    onChange={(e) => handleCriteriaChange('geographic.city', e.target.value)}
-                    className="w-full border rounded p-2 text-sm"
-                  />
-                </div>
-              </div>
-
-              {/* 6. 📈 Engagement Level */}
-              <div>
-                <label className="block font-semibold mb-3">📈 Engagement Level</label>
-                <div className="grid grid-cols-3 gap-2">
-                  {['high', 'medium', 'low'].map(level => (
-                    <label key={level} className="flex items-center bg-gray-50 p-2 rounded hover:bg-gray-100">
-                      <input
-                        type="checkbox"
-                        checked={segmentForm.criteria.engagement?.includes(level)}
-                        onChange={(e) => {
-                          const currentEngagement = segmentForm.criteria.engagement || [];
-                          const newEngagement = e.target.checked
-                            ? [...currentEngagement, level]
-                            : currentEngagement.filter(l => l !== level);
-                          handleCriteriaChange('engagement', newEngagement);
-                        }}
-                        className="mr-2"
-                      />
-                      <span className="capitalize text-sm">{level}</span>
-                    </label>
-                  ))}
-                </div>
-              </div>
-
-              {/* 7. 📧 Email Domain */}
-              <div>
-                <label className="block font-semibold mb-3">📧 Email Domain</label>
-                <div className="grid grid-cols-2 gap-2">
-                  {[
-                    { label: 'Gmail', value: 'gmail.com' },
-                    { label: 'Yahoo', value: 'yahoo.com' },
-                    { label: 'Outlook', value: 'outlook.com' },
-                    { label: 'Corporate', value: 'corporate' }
-                  ].map(domain => (
-                    <label key={domain.value} className="flex items-center bg-gray-50 p-2 rounded hover:bg-gray-100">
-                      <input
-                        type="checkbox"
-                        checked={segmentForm.criteria.emailDomain?.includes(domain.value)}
-                        onChange={(e) => {
-                          const currentDomains = segmentForm.criteria.emailDomain || [];
-                          const newDomains = e.target.checked
-                            ? [...currentDomains, domain.value]
-                            : currentDomains.filter(d => d !== domain.value);
-                          handleCriteriaChange('emailDomain', newDomains);
-                        }}
-                        className="mr-2"
-                      />
-                      <span className="text-sm">{domain.label}</span>
-                    </label>
-                  ))}
-                </div>
-              </div>
-
-              {/* 8. 🏷️ Custom Fields */}
-              <div>
-                <label className="block font-semibold mb-3">🏷️ Custom Fields</label>
-                <div className="space-y-2">
-                  {/* Predefined custom fields */}
-                  <input
-                    type="text"
-                    placeholder="Industry (e.g., Technology)"
-                    value={segmentForm.criteria.industry || ''}
-                    onChange={(e) => handleCriteriaChange('industry', e.target.value)}
-                    className="w-full border rounded p-2 text-sm"
-                  />
-                  <input
-                    type="text"
-                    placeholder="Company Size (e.g., 50-200)"
-                    value={segmentForm.criteria.companySize || ''}
-                    onChange={(e) => handleCriteriaChange('companySize', e.target.value)}
-                    className="w-full border rounded p-2 text-sm"
-                  />
-                  
-                  {/* Dynamic custom fields */}
-                  {segmentForm.criteria.customFields && Object.keys(segmentForm.criteria.customFields).length > 0 && (
-                    <div className="mt-2 space-y-1">
-                      {Object.entries(segmentForm.criteria.customFields).map(([field, value], index) => (
-                        <div key={index} className="flex gap-2 items-center">
-                          <input
-                            type="text"
-                            placeholder="Field name"
-                            value={field}
-                            className="flex-1 border rounded px-2 py-1 text-sm bg-gray-100"
-                            readOnly
-                          />
-                          <input
-                            type="text"
-                            placeholder="Value"
-                            value={value}
-                            onChange={(e) => {
-                              const newCustomFields = { ...segmentForm.criteria.customFields };
-                              newCustomFields[field] = e.target.value;
-                              handleCriteriaChange('customFields', newCustomFields);
-                            }}
-                            className="flex-1 border rounded px-2 py-1 text-sm"
-                          />
-                          <button
-                            onClick={() => {
-                              const newCustomFields = { ...segmentForm.criteria.customFields };
-                              delete newCustomFields[field];
-                              handleCriteriaChange('customFields', newCustomFields);
-                            }}
-                            className="text-red-600 hover:text-red-800 px-2"
-                          >
-                            ❌
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                  
-                  <button
-                    onClick={() => {
-                      const fieldName = prompt('Enter custom field name:');
-                      if (fieldName) {
-                        const newCustomFields = { ...segmentForm.criteria.customFields } || {};
-                        newCustomFields[fieldName] = '';
-                        handleCriteriaChange('customFields', newCustomFields);
-                      }
-                    }}
-                    className="text-blue-600 text-sm hover:underline"
-                  >
-                    ➕ Add Custom Field Filter
-                  </button>
-                </div>
+            {/* 1. Status */}
+            <div className="border border-gray-100 rounded-xl p-4">
+              <p className="text-sm font-semibold mb-3 text-gray-700">📊 Subscriber Status</p>
+              <div className="grid grid-cols-2 gap-2">
+                {['active', 'inactive', 'unsubscribed', 'bounced'].map(s => (
+                  <label key={s} className="flex items-center gap-2 px-3 py-2 bg-gray-50 rounded-lg hover:bg-gray-100 cursor-pointer text-sm">
+                    <input type="checkbox" checked={c.status?.includes(s)} onChange={() => toggleArr('status', s)} className="rounded" />
+                    <span className="capitalize">{s}</span>
+                  </label>
+                ))}
               </div>
             </div>
+
+            {/* 2. Lists */}
+            <div className="border border-gray-100 rounded-xl p-4">
+              <p className="text-sm font-semibold mb-3 text-gray-700">📋 Lists</p>
+              {lists.length === 0 ? (
+                <p className="text-sm text-gray-400">No lists available</p>
+              ) : (
+                <div className="space-y-1 max-h-32 overflow-y-auto">
+                  {lists.map(list => (
+                    <label key={list._id} className="flex items-center justify-between hover:bg-gray-50 px-2 py-1.5 rounded-lg cursor-pointer">
+                      <div className="flex items-center gap-2">
+                        <input type="checkbox"
+                          checked={c.lists?.includes(list._id)}
+                          onChange={e => {
+                            const cur = c.lists || [];
+                            set('lists', e.target.checked ? [...cur, list._id] : cur.filter(l => l !== list._id));
+                          }} className="rounded" />
+                        <span className="text-sm">{list._id}</span>
+                      </div>
+                      <span className="text-xs text-gray-400">{fmt(list.total_count || list.count || 0)}</span>
+                    </label>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* 3. Date Range */}
+            <div className="border border-gray-100 rounded-xl p-4">
+              <p className="text-sm font-semibold mb-3 text-gray-700">📅 Subscription Date</p>
+              <div className="grid grid-cols-2 gap-2">
+                {[
+                  { label: 'Last 7 days', value: 7 }, { label: 'Last 30 days', value: 30 },
+                  { label: 'Last 90 days', value: 90 }, { label: 'Last 6 months', value: 180 },
+                  { label: 'Last year', value: 365 }, { label: 'All time', value: null },
+                ].map(opt => (
+                  <label key={opt.label} className="flex items-center gap-2 px-3 py-2 bg-gray-50 rounded-lg hover:bg-gray-100 cursor-pointer text-sm">
+                    <input type="radio" name="dateRange" checked={c.dateRange === opt.value} onChange={() => set('dateRange', opt.value)} />
+                    <span>{opt.label}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            {/* 4. Profile Completeness */}
+            <div className="border border-gray-100 rounded-xl p-4">
+              <p className="text-sm font-semibold mb-3 text-gray-700">👤 Profile Completeness</p>
+              <div className="space-y-2">
+                {[{ field: 'first_name', label: 'Has First Name' }, { field: 'last_name', label: 'Has Last Name' }].map(item => (
+                  <label key={item.field} className="flex items-center gap-2 px-3 py-2 bg-gray-50 rounded-lg hover:bg-gray-100 cursor-pointer text-sm">
+                    <input type="checkbox"
+                      checked={c.profileCompleteness?.[item.field] === true}
+                      onChange={e => {
+                        const cur = { ...c.profileCompleteness };
+                        if (e.target.checked) cur[item.field] = true; else delete cur[item.field];
+                        set('profileCompleteness', cur);
+                      }} className="rounded" />
+                    <span>{item.label}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            {/* 5. Geographic */}
+            <div className="border border-gray-100 rounded-xl p-4">
+              <p className="text-sm font-semibold mb-3 text-gray-700">🌍 Geographic</p>
+              <div className="space-y-2">
+                <input type="text" placeholder="Country (e.g. United States)"
+                  value={c.geographic?.country || ''}
+                  onChange={e => set('geographic.country', e.target.value)}
+                  className="w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500" />
+                <input type="text" placeholder="City (e.g. New York)"
+                  value={c.geographic?.city || ''}
+                  onChange={e => set('geographic.city', e.target.value)}
+                  className="w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500" />
+              </div>
+            </div>
+
+            {/* 6. Engagement */}
+            <div className="border border-gray-100 rounded-xl p-4">
+              <p className="text-sm font-semibold mb-3 text-gray-700">📈 Engagement Level</p>
+              <div className="grid grid-cols-3 gap-2">
+                {['high', 'medium', 'low'].map(level => (
+                  <label key={level} className="flex items-center gap-2 px-3 py-2 bg-gray-50 rounded-lg hover:bg-gray-100 cursor-pointer text-sm">
+                    <input type="checkbox" checked={c.engagement?.includes(level)} onChange={() => toggleArr('engagement', level)} className="rounded" />
+                    <span className="capitalize">{level}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            {/* 7. Email Domain */}
+            <div className="border border-gray-100 rounded-xl p-4">
+              <p className="text-sm font-semibold mb-3 text-gray-700">📧 Email Domain</p>
+              <div className="grid grid-cols-2 gap-2">
+                {[{ label: 'Gmail', value: 'gmail.com' }, { label: 'Yahoo', value: 'yahoo.com' },
+                  { label: 'Outlook', value: 'outlook.com' }, { label: 'Corporate', value: 'corporate' }].map(d => (
+                  <label key={d.value} className="flex items-center gap-2 px-3 py-2 bg-gray-50 rounded-lg hover:bg-gray-100 cursor-pointer text-sm">
+                    <input type="checkbox" checked={c.emailDomain?.includes(d.value)} onChange={() => toggleArr('emailDomain', d.value)} className="rounded" />
+                    <span>{d.label}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            {/* 8. Custom Fields */}
+            <div className="border border-gray-100 rounded-xl p-4">
+              <p className="text-sm font-semibold mb-3 text-gray-700">🏷️ Custom Fields</p>
+              <div className="space-y-2">
+                <input type="text" placeholder="Industry (e.g. Technology)"
+                  value={c.industry || ''}
+                  onChange={e => set('industry', e.target.value)}
+                  className="w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500" />
+                <input type="text" placeholder="Company Size (e.g. 50-200)"
+                  value={c.companySize || ''}
+                  onChange={e => set('companySize', e.target.value)}
+                  className="w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500" />
+                {Object.entries(c.customFields || {}).map(([field, value]) => (
+                  <CustomFieldRow key={field} field={field} value={value}
+                    onChange={v => { const cf = { ...c.customFields, [field]: v }; set('customFields', cf); }}
+                    onRemove={() => { const cf = { ...c.customFields }; delete cf[field]; set('customFields', cf); }} />
+                ))}
+                <AddCustomFieldInput onAdd={name => set('customFields', { ...c.customFields, [name]: '' })} />
+              </div>
+            </div>
+          </div>
+
+          {/* Preview count bar */}
+          <div className="flex items-center gap-4 p-4 bg-blue-50 rounded-xl border border-blue-100">
+            <div className="flex-1">
+              <p className="text-sm font-medium text-blue-800">
+                {previewCount !== null ? (
+                  <><span className="text-xl font-bold">{fmt(previewCount)}</span> subscribers match</>
+                ) : (
+                  <span className="text-blue-500">Click Count to preview matching subscribers</span>
+                )}
+              </p>
+            </div>
+            <button onClick={handlePreviewCount} disabled={previewLoading}
+              className="px-4 py-2 bg-blue-600 text-white text-sm font-semibold rounded-lg hover:bg-blue-700 disabled:opacity-50 flex items-center gap-2">
+              {previewLoading ? <><span className="animate-spin">↻</span> Counting…</> : '🔍 Count Matches'}
+            </button>
           </div>
         </div>
 
-        {/* Action Buttons */}
-        <div className="mt-8 flex justify-end gap-3">
-          <button
-            onClick={onClose}
-            className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded"
-          >
-            Cancel
+        {/* Footer */}
+        <div className="flex gap-3 px-6 py-4 border-t bg-gray-50 rounded-b-xl sticky bottom-0">
+          <button onClick={handleSave} disabled={saving || !segmentForm.name.trim()}
+            className="flex-1 py-2.5 bg-blue-600 text-white text-sm font-semibold rounded-lg hover:bg-blue-700 disabled:opacity-50">
+            {saving ? 'Saving…' : isEditing ? 'Update Segment' : 'Create Segment'}
           </button>
-          <button
-            onClick={handleSave}
-            disabled={!segmentForm.name.trim()}
-            className="bg-blue-600 text-white px-6 py-2 rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {isEditing ? 'Update Segment' : 'Create Segment'}
+          <button onClick={onClose} className="px-5 py-2.5 border text-sm font-medium rounded-lg hover:bg-gray-100">
+            Cancel
           </button>
         </div>
       </div>
     </div>
   );
-};
+}
 
-// Preview Modal Component
-const SegmentPreviewModal = ({ show, onClose, segment, previewData }) => {
+// ─── PreviewModal ─────────────────────────────────────────────
+function PreviewModal({ show, onClose, segment, previewData, totalMatching, onExport }) {
   if (!show) return null;
-
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-start pt-10 z-50">
-      <div className="bg-white p-6 rounded-lg shadow-xl w-full max-w-6xl max-h-[90vh] overflow-y-auto">
-        <div className="flex justify-between items-center mb-6">
+    <div className="fixed inset-0 bg-black/50 flex items-start justify-center pt-6 z-50 p-4">
+      <div className="bg-white rounded-xl shadow-xl w-full max-w-4xl max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between px-6 py-4 border-b sticky top-0 bg-white z-10">
           <div>
-            <h3 className="text-xl font-bold">👁️ Preview: {segment?.name}</h3>
-            <p className="text-gray-600">{segment?.description}</p>
+            <h3 className="text-base font-semibold">{segment?.name}</h3>
+            <p className="text-xs text-gray-400 mt-0.5">
+              {fmt(totalMatching)} subscribers match · showing first {Math.min(previewData.length, 50)}
+            </p>
           </div>
-          <button onClick={onClose} className="text-gray-600 hover:text-black text-xl">✖</button>
+          <div className="flex items-center gap-2">
+            {onExport && (
+              <button onClick={onExport}
+                className="px-3 py-1.5 text-xs font-medium border border-gray-200 rounded-lg hover:bg-gray-50 text-gray-600">
+                📥 Export
+              </button>
+            )}
+            <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
+          </div>
         </div>
 
-        <div className="mb-4 p-3 bg-blue-50 rounded">
-          <div className="text-lg font-semibold text-blue-800">
-            {previewData.length.toLocaleString()} subscribers match this segment
+        {previewData.length === 0 ? (
+          <div className="py-16 text-center">
+            <p className="text-3xl mb-2">🔍</p>
+            <p className="text-sm text-gray-600 font-medium">No subscribers match this criteria</p>
+            <p className="text-xs text-gray-400 mt-1">Try adjusting your segment filters</p>
           </div>
-        </div>
-
-        {previewData.length > 0 ? (
+        ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-sm border">
-              <thead className="bg-gray-100">
-                <tr>
-                  <th className="p-2 border text-left">Name</th>
-                  <th className="p-2 border text-left">Email</th>
-                  <th className="p-2 border text-left">List</th>
-                  <th className="p-2 border text-left">Status</th>
-                  <th className="p-2 border text-left">Joined</th>
-                  <th className="p-2 border text-left">Custom Fields</th>
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-gray-50 border-b border-gray-100">
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Email</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">List</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                  <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Joined</th>
                 </tr>
               </thead>
-              <tbody>
-                {previewData.slice(0, 50).map((subscriber, index) => (
-                  <tr key={index} className="hover:bg-gray-50">
-                    <td className="p-2 border">
-                      {`${subscriber.standard_fields?.first_name || ''} ${subscriber.standard_fields?.last_name || ''}`.trim() || '-'}
+              <tbody className="divide-y divide-gray-50">
+                {previewData.slice(0, 50).map((sub, i) => (
+                  <tr key={sub._id || i} className="hover:bg-gray-50 transition-colors">
+                    <td className="px-4 py-3 text-gray-700">
+                      {[sub.standard_fields?.first_name, sub.standard_fields?.last_name].filter(Boolean).join(' ') || <span className="text-gray-300">—</span>}
                     </td>
-                    <td className="p-2 border">{subscriber.email}</td>
-                    <td className="p-2 border">
-                      <span className="bg-blue-100 text-blue-800 px-2 py-1 rounded text-xs">
-                        {subscriber.list}
+                    <td className="px-4 py-3 font-medium text-gray-900">{sub.email}</td>
+                    <td className="px-4 py-3">
+                      <span className="inline-block px-2 py-0.5 bg-blue-100 text-blue-700 rounded-full text-xs">{sub.list}</span>
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium ${STATUS_STYLE[sub.status] || STATUS_STYLE.inactive}`}>
+                        {sub.status || 'active'}
                       </span>
                     </td>
-                    <td className="p-2 border">
-                      <span className={`px-2 py-1 rounded text-xs ${
-                        subscriber.status === 'active' ? 'bg-green-100 text-green-800' :
-                        subscriber.status === 'unsubscribed' ? 'bg-red-100 text-red-800' :
-                        'bg-gray-100 text-gray-800'
-                      }`}>
-                        {subscriber.status || 'active'}
-                      </span>
-                    </td>
-                    <td className="p-2 border text-xs text-gray-600">
-                      {subscriber.created_at ? new Date(subscriber.created_at).toLocaleDateString() : '-'}
-                    </td>
-                    <td className="p-2 border">
-                      {subscriber.custom_fields && Object.keys(subscriber.custom_fields).length > 0 ? (
-                        <div className="flex flex-wrap gap-1">
-                          {Object.entries(subscriber.custom_fields).slice(0, 2).map(([key, value]) => (
-                            <span key={key} className="bg-purple-100 text-purple-700 px-1 py-0.5 rounded text-xs">
-                              {key}: {value}
-                            </span>
-                          ))}
-                          {Object.keys(subscriber.custom_fields).length > 2 && (
-                            <span className="text-gray-500 text-xs">
-                              +{Object.keys(subscriber.custom_fields).length - 2}
-                            </span>
-                          )}
-                        </div>
-                      ) : (
-                        <span className="text-gray-400 text-xs">-</span>
-                      )}
-                    </td>
+                    <td className="px-4 py-3 text-xs text-gray-400 text-right whitespace-nowrap">{fmtD(sub.created_at)}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
-            {previewData.length > 50 && (
-              <div className="p-3 text-center text-gray-500">
-                Showing first 50 of {previewData.length.toLocaleString()} subscribers
-              </div>
-            )}
-          </div>
-        ) : (
-          <div className="text-center py-8 text-gray-500">
-            <div className="text-4xl mb-4">🔍</div>
-            <p>No subscribers match this segment criteria</p>
           </div>
         )}
 
-        <div className="mt-6 flex justify-end">
-          <button
-            onClick={onClose}
-            className="bg-gray-600 text-white px-4 py-2 rounded hover:bg-gray-700"
-          >
-            Close Preview
-          </button>
+        <div className="px-6 py-4 border-t flex justify-end">
+          <button onClick={onClose} className="px-4 py-2 border text-sm font-medium rounded-lg hover:bg-gray-100">Close</button>
         </div>
       </div>
     </div>
   );
-};
+}
 
+// ─── Main ─────────────────────────────────────────────────────
+export default function Segmentation() {
+  const navigate = useNavigate();
+  const [segments, setSegments]           = useState([]);
+  const [loading, setLoading]             = useState(true);
+  const [lists, setLists]                 = useState([]);
+  const [showModal, setShowModal]         = useState(false);
+  const [showPreview, setShowPreview]     = useState(false);
+  const [previewData, setPreviewData]     = useState([]);
+  const [previewTotal, setPreviewTotal]   = useState(0);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [selectedSegment, setSelectedSegment] = useState(null);
+  const [segmentForm, setSegmentForm]     = useState(emptyForm());
+  const [showInactive, setShowInactive]   = useState(false);
+  const [search, setSearch]               = useState('');
+  const [toasts, setToasts]               = useState([]);
+
+  const showToast = useCallback((message, type = 'info') => {
+    const id = Date.now();
+    setToasts(p => [...p, { id, message, type }]);
+    setTimeout(() => setToasts(p => p.filter(t => t.id !== id)), 4000);
+  }, []);
+
+  const dismissToast = (id) => setToasts(p => p.filter(t => t.id !== id));
+
+  const fetchSegments = useCallback(async () => {
+    try {
+      setLoading(true);
+      const res = await API.get(`/segments?active_only=${!showInactive}`);
+      const data = Array.isArray(res.data) ? res.data : (res.data?.segments || []);
+      setSegments(data);
+    } catch { setSegments([]); } finally { setLoading(false); }
+  }, [showInactive]);
+
+  const fetchLists = async () => {
+    try {
+      const res = await API.get('/subscribers/lists');
+      setLists(Array.isArray(res.data) ? res.data : (res.data?.lists || []));
+    } catch { setLists([]); }
+  };
+
+  useEffect(() => { fetchSegments(); }, [fetchSegments]);
+  useEffect(() => { fetchLists(); }, []);
+
+  // filtered segments
+  const filtered = useMemo(() => {
+    if (!search.trim()) return segments;
+    const q = search.toLowerCase();
+    return segments.filter(s =>
+      (s.name || '').toLowerCase().includes(q) ||
+      (s.description || '').toLowerCase().includes(q)
+    );
+  }, [segments, search]);
+
+  const openCreate = () => { setSelectedSegment(null); setSegmentForm(emptyForm()); setShowModal(true); };
+  const openEdit   = (seg) => {
+    setSelectedSegment(seg);
+    setSegmentForm({ name: seg.name, description: seg.description || '', criteria: seg.criteria || emptyForm().criteria });
+    setShowModal(true);
+  };
+
+  const handlePreview = async (seg) => {
+    setPreviewLoading(true);
+    setSelectedSegment(seg);
+    try {
+      const res = await API.post('/segments/preview', { criteria: seg.criteria || seg.query });
+      setPreviewData(res.data.subscribers || []);
+      setPreviewTotal(res.data.total_matching ?? res.data.subscribers?.length ?? 0);
+      setShowPreview(true);
+    } catch { showToast('Failed to load preview', 'error'); } finally { setPreviewLoading(false); }
+  };
+
+  const handleDelete = async (seg) => {
+    if (!confirm(`Delete "${seg.name}"? This cannot be undone.`)) return;
+    try {
+      await API.delete(`/segments/${seg._id}`);
+      showToast(`"${seg.name}" deleted`, 'success');
+      setSegments(p => p.filter(s => s._id !== seg._id));
+    } catch { showToast('Delete failed', 'error'); }
+  };
+
+  const handleExportPreview = async () => {
+    if (!selectedSegment?._id) return;
+    try {
+      const res = await API.get(`/segments/${selectedSegment._id}/subscribers?limit=10000`);
+      const subs = res.data.subscribers || [];
+      const keys = ['email', 'status', 'list', 'first_name', 'last_name'];
+      const rows = [keys.join(',')];
+      subs.forEach(s => rows.push([
+        s.email, s.status, s.list,
+        s.standard_fields?.first_name || '',
+        s.standard_fields?.last_name || '',
+      ].map(v => `"${v || ''}"`).join(',')));
+      const blob = new Blob([rows.join('\n')], { type: 'text/csv' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `${selectedSegment.name.replace(/\s+/g, '_')}_subscribers.csv`;
+      a.click(); URL.revokeObjectURL(a.href);
+      showToast('Export started', 'success');
+    } catch { showToast('Export failed', 'error'); }
+  };
+
+  // summary stats
+  const totalSegmented = segments.reduce((s, seg) => s + (seg.subscriber_count || 0), 0);
+  const activeCount    = segments.filter(s => s.is_active).length;
+
+  return (
+    <div className="space-y-6">
+      <Toast toasts={toasts} onDismiss={dismissToast} />
+
+      {/* ── Summary cards ── */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        {[
+          { value: segments.length,   label: 'Total Segments',    color: 'text-blue-600' },
+          { value: activeCount,       label: 'Active',            color: 'text-green-600' },
+          { value: fmt(totalSegmented), label: 'Total Segmented', color: 'text-orange-600' },
+          { value: lists.length,      label: 'Available Lists',   color: 'text-purple-600' },
+        ].map(card => (
+          <div key={card.label} className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
+            <p className={`text-2xl font-bold tabular-nums ${card.color}`}>{card.value}</p>
+            <p className="text-xs text-gray-500 mt-0.5">{card.label}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* ── Segments table ── */}
+      <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+        {/* Toolbar */}
+        <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-4 border-b border-gray-100">
+          <div className="flex items-center gap-3">
+            <h2 className="text-sm font-semibold text-gray-700">Segments</h2>
+            {filtered.length !== segments.length && (
+              <span className="text-xs text-gray-400">({filtered.length} of {segments.length})</span>
+            )}
+          </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            {/* Search */}
+            <div className="relative">
+              <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 text-xs">🔍</span>
+              <input type="text" placeholder="Search segments…"
+                value={search} onChange={e => setSearch(e.target.value)}
+                className="pl-7 pr-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 w-44" />
+            </div>
+            {/* Show inactive toggle */}
+            <label className="flex items-center gap-1.5 text-xs text-gray-500 cursor-pointer select-none">
+              <input type="checkbox" checked={showInactive} onChange={e => setShowInactive(e.target.checked)} className="rounded" />
+              Show inactive
+            </label>
+            {/* Create */}
+            <button onClick={openCreate}
+              className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white text-sm font-semibold rounded-lg hover:bg-blue-700 transition-colors">
+              ➕ Create Segment
+            </button>
+          </div>
+        </div>
+
+        {loading ? (
+          <div className="flex items-center justify-center py-16 gap-2 text-gray-400 text-sm">
+            <div className="animate-spin h-4 w-4 border-2 border-gray-300 border-t-blue-500 rounded-full" />
+            Loading segments…
+          </div>
+        ) : filtered.length === 0 ? (
+          <div className="py-16 text-center">
+            <p className="text-3xl mb-2">🎯</p>
+            <p className="text-sm font-medium text-gray-700">
+              {search ? `No segments match "${search}"` : 'No segments yet'}
+            </p>
+            {search
+              ? <button onClick={() => setSearch('')} className="text-xs text-blue-600 mt-2 hover:underline">Clear search</button>
+              : <p className="text-xs text-gray-400 mt-1 mb-4">Create your first segment with 8 criteria types</p>
+            }
+            {!search && (
+              <button onClick={openCreate}
+                className="px-4 py-2 bg-blue-600 text-white text-sm font-semibold rounded-lg hover:bg-blue-700">
+                Create Segment
+              </button>
+            )}
+          </div>
+        ) : (
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-gray-50 border-b border-gray-100">
+                <th className="px-5 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Segment</th>
+                <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider w-24">Size</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Criteria</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-20">Status</th>
+                <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider w-48">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-50">
+              {filtered.map((seg, i) => (
+                <tr key={seg._id || i} className="hover:bg-gray-50 transition-colors">
+                  <td className="px-5 py-3.5">
+                    <p className="font-medium text-gray-900">{seg.name}</p>
+                    {seg.description && <p className="text-xs text-gray-400 mt-0.5 truncate max-w-xs">{seg.description}</p>}
+                    <p className="text-xs text-gray-300 mt-0.5">{fmtD(seg.updated_at)}</p>
+                  </td>
+                  <td className="px-4 py-3.5 text-right">
+                    <span className="text-base font-bold text-gray-800 tabular-nums">{fmt(seg.subscriber_count)}</span>
+                    <span className="block text-xs text-gray-400">subs</span>
+                  </td>
+                  <td className="px-4 py-3.5">
+                    <div className="flex flex-wrap gap-1">
+                      {getCriteriaTypes(seg.criteria).map(t => (
+                        <span key={t} className="px-2 py-0.5 bg-purple-100 text-purple-700 rounded-full text-xs font-medium">{t}</span>
+                      ))}
+                    </div>
+                  </td>
+                  <td className="px-4 py-3.5">
+                    <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium ${seg.is_active ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>
+                      {seg.is_active ? 'Active' : 'Inactive'}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3.5">
+                    <div className="flex items-center justify-end gap-1.5 flex-wrap">
+                      <button onClick={() => handlePreview(seg)} disabled={previewLoading}
+                        className="px-2.5 py-1.5 text-xs font-medium border border-gray-200 rounded-lg hover:bg-gray-50 text-gray-600 disabled:opacity-50 transition-colors">
+                        {previewLoading && selectedSegment?._id === seg._id ? '⏳' : 'Preview'}
+                      </button>
+                      <button onClick={() => openEdit(seg)}
+                        className="px-2.5 py-1.5 text-xs font-medium border border-gray-200 rounded-lg hover:bg-gray-50 text-gray-600 transition-colors">
+                        Edit
+                      </button>
+                      <button onClick={() => navigate(`/campaigns/create?segment=${seg._id}`)}
+                        className="px-2.5 py-1.5 text-xs font-medium border border-blue-200 rounded-lg hover:bg-blue-50 text-blue-600 transition-colors"
+                        title="Create campaign targeting this segment">
+                        Campaign
+                      </button>
+                      <button onClick={() => handleDelete(seg)}
+                        className="px-2.5 py-1.5 text-xs font-medium border border-red-200 rounded-lg hover:bg-red-50 text-red-600 transition-colors">
+                        Delete
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      {/* Modals */}
+      <SegmentModal
+        show={showModal} onClose={() => setShowModal(false)}
+        segmentForm={segmentForm} setSegmentForm={setSegmentForm}
+        lists={lists} onSave={fetchSegments}
+        isEditing={!!selectedSegment} segmentId={selectedSegment?._id}
+        showToast={showToast}
+      />
+
+      <PreviewModal
+        show={showPreview} onClose={() => setShowPreview(false)}
+        segment={selectedSegment} previewData={previewData}
+        totalMatching={previewTotal} onExport={handleExportPreview}
+      />
+    </div>
+  );
+}

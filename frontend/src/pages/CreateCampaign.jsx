@@ -1,92 +1,92 @@
-import { useState, useEffect, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
-import API from '../api';
-import { Monitor, Smartphone, Tablet } from 'lucide-react';
+import { useState, useEffect, useRef } from "react";
+import { useNavigate } from "react-router-dom";
+import API from "../api";
+import { Monitor, Smartphone, Tablet } from "lucide-react";
 
 export default function CreateCampaign() {
   // Step state: 1 = Content, 2 = Audience + Template Select + Field Mapping, 3 = Preview/Test
   const [step, setStep] = useState(1);
-  
+
   // Form data fields
-  const [title, setTitle] = useState('');
-  const [subject, setSubject] = useState('');
-  const [senderName, setSenderName] = useState('');
-  const [senderEmail, setSenderEmail] = useState('');
-  const [replyTo, setReplyTo] = useState('');
+  const [title, setTitle] = useState("");
+  const [subject, setSubject] = useState("");
+  const [senderName, setSenderName] = useState("");
+  const [senderEmail, setSenderEmail] = useState("");
+  const [replyTo, setReplyTo] = useState("");
   const isValidEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
-  
+
   // Template and preview HTML
   const [templates, setTemplates] = useState([]);
   const [selectedTemplate, setSelectedTemplate] = useState(null);
-  const [previewHtml, setPreviewHtml] = useState('');
-  
+  const [previewHtml, setPreviewHtml] = useState("");
+
   // Dynamic fields to map with audience list columns
   const [dynamicFields, setDynamicFields] = useState([]);
   const [fieldMap, setFieldMap] = useState({});
   const [fallbackValues, setFallbackValues] = useState({});
-  
+
   // Available fields state
   const [availableFields, setAvailableFields] = useState({
     universal: [],
     standard: [],
-    custom: []
+    custom: [],
   });
-  
+
   // Audience lists and selection
   const [lists, setLists] = useState([]);
   const [selectedLists, setSelectedLists] = useState([]);
-  
+
   // Segmentation Integration
   const [segments, setSegments] = useState([]);
   const [selectedSegments, setSelectedSegments] = useState([]);
   const [loadingSegments, setLoadingSegments] = useState(false);
-  const [audienceMode, setAudienceMode] = useState('lists'); // 'lists', 'segments', 'both'
-  
+  const [audienceMode, setAudienceMode] = useState("lists"); // 'lists', 'segments', 'both'
+
   // Loading and error states
   const [loadingLists, setLoadingLists] = useState(false);
   const [loadingTemplates, setLoadingTemplates] = useState(false);
   const [error, setError] = useState(null);
   const [isSaving, setIsSaving] = useState(false);
-  const [successMsg, setSuccessMsg] = useState('');
-  
+  const [successMsg, setSuccessMsg] = useState("");
+
   // Test email states for step 3
-  const [testEmail, setTestEmail] = useState('');
+  const [testEmail, setTestEmail] = useState("");
   const [sendingTest, setSendingTest] = useState(false);
   const [testSent, setTestSent] = useState(false);
-  
+
   // Preview mode state
-  const [previewMode, setPreviewMode] = useState('desktop');
-  
+  const [previewMode, setPreviewMode] = useState("desktop");
+
   const navigate = useNavigate();
 
   // Fetch templates on mount
   useEffect(() => {
     setLoadingTemplates(true);
-    API.get('/templates')
+    API.get("/templates")
       .then((res) => setTemplates(res.data))
-      .catch(() => setError('Failed to load templates'))
+      .catch(() => setError("Failed to load templates"))
       .finally(() => setLoadingTemplates(false));
   }, []);
 
   // Fetch subscriber lists on mount
   useEffect(() => {
     setLoadingLists(true);
-    API.get('/subscribers/lists')
+    API.get("/subscribers/lists")
       .then((res) => setLists(res.data))
-      .catch(() => setError('Failed to load subscriber lists'))
+      .catch(() => setError("Failed to load subscriber lists"))
       .finally(() => setLoadingLists(false));
   }, []);
 
   // Fetch segments on mount
   useEffect(() => {
     setLoadingSegments(true);
-    API.get('/segments')
+    API.get("/segments")
       .then((res) => {
         const segmentsData = res.data?.segments || res.data || [];
         setSegments(Array.isArray(segmentsData) ? segmentsData : []);
       })
       .catch(() => {
-        console.error('Failed to load segments');
+        console.error("Failed to load segments");
         setSegments([]);
       })
       .finally(() => setLoadingSegments(false));
@@ -95,7 +95,7 @@ export default function CreateCampaign() {
   // When template changes, extract HTML for preview & fetch dynamic fields
   useEffect(() => {
     if (!selectedTemplate) {
-      setPreviewHtml('');
+      setPreviewHtml("");
       setDynamicFields([]);
       setFieldMap({});
       return;
@@ -119,67 +119,69 @@ export default function CreateCampaign() {
     if (!template) return "";
 
     const contentJson = template.content_json || {};
-    
+
     // Handle different template modes
-    if (contentJson.mode === 'html' && contentJson.content) {
+    if (contentJson.mode === "html" && contentJson.content) {
       return contentJson.content;
-    } else if (contentJson.mode === 'drag-drop' && contentJson.blocks) {
-      return contentJson.blocks.map(block => block.content || '').join('\n');
-    } else if (contentJson.mode === 'visual' && contentJson.content) {
+    } else if (contentJson.mode === "drag-drop" && contentJson.blocks) {
+      return contentJson.blocks.map((block) => block.content || "").join("\n");
+    } else if (contentJson.mode === "visual" && contentJson.content) {
       return contentJson.content;
     } else if (template.html) {
       // Fallback to stored HTML
       return template.html;
     } else if (contentJson.body && contentJson.body.rows) {
       // Handle legacy Unlayer format
-      let extractedHtml = '';
+      let extractedHtml = "";
       try {
-        contentJson.body.rows.forEach(row => {
-          row.columns?.forEach(column => {
-            column.contents?.forEach(content => {
-              if (content.type === 'html' && content.values?.html) {
-                extractedHtml += content.values.html + '\n';
+        contentJson.body.rows.forEach((row) => {
+          row.columns?.forEach((column) => {
+            column.contents?.forEach((content) => {
+              if (content.type === "html" && content.values?.html) {
+                extractedHtml += content.values.html + "\n";
               }
             });
           });
         });
         return extractedHtml;
       } catch (e) {
-        console.error('Error extracting HTML from legacy format:', e);
-        return '<p>Error rendering template preview</p>';
+        console.error("Error extracting HTML from legacy format:", e);
+        return "<p>Error rendering template preview</p>";
       }
     }
-    
-    return '<p>No preview available</p>';
+
+    return "<p>No preview available</p>";
   };
 
   // Available fields useEffect - updated for segments
   useEffect(() => {
     if (selectedLists.length > 0 || selectedSegments.length > 0) {
-      getAllColumns()
-        .then(setAvailableFields)
-        .catch(console.error);
+      getAllColumns().then(setAvailableFields).catch(console.error);
     } else {
       setAvailableFields({
         universal: [],
         standard: [],
-        custom: []
+        custom: [],
       });
     }
   }, [selectedLists, selectedSegments]);
 
   // Validation for Step 1
   const validateStep1 = () =>
-    title.trim() !== '' && subject.trim() !== '' && senderEmail.trim() !== '' && isValidEmail(senderEmail);
+    title.trim() !== "" &&
+    subject.trim() !== "" &&
+    senderEmail.trim() !== "" &&
+    isValidEmail(senderEmail);
 
   // Validation for Step 2 with segments
   const validateStep2 = () => {
     if (!selectedTemplate) return false;
     // Must have either lists or segments selected
-    if (selectedLists.length === 0 && selectedSegments.length === 0) return false;
+    if (selectedLists.length === 0 && selectedSegments.length === 0)
+      return false;
     // All dynamic fields must be mapped
     for (const field of dynamicFields) {
-      if (!fieldMap[field] || fieldMap[field].trim() === '') return false;
+      if (!fieldMap[field] || fieldMap[field].trim() === "") return false;
     }
     return true;
   };
@@ -188,7 +190,7 @@ export default function CreateCampaign() {
   const getTotalRecipients = () => {
     const listRecipients = lists
       .filter((list) => selectedLists.includes(list._id))
-      .reduce((sum, list) => sum + (list.count || 0), 0);
+      .reduce((sum, list) => sum + (list.total_count || list.count || 0), 0);
     const segmentRecipients = segments
       .filter((segment) => selectedSegments.includes(segment._id))
       .reduce((sum, segment) => sum + (segment.subscriber_count || 0), 0);
@@ -198,20 +200,23 @@ export default function CreateCampaign() {
   // Toggle audience lists
   const handleListToggle = (listId) => {
     setSelectedLists((prev) =>
-      prev.includes(listId) ? prev.filter((id) => id !== listId) : [...prev, listId]
+      prev.includes(listId)
+        ? prev.filter((id) => id !== listId)
+        : [...prev, listId],
     );
   };
 
   // Toggle segments
   const handleSegmentToggle = (segmentId) => {
     setSelectedSegments((prev) =>
-      prev.includes(segmentId) ? prev.filter((id) => id !== segmentId) : [...prev, segmentId]
+      prev.includes(segmentId)
+        ? prev.filter((id) => id !== segmentId)
+        : [...prev, segmentId],
     );
   };
 
   const handleFieldChange = (field, value) => {
-    setFieldMap((prev) => ({ ...prev, [field.trim()]: value }));  // ✅ Add .trim()
-
+    setFieldMap((prev) => ({ ...prev, [field.trim()]: value })); // ✅ Add .trim()
   };
 
   // Get columns from both lists and segments
@@ -224,36 +229,38 @@ export default function CreateCampaign() {
       const payload = {};
       if (selectedLists.length > 0) payload.listIds = selectedLists;
       if (selectedSegments.length > 0) payload.segmentIds = selectedSegments;
-      const response = await API.post('/subscribers/analyze-fields', payload);
+      const response = await API.post("/subscribers/analyze-fields", payload);
       return response.data;
     } catch (error) {
-      console.error('Failed to analyze fields:', error);
+      console.error("Failed to analyze fields:", error);
       return {
-        universal: ['email'],
+        universal: ["email"],
         standard: [],
-        custom: []
+        custom: [],
       };
     }
   };
 
   // Create campaign with segments
   const handleCreateCampaign = async () => {
-    setSuccessMsg('');
+    setSuccessMsg("");
     if (!validateStep1() || !validateStep2()) {
-      alert('Please fill all required fields, select template, audience (lists/segments), and map all dynamic fields.');
+      alert(
+        "Please fill all required fields, select template, audience (lists/segments), and map all dynamic fields.",
+      );
       return;
     }
     setIsSaving(true);
     try {
       // ✅ Clean field_map keys (remove spaces)
       const cleanFieldMap = Object.fromEntries(
-        Object.entries(fieldMap).map(([k, v]) => [k.trim(), v])
+        Object.entries(fieldMap).map(([k, v]) => [k.trim(), v]),
       );
       const cleanFallbackValues = Object.fromEntries(
-        Object.entries(fallbackValues).map(([k, v]) => [k.trim(), v])
+        Object.entries(fallbackValues).map(([k, v]) => [k.trim(), v]),
       );
 
-      await API.post('/campaigns', {
+      await API.post("/campaigns", {
         title,
         subject,
         sender_name: senderName,
@@ -262,14 +269,16 @@ export default function CreateCampaign() {
         target_lists: selectedLists,
         target_segments: selectedSegments,
         template_id: selectedTemplate._id || selectedTemplate.id,
-        field_map: cleanFieldMap,  // ✅ Use cleaned version
-        fallback_values: cleanFallbackValues,  // ✅ Use cleaned version
-        status: 'draft',
+        field_map: cleanFieldMap, // ✅ Use cleaned version
+        fallback_values: cleanFallbackValues, // ✅ Use cleaned version
+        status: "draft",
       });
-      setSuccessMsg('Campaign created successfully!');
-      navigate('/campaigns');
+      setSuccessMsg("Campaign created successfully!");
+      navigate("/campaigns");
     } catch (err) {
-      alert(`Failed to create campaign: ${err.response?.data?.detail || err.message}`);
+      alert(
+        `Failed to create campaign: ${err.response?.data?.detail || err.message}`,
+      );
     } finally {
       setIsSaving(false);
     }
@@ -278,20 +287,20 @@ export default function CreateCampaign() {
   // Send test email with template rendering
   const sendTestEmail = async () => {
     if (!testEmail.trim()) {
-      alert('Please enter an email to send test.');
+      alert("Please enter an email to send test.");
       return;
     }
-    
+
     if (!selectedTemplate || !previewHtml) {
-      alert('Please select a template first.');
+      alert("Please select a template first.");
       return;
     }
 
     setSendingTest(true);
     setTestSent(false);
-    
+
     try {
-      await API.post('/campaigns/send-test', {
+      await API.post("/campaigns/send-test", {
         to: testEmail,
         subject,
         content: previewHtml,
@@ -302,7 +311,9 @@ export default function CreateCampaign() {
       setTestSent(true);
       alert(`Test email sent to ${testEmail}!`);
     } catch (err) {
-      alert(`Failed to send test email: ${err.response?.data?.detail || err.message}`);
+      alert(
+        `Failed to send test email: ${err.response?.data?.detail || err.message}`,
+      );
     } finally {
       setSendingTest(false);
     }
@@ -322,7 +333,7 @@ export default function CreateCampaign() {
           value={title}
           onChange={(e) => setTitle(e.target.value)}
           className={`w-full px-3 py-2 border rounded ${
-            title.trim() === '' ? 'border-red-500' : 'border-gray-300'
+            title.trim() === "" ? "border-red-500" : "border-gray-300"
           }`}
           placeholder="Internal campaign name"
         />
@@ -337,7 +348,7 @@ export default function CreateCampaign() {
           value={subject}
           onChange={(e) => setSubject(e.target.value)}
           className={`w-full px-3 py-2 border rounded ${
-            subject.trim() === '' ? 'border-red-500' : 'border-gray-300'
+            subject.trim() === "" ? "border-red-500" : "border-gray-300"
           }`}
           placeholder="Email subject line"
         />
@@ -366,7 +377,7 @@ export default function CreateCampaign() {
           value={senderEmail}
           onChange={(e) => setSenderEmail(e.target.value)}
           className={`w-full px-3 py-2 border rounded ${
-            senderEmail.trim() === '' ? 'border-red-500' : 'border-gray-300'
+            senderEmail.trim() === "" ? "border-red-500" : "border-gray-300"
           }`}
           placeholder="sender@example.com"
         />
@@ -391,7 +402,9 @@ export default function CreateCampaign() {
   const renderStep2 = () => {
     return (
       <>
-        <h3 className="text-xl font-semibold mb-4">🎯 Select Audience & Template</h3>
+        <h3 className="text-xl font-semibold mb-4">
+          🎯 Select Audience & Template
+        </h3>
         {loadingLists || loadingTemplates || loadingSegments ? (
           <p>Loading data...</p>
         ) : (
@@ -404,26 +417,34 @@ export default function CreateCampaign() {
                   <p className="text-lg">{selectedLists.length}</p>
                 </div>
                 <div>
-                  <p className="font-semibold text-blue-800">Segments Selected</p>
+                  <p className="font-semibold text-blue-800">
+                    Segments Selected
+                  </p>
                   <p className="text-lg">{selectedSegments.length}</p>
                 </div>
                 <div>
-                  <p className="font-semibold text-blue-800">Total Recipients</p>
-                  <p className="text-xl font-bold">{getTotalRecipients().toLocaleString()}</p>
+                  <p className="font-semibold text-blue-800">
+                    Total Recipients
+                  </p>
+                  <p className="text-xl font-bold">
+                    {getTotalRecipients().toLocaleString()}
+                  </p>
                 </div>
               </div>
             </div>
 
             {/* Audience mode selector */}
             <div className="mb-6">
-              <label className="block font-medium mb-3">Target Audience Type</label>
+              <label className="block font-medium mb-3">
+                Target Audience Type
+              </label>
               <div className="flex gap-4 mb-4">
                 <label className="flex items-center">
                   <input
                     type="radio"
                     name="audienceMode"
                     value="lists"
-                    checked={audienceMode === 'lists'}
+                    checked={audienceMode === "lists"}
                     onChange={(e) => setAudienceMode(e.target.value)}
                     className="mr-2"
                   />
@@ -434,7 +455,7 @@ export default function CreateCampaign() {
                     type="radio"
                     name="audienceMode"
                     value="segments"
-                    checked={audienceMode === 'segments'}
+                    checked={audienceMode === "segments"}
                     onChange={(e) => setAudienceMode(e.target.value)}
                     className="mr-2"
                   />
@@ -445,7 +466,7 @@ export default function CreateCampaign() {
                     type="radio"
                     name="audienceMode"
                     value="both"
-                    checked={audienceMode === 'both'}
+                    checked={audienceMode === "both"}
                     onChange={(e) => setAudienceMode(e.target.value)}
                     className="mr-2"
                   />
@@ -455,12 +476,14 @@ export default function CreateCampaign() {
             </div>
 
             {/* Conditional rendering based on audience mode */}
-            {(audienceMode === 'lists' || audienceMode === 'both') && (
+            {(audienceMode === "lists" || audienceMode === "both") && (
               <div className="mb-6">
                 <h4 className="font-semibold mb-3">📋 Subscriber Lists</h4>
                 <div className="max-h-64 overflow-auto border rounded p-3">
                   {lists.length === 0 ? (
-                    <p className="text-gray-600">No subscriber lists available</p>
+                    <p className="text-gray-600">
+                      No subscriber lists available
+                    </p>
                   ) : (
                     lists.map((list) => (
                       <label
@@ -474,7 +497,15 @@ export default function CreateCampaign() {
                           className="mr-3"
                         />
                         <span className="font-medium">{list._id}</span>
-                        <span className="ml-2 text-gray-500">({list.count || 0} subscribers)</span>
+                        <span className="ml-2 text-gray-500">
+                          (
+                          {(
+                            list.total_count ||
+                            list.count ||
+                            0
+                          ).toLocaleString()}{" "}
+                          subscribers)
+                        </span>
                       </label>
                     ))
                   )}
@@ -483,7 +514,7 @@ export default function CreateCampaign() {
             )}
 
             {/* Segments selection */}
-            {(audienceMode === 'segments' || audienceMode === 'both') && (
+            {(audienceMode === "segments" || audienceMode === "both") && (
               <div className="mb-6">
                 <h4 className="font-semibold mb-3 flex items-center gap-2">
                   🎯 Targeted Segments
@@ -496,7 +527,7 @@ export default function CreateCampaign() {
                     <div className="text-center py-6 text-gray-600">
                       <p className="mb-2">No segments available</p>
                       <button
-                        onClick={() => window.open('/segmentation', '_blank')}
+                        onClick={() => window.open("/segmentation", "_blank")}
                         className="text-blue-600 hover:underline text-sm"
                       >
                         ➕ Create Your First Segment
@@ -517,20 +548,32 @@ export default function CreateCampaign() {
                           />
                           <div className="flex-1">
                             <div className="flex items-center justify-between mb-1">
-                              <span className="font-semibold text-blue-800">{segment.name}</span>
+                              <span className="font-semibold text-blue-800">
+                                {segment.name}
+                              </span>
                               <span className="text-sm font-medium text-gray-700">
-                                {segment.subscriber_count?.toLocaleString() || '0'} subscribers
+                                {segment.subscriber_count?.toLocaleString() ||
+                                  "0"}{" "}
+                                subscribers
                               </span>
                             </div>
-                            <p className="text-sm text-gray-600 mb-2">{segment.description}</p>
+                            <p className="text-sm text-gray-600 mb-2">
+                              {segment.description}
+                            </p>
                             <div className="flex flex-wrap gap-1">
-                              {segment.criteria?.status?.map(status => (
-                                <span key={status} className="bg-blue-100 text-blue-800 px-2 py-1 rounded text-xs">
+                              {segment.criteria?.status?.map((status) => (
+                                <span
+                                  key={status}
+                                  className="bg-blue-100 text-blue-800 px-2 py-1 rounded text-xs"
+                                >
                                   {status}
                                 </span>
                               ))}
-                              {segment.criteria?.lists?.map(list => (
-                                <span key={list} className="bg-green-100 text-green-800 px-2 py-1 rounded text-xs">
+                              {segment.criteria?.lists?.map((list) => (
+                                <span
+                                  key={list}
+                                  className="bg-green-100 text-green-800 px-2 py-1 rounded text-xs"
+                                >
                                   {list}
                                 </span>
                               ))}
@@ -539,11 +582,13 @@ export default function CreateCampaign() {
                                   Last {segment.criteria.dateRange} days
                                 </span>
                               )}
-                              {segment.criteria_types && segment.criteria_types.length > 0 && (
-                                <span className="bg-gray-100 text-gray-700 px-2 py-1 rounded text-xs">
-                                  {segment.criteria_types.length} criteria types
-                                </span>
-                              )}
+                              {segment.criteria_types &&
+                                segment.criteria_types.length > 0 && (
+                                  <span className="bg-gray-100 text-gray-700 px-2 py-1 rounded text-xs">
+                                    {segment.criteria_types.length} criteria
+                                    types
+                                  </span>
+                                )}
                             </div>
                           </div>
                         </label>
@@ -556,40 +601,53 @@ export default function CreateCampaign() {
 
             {/* Template Selection */}
             <div className="mb-6">
-              <label className="block font-medium mb-1" htmlFor="templateSelect">
+              <label
+                className="block font-medium mb-1"
+                htmlFor="templateSelect"
+              >
                 Select Template <span className="text-red-600">*</span>
               </label>
               <select
                 id="templateSelect"
-                value={selectedTemplate ? selectedTemplate._id || selectedTemplate.id : ''}
+                value={
+                  selectedTemplate
+                    ? selectedTemplate._id || selectedTemplate.id
+                    : ""
+                }
                 onChange={(e) =>
                   setSelectedTemplate(
-                    templates.find((t) => (t._id || t.id) === e.target.value) || null
+                    templates.find((t) => (t._id || t.id) === e.target.value) ||
+                      null,
                   )
                 }
                 className={`w-full px-3 py-2 border rounded ${
-                  selectedTemplate ? 'border-gray-300' : 'border-red-500'
+                  selectedTemplate ? "border-gray-300" : "border-red-500"
                 }`}
               >
                 <option value="" disabled>
                   -- Select a Template --
                 </option>
                 {templates.map((template) => (
-                  <option key={template._id || template.id} value={template._id || template.id}>
-                    {template.name} ({template.content_json?.mode || 'legacy'})
+                  <option
+                    key={template._id || template.id}
+                    value={template._id || template.id}
+                  >
+                    {template.name} ({template.content_json?.mode || "legacy"})
                   </option>
                 ))}
               </select>
-              
+
               {/* Show selected template info */}
               {selectedTemplate && (
                 <div className="mt-2 p-2 bg-gray-50 rounded text-sm">
-                  <strong>Selected:</strong> {selectedTemplate.name} • 
+                  <strong>Selected:</strong> {selectedTemplate.name} •
                   <span className="ml-1 px-2 py-1 bg-blue-100 text-blue-800 rounded text-xs">
-                    {selectedTemplate.content_json?.mode || 'legacy'}
+                    {selectedTemplate.content_json?.mode || "legacy"}
                   </span>
                   {selectedTemplate.description && (
-                    <p className="text-gray-600 mt-1">{selectedTemplate.description}</p>
+                    <p className="text-gray-600 mt-1">
+                      {selectedTemplate.description}
+                    </p>
                   )}
                 </div>
               )}
@@ -598,18 +656,25 @@ export default function CreateCampaign() {
             {/* Field mapping section */}
             {dynamicFields.length > 0 && (
               <div className="mb-4">
-                <h4 className="font-semibold mb-2">Map Template Dynamic Fields</h4>
+                <h4 className="font-semibold mb-2">
+                  Map Template Dynamic Fields
+                </h4>
                 <p className="text-sm text-gray-600 mb-3">
                   Map each template field to subscriber data fields.
                 </p>
                 {dynamicFields.map((field) => (
-                  <div key={field} className="mb-4 p-4 border rounded bg-gray-50">
-                    <label className="block mb-2 font-medium">{field} <span className="text-red-600">*</span></label>
+                  <div
+                    key={field}
+                    className="mb-4 p-4 border rounded bg-gray-50"
+                  >
+                    <label className="block mb-2 font-medium">
+                      {field} <span className="text-red-600">*</span>
+                    </label>
                     <select
                       className={`w-full px-3 py-2 border rounded mb-2 ${
-                        !fieldMap[field] ? 'border-red-500' : 'border-gray-300'
+                        !fieldMap[field] ? "border-red-500" : "border-gray-300"
                       }`}
-                      value={fieldMap[field] || ''}
+                      value={fieldMap[field] || ""}
                       onChange={(e) => handleFieldChange(field, e.target.value)}
                     >
                       <option value="" disabled>
@@ -618,9 +683,10 @@ export default function CreateCampaign() {
                       {/* Universal Fields */}
                       {availableFields.universal.length > 0 && (
                         <optgroup label="🌍 Universal Fields">
-                          {availableFields.universal.map(universalField => (
+                          {availableFields.universal.map((universalField) => (
                             <option key={universalField} value={universalField}>
-                              {universalField.charAt(0).toUpperCase() + universalField.slice(1)}
+                              {universalField.charAt(0).toUpperCase() +
+                                universalField.slice(1)}
                             </option>
                           ))}
                         </optgroup>
@@ -628,9 +694,14 @@ export default function CreateCampaign() {
                       {/* Standard Fields */}
                       {availableFields.standard.length > 0 && (
                         <optgroup label="⭐ Standard Fields">
-                          {availableFields.standard.map(standardField => (
-                            <option key={standardField} value={`standard.${standardField}`}>
-                              {standardField.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase())}
+                          {availableFields.standard.map((standardField) => (
+                            <option
+                              key={standardField}
+                              value={`standard.${standardField}`}
+                            >
+                              {standardField
+                                .replace("_", " ")
+                                .replace(/\b\w/g, (l) => l.toUpperCase())}
                             </option>
                           ))}
                         </optgroup>
@@ -638,9 +709,14 @@ export default function CreateCampaign() {
                       {/* Custom Fields */}
                       {availableFields.custom.length > 0 && (
                         <optgroup label="🔧 Custom Fields">
-                          {availableFields.custom.map(customField => (
-                            <option key={customField} value={`custom.${customField}`}>
-                              {customField.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase())}
+                          {availableFields.custom.map((customField) => (
+                            <option
+                              key={customField}
+                              value={`custom.${customField}`}
+                            >
+                              {customField
+                                .replace("_", " ")
+                                .replace(/\b\w/g, (l) => l.toUpperCase())}
                             </option>
                           ))}
                         </optgroup>
@@ -655,11 +731,12 @@ export default function CreateCampaign() {
                     <div className="text-xs text-gray-500 mb-2">
                       <strong>Available fields:</strong>
                       <br />
-                      🌍 Universal: {availableFields.universal.join(', ') || 'None'}
+                      🌍 Universal:{" "}
+                      {availableFields.universal.join(", ") || "None"}
+                      <br />⭐ Standard:{" "}
+                      {availableFields.standard.join(", ") || "None"}
                       <br />
-                      ⭐ Standard: {availableFields.standard.join(', ') || 'None'}
-                      <br />
-                      🔧 Custom: {availableFields.custom.join(', ') || 'None'}
+                      🔧 Custom: {availableFields.custom.join(", ") || "None"}
                     </div>
                     {/* Show selected mapping info */}
                     {fieldMap[field] && (
@@ -667,18 +744,30 @@ export default function CreateCampaign() {
                         Selected: <strong>{fieldMap[field]}</strong>
                       </div>
                     )}
-                    {/* Fallback value input */}
-                    {fieldMap[field] === '__DEFAULT__' && (
+                    {/* Fallback value input — shown for __DEFAULT__ OR any real field mapping
+                        so the fallback is used when the subscriber's value is empty */}
+                    {fieldMap[field] && fieldMap[field] !== "__EMPTY__" && (
                       <div className="mt-2">
                         <input
                           type="text"
-                          placeholder="Enter default value for this field"
+                          placeholder={
+                            fieldMap[field] === "__DEFAULT__"
+                              ? `Default value for {{${field}}}`
+                              : `Fallback if subscriber's ${fieldMap[field]} is empty`
+                          }
                           className="w-full px-3 py-2 border rounded border-blue-300 bg-blue-50"
-                          value={fallbackValues[field] || ''}
-                          onChange={(e) => setFallbackValues(prev => ({ ...prev, [field.trim()]: e.target.value }))}  // ✅ Add .trim()
+                          value={fallbackValues[field] || ""}
+                          onChange={(e) =>
+                            setFallbackValues((prev) => ({
+                              ...prev,
+                              [field.trim()]: e.target.value,
+                            }))
+                          }
                         />
                         <p className="text-xs text-blue-600 mt-1">
-                          This value will be used when subscriber data is missing
+                          {fieldMap[field] === "__DEFAULT__"
+                            ? "This value is always used for this field."
+                            : "Used when this subscriber's field is empty or missing."}
                         </p>
                       </div>
                     )}
@@ -688,14 +777,22 @@ export default function CreateCampaign() {
             )}
 
             {/* Warning for multiple targeting methods */}
-            {(selectedLists.length > 0 && selectedSegments.length > 0) && (
+            {selectedLists.length > 0 && selectedSegments.length > 0 && (
               <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded">
-                <h5 className="font-medium text-amber-800 mb-2">⚠️ Hybrid Targeting Active</h5>
+                <h5 className="font-medium text-amber-800 mb-2">
+                  ⚠️ Hybrid Targeting Active
+                </h5>
                 <div className="text-sm text-amber-700">
-                  <p>You've selected both lists ({selectedLists.length}) and segments ({selectedSegments.length}).</p>
+                  <p>
+                    You've selected both lists ({selectedLists.length}) and
+                    segments ({selectedSegments.length}).
+                  </p>
                   <p>📋 List subscribers: Direct from subscriber lists</p>
                   <p>🎯 Segment subscribers: Filtered based on criteria</p>
-                  <p>⚡ Campaign will reach: {getTotalRecipients().toLocaleString()} total recipients</p>
+                  <p>
+                    ⚡ Campaign will reach:{" "}
+                    {getTotalRecipients().toLocaleString()} total recipients
+                  </p>
                 </div>
               </div>
             )}
@@ -708,7 +805,7 @@ export default function CreateCampaign() {
   const renderStep3 = () => (
     <>
       <h3 className="text-xl font-semibold mb-4">👀 Preview & Test</h3>
-      
+
       {/* Test Email Section */}
       <div className="mb-6 p-4 bg-green-50 rounded border border-green-300">
         <label className="block font-medium mb-2">Test Email Address</label>
@@ -724,9 +821,11 @@ export default function CreateCampaign() {
           disabled={sendingTest || !testEmail.trim() || !selectedTemplate}
           className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded disabled:opacity-50"
         >
-          {sendingTest ? 'Sending...' : 'Send Test Email'}
+          {sendingTest ? "Sending..." : "Send Test Email"}
         </button>
-        {testSent && <p className="mt-2 text-green-700">Test email sent successfully!</p>}
+        {testSent && (
+          <p className="mt-2 text-green-700">Test email sent successfully!</p>
+        )}
       </div>
 
       {/* Enhanced campaign summary with segments */}
@@ -734,25 +833,47 @@ export default function CreateCampaign() {
         <h4 className="font-semibold mb-3">📊 Campaign Summary</h4>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
           <div>
-            <p><strong>Campaign Name:</strong> {title}</p>
-            <p><strong>Subject:</strong> {subject}</p>
-            <p><strong>Template:</strong> {selectedTemplate?.name || 'No template selected'} 
+            <p>
+              <strong>Campaign Name:</strong> {title}
+            </p>
+            <p>
+              <strong>Subject:</strong> {subject}
+            </p>
+            <p>
+              <strong>Template:</strong>{" "}
+              {selectedTemplate?.name || "No template selected"}
               {selectedTemplate?.content_json?.mode && (
                 <span className="ml-2 px-2 py-1 bg-blue-100 text-blue-800 rounded text-xs">
                   {selectedTemplate.content_json.mode}
                 </span>
               )}
             </p>
-            <p><strong>Dynamic Fields:</strong> {dynamicFields.length > 0 ? dynamicFields.length : 'None'}</p>
+            <p>
+              <strong>Dynamic Fields:</strong>{" "}
+              {dynamicFields.length > 0 ? dynamicFields.length : "None"}
+            </p>
           </div>
           <div>
-            <p><strong>Sender:</strong> {senderName || 'Not specified'} &lt;{senderEmail || 'Not specified'}&gt;</p>
-            <p><strong>Reply-To:</strong> {replyTo || 'Not specified'}</p>
-            <p><strong>Total Recipients:</strong> {getTotalRecipients().toLocaleString()}</p>
-            <p><strong>Targeting:</strong>
-              {selectedLists.length > 0 && selectedSegments.length > 0 ? 'Lists + Segments' :
-               selectedLists.length > 0 ? 'Lists Only' :
-               selectedSegments.length > 0 ? 'Segments Only' : 'None'}
+            <p>
+              <strong>Sender:</strong> {senderName || "Not specified"} &lt;
+              {senderEmail || "Not specified"}&gt;
+            </p>
+            <p>
+              <strong>Reply-To:</strong> {replyTo || "Not specified"}
+            </p>
+            <p>
+              <strong>Total Recipients:</strong>{" "}
+              {getTotalRecipients().toLocaleString()}
+            </p>
+            <p>
+              <strong>Targeting:</strong>
+              {selectedLists.length > 0 && selectedSegments.length > 0
+                ? "Lists + Segments"
+                : selectedLists.length > 0
+                  ? "Lists Only"
+                  : selectedSegments.length > 0
+                    ? "Segments Only"
+                    : "None"}
             </p>
           </div>
         </div>
@@ -764,14 +885,21 @@ export default function CreateCampaign() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {selectedLists.length > 0 && (
                 <div>
-                  <h6 className="text-sm font-medium text-blue-800 mb-1">📋 Selected Lists ({selectedLists.length})</h6>
+                  <h6 className="text-sm font-medium text-blue-800 mb-1">
+                    📋 Selected Lists ({selectedLists.length})
+                  </h6>
                   <div className="space-y-1">
-                    {selectedLists.map(listId => {
-                      const list = lists.find(l => l._id === listId);
+                    {selectedLists.map((listId) => {
+                      const list = lists.find((l) => l._id === listId);
                       return (
-                        <div key={listId} className="text-xs flex justify-between">
+                        <div
+                          key={listId}
+                          className="text-xs flex justify-between"
+                        >
                           <span>{list?._id || listId}</span>
-                          <span className="text-gray-600">{list?.count || 0}</span>
+                          <span className="text-gray-600">
+                            {list?.count || 0}
+                          </span>
                         </div>
                       );
                     })}
@@ -780,18 +908,26 @@ export default function CreateCampaign() {
               )}
               {selectedSegments.length > 0 && (
                 <div>
-                  <h6 className="text-sm font-medium text-purple-800 mb-1">🎯 Selected Segments ({selectedSegments.length})</h6>
+                  <h6 className="text-sm font-medium text-purple-800 mb-1">
+                    🎯 Selected Segments ({selectedSegments.length})
+                  </h6>
                   <div className="space-y-1">
-                    {selectedSegments.map(segmentId => {
-                      const segment = segments.find(s => s._id === segmentId);
+                    {selectedSegments.map((segmentId) => {
+                      const segment = segments.find((s) => s._id === segmentId);
                       return (
                         <div key={segmentId} className="text-xs">
                           <div className="flex justify-between">
-                            <span className="font-medium">{segment?.name || segmentId}</span>
-                            <span className="text-gray-600">{segment?.subscriber_count || 0}</span>
+                            <span className="font-medium">
+                              {segment?.name || segmentId}
+                            </span>
+                            <span className="text-gray-600">
+                              {segment?.subscriber_count || 0}
+                            </span>
                           </div>
                           {segment?.description && (
-                            <p className="text-gray-500 text-xs mt-1">{segment.description}</p>
+                            <p className="text-gray-500 text-xs mt-1">
+                              {segment.description}
+                            </p>
                           )}
                         </div>
                       );
@@ -811,12 +947,17 @@ export default function CreateCampaign() {
               {Object.entries(fieldMap).map(([field, mapping]) => (
                 <div key={field} className="flex justify-between">
                   <span className="font-medium">{field}:</span>
-                  <span className={`px-2 py-1 rounded ${
-                    mapping.startsWith('universal.') ? 'bg-blue-100 text-blue-800' :
-                    mapping.startsWith('standard.') ? 'bg-green-100 text-green-800' :
-                    mapping.startsWith('custom.') ? 'bg-purple-100 text-purple-800' :
-                    'bg-gray-100 text-gray-800'
-                  }`}>
+                  <span
+                    className={`px-2 py-1 rounded ${
+                      mapping.startsWith("universal.")
+                        ? "bg-blue-100 text-blue-800"
+                        : mapping.startsWith("standard.")
+                          ? "bg-green-100 text-green-800"
+                          : mapping.startsWith("custom.")
+                            ? "bg-purple-100 text-purple-800"
+                            : "bg-gray-100 text-gray-800"
+                    }`}
+                  >
                     {mapping}
                   </span>
                 </div>
@@ -830,36 +971,36 @@ export default function CreateCampaign() {
       <div className="mb-6 p-4 border rounded bg-white">
         <div className="flex justify-between items-center mb-4">
           <h4 className="font-semibold flex items-center gap-2">
-            📧 Email Preview 
+            📧 Email Preview
             {selectedTemplate && (
               <span className="text-sm font-normal text-gray-600">
-                ({selectedTemplate.content_json?.mode || 'legacy'} mode)
+                ({selectedTemplate.content_json?.mode || "legacy"} mode)
               </span>
             )}
           </h4>
-          
+
           {/* Device Preview Buttons */}
           <div className="flex items-center gap-2">
             <button
-	      type="button" 
-              onClick={() => setPreviewMode('desktop')}
-              className={`p-2 rounded flex items-center gap-1 ${previewMode === 'desktop' ? 'bg-blue-600 text-white' : 'hover:bg-gray-200'}`}
+              type="button"
+              onClick={() => setPreviewMode("desktop")}
+              className={`p-2 rounded flex items-center gap-1 ${previewMode === "desktop" ? "bg-blue-600 text-white" : "hover:bg-gray-200"}`}
               title="Desktop Preview"
             >
               <Monitor size={16} />
             </button>
             <button
-	      type="button"
-              onClick={() => setPreviewMode('tablet')}
-              className={`p-2 rounded flex items-center gap-1 ${previewMode === 'tablet' ? 'bg-blue-600 text-white' : 'hover:bg-gray-200'}`}
+              type="button"
+              onClick={() => setPreviewMode("tablet")}
+              className={`p-2 rounded flex items-center gap-1 ${previewMode === "tablet" ? "bg-blue-600 text-white" : "hover:bg-gray-200"}`}
               title="Tablet Preview"
             >
               <Tablet size={16} />
             </button>
             <button
-	      type="button"
-              onClick={() => setPreviewMode('mobile')}
-              className={`p-2 rounded flex items-center gap-1 ${previewMode === 'mobile' ? 'bg-blue-600 text-white' : 'hover:bg-gray-200'}`}
+              type="button"
+              onClick={() => setPreviewMode("mobile")}
+              className={`p-2 rounded flex items-center gap-1 ${previewMode === "mobile" ? "bg-blue-600 text-white" : "hover:bg-gray-200"}`}
               title="Mobile Preview"
             >
               <Smartphone size={16} />
@@ -872,13 +1013,16 @@ export default function CreateCampaign() {
           {previewHtml ? (
             <div
               className={`bg-white shadow-lg transition-all duration-300 ${
-                previewMode === 'desktop' ? 'w-full max-w-4xl' :
-                previewMode === 'tablet' ? 'w-[768px]' : 'w-[375px]'
+                previewMode === "desktop"
+                  ? "w-full max-w-4xl"
+                  : previewMode === "tablet"
+                    ? "w-[768px]"
+                    : "w-[375px]"
               }`}
               style={{
-                minHeight: '400px',
-                border: previewMode !== 'desktop' ? '2px solid #ccc' : 'none',
-                borderRadius: previewMode !== 'desktop' ? '8px' : '0'
+                minHeight: "400px",
+                border: previewMode !== "desktop" ? "2px solid #ccc" : "none",
+                borderRadius: previewMode !== "desktop" ? "8px" : "0",
               }}
             >
               <div
@@ -898,8 +1042,10 @@ export default function CreateCampaign() {
 
   return (
     <div className="max-w-5xl mx-auto p-6 bg-white rounded shadow">
-      <h2 className="text-2xl font-bold mb-6">🚀 Create Campaign with Advanced Targeting</h2>
-      
+      <h2 className="text-2xl font-bold mb-6">
+        🚀 Create Campaign with Advanced Targeting
+      </h2>
+
       {error && <p className="mb-4 text-red-600">{error}</p>}
       {successMsg && (
         <div className="mb-4 p-3 bg-green-100 text-green-800 border border-green-300 rounded">
@@ -910,20 +1056,24 @@ export default function CreateCampaign() {
       {/* Step Navigation */}
       <div className="mb-6 flex space-x-4 text-sm font-semibold">
         {[
-          { num: 1, label: 'Content', icon: '📝' },
-          { num: 2, label: 'Audience & Template', icon: '🎯' },
-          { num: 3, label: 'Preview & Test', icon: '👀' }
+          { num: 1, label: "Content", icon: "📝" },
+          { num: 2, label: "Audience & Template", icon: "🎯" },
+          { num: 3, label: "Preview & Test", icon: "👀" },
         ].map(({ num, label, icon }) => (
           <button
             key={num}
             disabled={step === num}
             onClick={() => setStep(num)}
             className={`px-4 py-2 rounded flex items-center gap-2 ${
-              step === num ? 'bg-blue-600 text-white' : 'bg-gray-200 hover:bg-gray-300'
+              step === num
+                ? "bg-blue-600 text-white"
+                : "bg-gray-200 hover:bg-gray-300"
             }`}
           >
             <span>{icon}</span>
-            <span>Step {num}: {label}</span>
+            <span>
+              Step {num}: {label}
+            </span>
           </button>
         ))}
       </div>
@@ -965,9 +1115,14 @@ export default function CreateCampaign() {
             }
           >
             {step < 3 ? (
-              <>Next → <span className="text-sm">({step === 1 ? 'Audience' : 'Preview'})</span></>
+              <>
+                Next →{" "}
+                <span className="text-sm">
+                  ({step === 1 ? "Audience" : "Preview"})
+                </span>
+              </>
             ) : (
-              <>{isSaving ? '⏳ Creating...' : '🚀 Create Campaign'}</>
+              <>{isSaving ? "⏳ Creating..." : "🚀 Create Campaign"}</>
             )}
           </button>
         </div>
@@ -975,4 +1130,3 @@ export default function CreateCampaign() {
     </div>
   );
 }
-
