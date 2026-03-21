@@ -63,7 +63,7 @@ const NAV_GROUPS = [
       {
         to: "/ab-testing",
         label: "A/B Testing",
-        icon: "🧪",
+        icon: "⚖️ ",
         description: "Test & optimise",
       },
       {
@@ -156,7 +156,7 @@ export default function Sidebar() {
               <span
                 className={[
                   "absolute left-0 w-0.5 h-5 rounded-r-full transition-all",
-                  active ? "bg-blue-500" : "bg-transparent",
+                  active ? "bg-blue-100" : "bg-transparent",
                 ].join(" ")}
               />
 
@@ -196,7 +196,7 @@ export default function Sidebar() {
           <ZeniPostLogo size={28} variant="animated" />
           {!collapsed && (
             <span className="ml-2 text-white font-bold text-sm truncate">
-              ZeniPost
+              
             </span>
           )}
         </div>

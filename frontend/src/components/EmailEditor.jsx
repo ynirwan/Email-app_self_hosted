@@ -3,7 +3,7 @@ import {
   Bold, Italic, Underline, AlignLeft, AlignCenter, AlignRight,
   Link, Image, List, ListOrdered, Quote, Code, Palette,
   Type, Paperclip, Eye, Send, Save, Upload, X, Plus,
-  ChevronDown, Monitor, Smartphone, Tablet, Move, Copy,
+  ChevronDown, ChevronRight, Monitor, Smartphone, Tablet, Move, Copy,
   Grid, Square, Type as TextIcon, Mail, Calendar, User,
   Settings, Download, Upload as UploadIcon, Trash2,
   MousePointer, Edit3, Layout, AlertTriangle, CheckCircle,
@@ -35,6 +35,8 @@ const EmailEditor = forwardRef((props, ref) => {
   const [dragOverIndex, setDragOverIndex] = useState(null);
   const [touchStart, setTouchStart] = useState(null);
   const [gridSize] = useState(20); // Snap-to-grid size
+  const [showLinkInput, setShowLinkInput] = useState(false);
+  const [linkUrl, setLinkUrl] = useState('');
 
   // ==========================================
   // 📊 DELIVERABILITY FEATURES
@@ -44,7 +46,7 @@ const EmailEditor = forwardRef((props, ref) => {
   const [imageTextWarning, setImageTextWarning] = useState(null);
   const [compatibilityWarnings, setCompatibilityWarnings] = useState([]);
   const [accessibilityWarnings, setAccessibilityWarnings] = useState([]);
-  const [showDeliverabilityPanel, setShowDeliverabilityPanel] = useState(true);
+  const [showDeliverabilityPanel, setShowDeliverabilityPanel] = useState(false);
 
   const editorRef = useRef(null);
   const htmlEditorRef = useRef(null);
@@ -88,13 +90,7 @@ const EmailEditor = forwardRef((props, ref) => {
       id: 'image',
       name: 'Image',
       icon: Image,
-      defaultContent: `<img
-        src="https://via.placeholder.com/600x400/e5e7eb/9ca3af?text=Click+to+Upload+Image"
-        alt="Click to upload your image"
-        width="600"
-        height="400"
-        style="width:100%; height:auto; display:block; margin:0 auto; border: 2px dashed #d1d5db; border-radius: 8px; cursor: pointer;"
-      >`,
+      defaultContent: '',
       category: 'media'
     },
     {
@@ -625,7 +621,7 @@ const EmailEditor = forwardRef((props, ref) => {
       setEmailBlocks(newBlocks);
     }
 
-    alert('✅ All images have been fixed with proper HTML attributes and responsive CSS!');
+    // images fixed silently
   };
 
   // ==========================================
@@ -715,15 +711,15 @@ const EmailEditor = forwardRef((props, ref) => {
     fileInput.onchange = function (e) {
       const file = e.target.files[0];
       if (file) {
-        // Validate file size (max 5MB)
+        // Validate file size (max 5MB) — skip silently if too large
         if (file.size > 5 * 1024 * 1024) {
-          alert('Image file size must be less than 5MB');
+          document.body.removeChild(fileInput);
           return;
         }
 
         // Validate file type
         if (!file.type.startsWith('image/')) {
-          alert('Please select a valid image file');
+          document.body.removeChild(fileInput);
           return;
         }
 
@@ -737,17 +733,14 @@ const EmailEditor = forwardRef((props, ref) => {
             const originalWidth = this.width;
             const originalHeight = this.height;
 
-            // Prompt for alt text and dimensions
-            const alt = prompt('Enter alt text (for accessibility):', file.name.replace(/\.[^/.]+$/, ""));
-            const maxWidth = prompt('Enter max width (recommended: 400-600px):', '400');
+            // Auto-calculate — no prompts needed
+            const alt = file.name.replace(/\.[^/.]+$/, "");
+            const maxWidth = Math.min(originalWidth, 600);
+            const proportionalHeight = Math.round((originalHeight / originalWidth) * maxWidth);
 
-            if (alt !== null && maxWidth !== null) {
-              // Calculate proportional height
-              const proportionalHeight = Math.round((originalHeight / originalWidth) * parseInt(maxWidth));
-
-              const imgHtml = `<img
+            const imgHtml = `<img
                 src="${imageData}"
-                alt="${alt || 'Uploaded image'}"
+                alt="${alt}"
                 width="${maxWidth}"
                 height="${proportionalHeight}"
                 style="max-width: 100%; height: auto; display: block; border: 0;"
@@ -762,7 +755,6 @@ const EmailEditor = forwardRef((props, ref) => {
                 const newContent = htmlContent.substring(0, start) + imgHtml + htmlContent.substring(end);
                 setHtmlContent(newContent);
               }
-            }
           };
           img.src = imageData;
         };
@@ -773,34 +765,9 @@ const EmailEditor = forwardRef((props, ref) => {
       document.body.removeChild(fileInput);
     };
 
-    // Also support URL input as fallback
-    const useUrl = confirm('Upload image file from computer?\nClick "Cancel" to use URL instead.');
-
-    if (useUrl) {
-      document.body.appendChild(fileInput);
-      fileInput.click();
-    } else {
-      // Original URL-based approach
-      const url = prompt('Enter image URL:');
-      const alt = prompt('Enter alt text (for accessibility):');
-      const width = prompt('Enter width (recommended: 400-600px):', '400');
-      const height = prompt('Enter height (or leave blank for auto):', '');
-
-      if (url) {
-        const heightAttr = height ? `height="${height}"` : '';
-        const heightStyle = height ? `height: ${height}px;` : 'height: auto;';
-
-        const imgHtml = `<img
-          src="${url}"
-          alt="${alt || 'Image'}"
-          width="${width}"
-          ${heightAttr}
-          style="max-width: 100%; ${heightStyle} display: block; border: 0;"
-        />`;
-
-        formatText('insertHTML', imgHtml);
-      }
-    }
+    // Always open file picker (URL-based insertion removed — use drag-drop image block for URL images)
+    document.body.appendChild(fileInput);
+    fileInput.click();
   };
 
   // ==========================================
@@ -813,10 +780,15 @@ const EmailEditor = forwardRef((props, ref) => {
   };
 
   const insertLink = () => {
-    const url = prompt('Enter URL:');
-    if (url) {
-      formatText('createLink', url);
+    setShowLinkInput(true);
+  };
+
+  const applyLink = () => {
+    if (linkUrl.trim()) {
+      formatText('createLink', linkUrl.trim());
     }
+    setShowLinkInput(false);
+    setLinkUrl('');
   };
 
   const changeTextColor = (color) => {
@@ -1277,7 +1249,9 @@ const EmailEditor = forwardRef((props, ref) => {
         const file = e.target.files[0];
         if (file) {
           if (file.size > 5 * 1024 * 1024) {
-            alert('Image must be less than 5MB');
+            // Size check - will be visible as no image loads
+            console.warn('Image must be less than 5MB');
+            document.body.removeChild(fileInput);
             return;
           }
 
@@ -1328,9 +1302,17 @@ const EmailEditor = forwardRef((props, ref) => {
                 type="url"
                 value={imageUrl}
                 onChange={(e) => setImageUrl(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); updateImage(); } }}
                 className="flex-1 px-2 py-1 border rounded text-sm"
                 placeholder="https://example.com/image.jpg"
               />
+              <button
+                onClick={updateImage}
+                className="px-3 py-1 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 flex items-center gap-1 whitespace-nowrap"
+                title="Load image from URL"
+              >
+                Load URL
+              </button>
               <button
                 onClick={handleFileUpload}
                 className="px-3 py-1 bg-green-600 text-white rounded text-sm hover:bg-green-700 flex items-center gap-1"
@@ -1596,103 +1578,108 @@ const EmailEditor = forwardRef((props, ref) => {
   // ==========================================
 
   /**
-   * Block element with clean canvas - no inline settings
+   * Block element with clean canvas - image blocks are NOT contentEditable
    */
   const BlockElement = ({ block, index }) => {
     const isSelected = selectedElement === block.id;
     const isButton = block.type === 'button';
     const isImage = block.type === 'image';
 
+    // Parse image src from block.content for canvas preview
+    const getImageSrc = () => {
+      if (!block.content) return null;
+      const match = block.content.match(/src=["']([^"']+)["']/);
+      return match ? match[1] : null;
+    };
+    const imageSrc = isImage ? getImageSrc() : null;
+    const isPlaceholderImage = isImage && (!imageSrc || imageSrc.includes('placeholder'));
+
     return (
-      <div
-        key={block.id}
-        className={`relative group border-2 border-dashed transition-all duration-200 p-3 mb-3 rounded-lg cursor-pointer ${isSelected ? 'border-blue-500 bg-blue-50 ring-2 ring-blue-200' :
-            dragOverIndex === index ? 'border-green-500 bg-green-50' :
-              'border-gray-300 hover:border-blue-400'
-          }`}
-        draggable={true}
-        onDragStart={(e) => handleDragStart(e, block, index)}
-        onDragEnd={handleDragEnd}
-        onDragOver={(e) => {
-          handleDragOver(e);
-          setDragOverIndex(index);
-        }}
-        onDragLeave={(e) => {
-          handleDragLeave(e);
-          setDragOverIndex(null);
-        }}
-        onDrop={(e) => handleDrop(e, index)}
-        onTouchStart={(e) => handleTouchStart(e, index)}
-        onTouchMove={handleTouchMove}
-        onTouchEnd={handleTouchEnd}
-        onKeyDown={(e) => handleKeyDown(e, index)}
-        onClick={() => setSelectedElement(block.id)}
-        tabIndex={0}
-        role="button"
-        aria-label={`${block.type} block - click to edit in toolbar`}
-      >
-        {/* Selection Indicator */}
-        {isSelected && (
-          <div className="absolute -top-3 -right-3 bg-blue-600 text-white px-2 py-1 text-xs rounded-full font-medium shadow-lg">
-            Selected • Edit in toolbar ↑
-          </div>
-        )}
-
-        {/* Block Type Indicators */}
-        {(isButton || isImage) && (
-          <div className="absolute top-2 left-2 opacity-0 group-hover:opacity-100 transition-opacity px-2 py-1 text-xs rounded font-medium">
-            {isButton && <span className="bg-blue-600 text-white px-2 py-1 rounded">Button Block</span>}
-            {isImage && <span className="bg-green-600 text-white px-2 py-1 rounded">Image Block</span>}
-          </div>
-        )}
-
-        {/* Editable Content */}
+      <>
+        {/* Drop zone ABOVE each block — expands on drag-over */}
         <div
-          contentEditable
-          className="min-h-[40px] outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50 rounded p-2"
-          dangerouslySetInnerHTML={{ __html: block.content }}
-          onBlur={(e) => updateBlockContent(index, e.target.innerHTML)}
-          onFocus={() => setSelectedElement(block.id)}
-          onClick={(e) => {
-            e.stopPropagation();
-            // If it's an image block with placeholder, trigger image upload
-            if (isImage && block.content.includes('Click+to+Upload+Image')) {
-              const fileInput = document.createElement('input');
-              fileInput.type = 'file';
-              fileInput.accept = 'image/*';
-              fileInput.style.display = 'none';
-
-              fileInput.onchange = function (event) {
-                const file = event.target.files[0];
-                if (file) {
-                  const reader = new FileReader();
-                  reader.onload = function (e) {
-                    const newContent = `<img
-                      src="${e.target.result}"
-                      alt="${file.name.replace(/\.[^/.]+$/, "")}"
-                      width="400"
-                      height="300"
-                      style="width:100%; height:auto; display:block; margin:0 auto;"
-                    >`;
-                    updateBlockContent(index, newContent);
-                  };
-                  reader.readAsDataURL(file);
-                }
-                document.body.removeChild(fileInput);
-              };
-
-              document.body.appendChild(fileInput);
-              fileInput.click();
-            }
-          }}
-          style={{ cursor: 'text' }}
-        />
-
-        {/* Drag Handle */}
-        <div className="absolute -left-3 top-1/2 transform -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity bg-white rounded shadow-lg border p-1">
-          <GripVertical size={16} className="text-gray-400 cursor-grab hover:text-gray-600" />
+          className={`transition-all duration-150 rounded mx-1 ${dragOverIndex === index ? 'h-8 bg-blue-200 border-2 border-dashed border-blue-400 flex items-center justify-center' : 'h-2'}`}
+          onDragOver={(e) => { e.preventDefault(); setDragOverIndex(index); }}
+          onDragLeave={() => setDragOverIndex(null)}
+          onDrop={(e) => handleDrop(e, index)}
+        >
+          {dragOverIndex === index && <span className="text-xs text-blue-600 font-medium">Drop here</span>}
         </div>
-      </div>
+
+        <div
+          key={block.id}
+          className={`relative group border-2 border-dashed transition-all duration-200 p-3 mb-1 rounded-lg ${
+            isSelected
+              ? 'border-blue-500 bg-blue-50 ring-2 ring-blue-200'
+              : 'border-gray-300 hover:border-blue-400 cursor-pointer'
+          }`}
+          draggable={true}
+          onDragStart={(e) => handleDragStart(e, block, index)}
+          onDragEnd={handleDragEnd}
+          onDragOver={(e) => { e.preventDefault(); }}
+          onTouchStart={(e) => handleTouchStart(e, index)}
+          onTouchMove={handleTouchMove}
+          onTouchEnd={handleTouchEnd}
+          onKeyDown={(e) => handleKeyDown(e, index)}
+          onClick={() => setSelectedElement(block.id)}
+          tabIndex={0}
+          role="button"
+          aria-label={`${block.type} block - click to select, then edit in toolbar above`}
+        >
+          {/* Selection Indicator */}
+          {isSelected && (
+            <div className="absolute -top-3 -right-3 bg-blue-600 text-white px-2 py-1 text-xs rounded-full font-medium shadow-lg z-10">
+              Selected • Edit in toolbar ↑
+            </div>
+          )}
+
+          {/* Block Type Badge */}
+          {(isButton || isImage) && (
+            <div className="absolute top-2 left-2 opacity-0 group-hover:opacity-100 transition-opacity z-10">
+              {isButton && <span className="bg-blue-600 text-white px-2 py-1 text-xs rounded">Button</span>}
+              {isImage && <span className="bg-green-600 text-white px-2 py-1 text-xs rounded">Image</span>}
+            </div>
+          )}
+
+          {/* IMAGE BLOCK — not contentEditable, renders actual img tag */}
+          {isImage ? (
+            <div className="min-h-[80px] flex items-center justify-center">
+              {imageSrc && !isPlaceholderImage ? (
+                <img
+                  src={imageSrc}
+                  alt={block.content.match(/alt=["']([^"']*)["']/)?.[1] || ''}
+                  style={{ maxWidth: '100%', height: 'auto', display: 'block', margin: '0 auto', pointerEvents: 'none' }}
+                  onError={(e) => { e.target.style.display = 'none'; e.target.nextSibling.style.display = 'flex'; }}
+                />
+              ) : null}
+              <div
+                style={{ display: imageSrc && !isPlaceholderImage ? 'none' : 'flex' }}
+                className="flex-col items-center justify-center py-8 text-gray-400 border-2 border-dashed border-gray-300 rounded-lg w-full bg-gray-50"
+              >
+                <Image size={32} className="mb-2 text-gray-300" />
+                <p className="text-sm font-medium text-gray-500">No image yet</p>
+                <p className="text-xs text-gray-400 mt-1">Select this block, then use the toolbar above to add a URL or upload</p>
+              </div>
+            </div>
+          ) : (
+            /* TEXT / BUTTON / OTHER — contentEditable works fine for these */
+            <div
+              contentEditable
+              className="min-h-[40px] outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50 rounded p-2"
+              dangerouslySetInnerHTML={{ __html: block.content }}
+              onBlur={(e) => updateBlockContent(index, e.target.innerHTML)}
+              onFocus={() => setSelectedElement(block.id)}
+              onClick={(e) => e.stopPropagation()}
+              style={{ cursor: 'text' }}
+            />
+          )}
+
+          {/* Drag Handle */}
+          <div className="absolute -left-3 top-1/2 transform -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity bg-white rounded shadow-lg border p-1">
+            <GripVertical size={16} className="text-gray-400 cursor-grab hover:text-gray-600" />
+          </div>
+        </div>
+      </>
     );
   };
 
@@ -1703,39 +1690,34 @@ const EmailEditor = forwardRef((props, ref) => {
   /**
    * Deliverability analysis panel with fix buttons
    */
-  const DeliverabilityPanel = () => (
-    <div className="bg-white border rounded-lg p-4 mb-6">
-      <div className="flex items-center justify-between mb-3">
-        <h3 className="text-lg font-semibold flex items-center gap-2">
-          <Shield size={20} className="text-blue-600" />
-          Deliverability Score
-        </h3>
-        <button
-          onClick={() => setShowDeliverabilityPanel(!showDeliverabilityPanel)}
-          className="text-gray-500 hover:text-gray-700"
-        >
-          {showDeliverabilityPanel ? <ChevronDown size={16} /> : <Plus size={16} />}
-        </button>
-      </div>
+  const DeliverabilityPanel = () => {
+    const totalIssues = spamWarnings.length + compatibilityWarnings.length + accessibilityWarnings.length;
+    return (
+    <div className="bg-white border rounded-lg mb-4 overflow-hidden">
+      {/* Compact always-visible bar — click anywhere to expand/collapse */}
+      <button
+        onClick={() => setShowDeliverabilityPanel(!showDeliverabilityPanel)}
+        className="w-full flex items-center gap-3 px-4 py-2.5 bg-gray-50 hover:bg-gray-100 transition-colors text-left"
+      >
+        <Shield size={15} className="text-blue-500 flex-shrink-0" />
+        <span className="text-xs font-semibold text-gray-600 whitespace-nowrap">Deliverability</span>
+        <div className="flex-1 bg-gray-200 rounded-full h-2 mx-1">
+          <div
+            className={`h-2 rounded-full transition-all duration-500 ${deliverabilityScore >= 80 ? 'bg-green-500' : deliverabilityScore >= 60 ? 'bg-yellow-500' : 'bg-red-500'}`}
+            style={{ width: `${deliverabilityScore}%` }}
+          />
+        </div>
+        <span className={`text-sm font-bold tabular-nums flex-shrink-0 ${deliverabilityScore >= 80 ? 'text-green-600' : deliverabilityScore >= 60 ? 'text-yellow-600' : 'text-red-600'}`}>
+          {deliverabilityScore}/100
+        </span>
+        {totalIssues > 0 && (
+          <span className="bg-red-100 text-red-700 text-xs font-semibold px-1.5 py-0.5 rounded-full flex-shrink-0">{totalIssues} issues</span>
+        )}
+        {showDeliverabilityPanel ? <ChevronDown size={14} className="text-gray-400 flex-shrink-0" /> : <ChevronRight size={14} className="text-gray-400 flex-shrink-0" />}
+      </button>
 
       {showDeliverabilityPanel && (
-        <>
-          <div className="flex items-center gap-3 mb-4">
-            <div className="flex-1 bg-gray-200 rounded-full h-3">
-              <div
-                className={`h-3 rounded-full transition-all duration-500 ${deliverabilityScore >= 80 ? 'bg-green-500' :
-                    deliverabilityScore >= 60 ? 'bg-yellow-500' : 'bg-red-500'
-                  }`}
-                style={{ width: `${deliverabilityScore}%` }}
-              />
-            </div>
-            <div className={`text-xl font-bold ${deliverabilityScore >= 80 ? 'text-green-600' :
-                deliverabilityScore >= 60 ? 'text-yellow-600' : 'text-red-600'
-              }`}>
-              {deliverabilityScore}/100
-            </div>
-          </div>
-
+        <div className="p-4 border-t">
           {/* Warnings */}
           {spamWarnings.length > 0 && (
             <div className="mb-3">
@@ -1811,10 +1793,11 @@ const EmailEditor = forwardRef((props, ref) => {
               <span className="text-sm">Great! No deliverability issues detected.</span>
             </div>
           )}
-        </>
+        </div>
       )}
     </div>
-  );
+    );
+  };
 
   // ==========================================
   // 🎨 MAIN RENDER
@@ -1880,18 +1863,19 @@ const EmailEditor = forwardRef((props, ref) => {
         {editMode === 'drag-drop' && (
           <div className="col-span-3 bg-gray-50 p-4 rounded-lg">
             <h3 className="text-lg font-semibold mb-4">Email Blocks</h3>
-            <div className="grid grid-cols-4 gap-2">
+            <div className="flex flex-col gap-1">
               {emailBlockTypes.map((blockType) => (
                 <div
                   key={blockType.id}
                   draggable
                   onDragStart={(e) => handleDragStart(e, blockType)}
-                  className={`flex items-center justify-center p-4 bg-white rounded-lg border border-gray-200 hover:border-blue-400 cursor-move transition-all hover:shadow-md group ${blockType.id === 'button' ? 'ring-2 ring-blue-200 bg-blue-50' : ''
-                    } ${blockType.id === 'image' ? 'ring-2 ring-green-200 bg-green-50' : ''
+                  className={`flex items-center gap-2.5 px-3 py-2 bg-white rounded-lg border border-gray-200 hover:border-blue-400 cursor-move transition-all hover:shadow-sm group ${blockType.id === 'button' ? 'ring-1 ring-blue-200 bg-blue-50' : ''
+                    } ${blockType.id === 'image' ? 'ring-1 ring-green-200 bg-green-50' : ''
                     }`}
-                  title={blockType.name}
+                  title={`Drag to add ${blockType.name}`}
                 >
-                  <blockType.icon size={24} className="text-gray-600 group-hover:text-blue-600 transition-colors" />
+                  <blockType.icon size={15} className="text-gray-500 group-hover:text-blue-600 transition-colors flex-shrink-0" />
+                  <span className="text-xs font-medium text-gray-700">{blockType.name}</span>
                 </div>
               ))}
             </div>
@@ -1972,10 +1956,25 @@ const EmailEditor = forwardRef((props, ref) => {
                     <button onClick={() => formatText('insertOrderedList')} className="p-2 rounded hover:bg-gray-200">
                       <ListOrdered size={16} />
                     </button>
-                    <button onClick={insertLink} className="p-2 rounded hover:bg-gray-200">
+                    <button onClick={insertLink} className="p-2 rounded hover:bg-gray-200" title="Insert link">
                       <Link size={16} />
                     </button>
-                    <button onClick={insertImage} className="p-2 rounded hover:bg-gray-200">
+                    {showLinkInput && (
+                      <div className="flex items-center gap-1 border border-blue-300 bg-blue-50 rounded-lg px-2 py-1">
+                        <input
+                          autoFocus
+                          type="url"
+                          value={linkUrl}
+                          onChange={e => setLinkUrl(e.target.value)}
+                          onKeyDown={e => { if (e.key === 'Enter') applyLink(); if (e.key === 'Escape') { setShowLinkInput(false); setLinkUrl(''); } }}
+                          placeholder="https://..."
+                          className="text-xs border-none outline-none bg-transparent w-44"
+                        />
+                        <button onClick={applyLink} className="text-xs px-2 py-0.5 bg-blue-600 text-white rounded hover:bg-blue-700">Add</button>
+                        <button onClick={() => { setShowLinkInput(false); setLinkUrl(''); }} className="text-gray-400 hover:text-gray-600 p-0.5"><X size={12}/></button>
+                      </div>
+                    )}
+                    <button onClick={insertImage} className="p-2 rounded hover:bg-gray-200" title="Insert image (file upload)">
                       <Image size={16} />
                     </button>
 

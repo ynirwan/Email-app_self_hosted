@@ -5,11 +5,11 @@ from datetime import datetime
 from bson import ObjectId
 import logging
 import smtplib
+from tasks.campaign.snapshot_utils import build_snapshot
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from jinja2 import Template
-from database import get_campaigns_collection,  get_audit_collection
-#from tasks.email_campaign_tasks import send_campaign_batch
+from database import get_campaigns_collection, get_audit_collection, get_templates_collection
 from tasks.campaign.email_campaign_tasks import celery_app, send_campaign_batch
 from .email_sender import send_test_email
 from .list_validator import validate_target_lists_exist, compute_target_list_count 
@@ -481,42 +481,78 @@ async def send_campaign_test_email(campaign_id: str, test_email: EmailStr, use_c
 @router.post("/campaigns/{campaign_id}/send")
 async def send_campaign(campaign_id: str):
     campaigns_collection = get_campaigns_collection()
+    templates_collection = get_templates_collection()   # ← NEW
     try:
         if not ObjectId.is_valid(campaign_id):
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid campaign ID format")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid campaign ID format"
+            )
 
+        # ── 1. Fetch full campaign (need template_id, field_map, subject) ──
         campaign = await campaigns_collection.find_one(
-            {"_id": ObjectId(campaign_id)},
-            {"status": 1}
+            {"_id": ObjectId(campaign_id)}
         )
         if not campaign:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaign not found")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Campaign not found"
+            )
 
-        # 🚨 Idempotency check
+        # ── 2. Idempotency check ────────────────────────────────────────────
         if campaign.get("status") in ["sending", "sent", "stopped"]:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Campaign is already in '{campaign['status']}' state and cannot be re-triggered"
+                detail=(
+                    f"Campaign is already in '{campaign['status']}' state "
+                    "and cannot be re-triggered"
+                )
             )
 
-        # First batch settings
-        batch_size = None
-        last_id = None
+        # ── 3. Build snapshot (fail fast before touching status) ───────────
+        template_id = campaign.get("template_id")
+        if not template_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Campaign has no template_id — cannot send"
+            )
 
-        # ✅ Trigger first batch (cursor-based)
-        task = send_campaign_batch.delay(
-            campaign_id=campaign_id,
-            batch_size=batch_size,
-            last_id=last_id
+        if not ObjectId.is_valid(template_id):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid template_id '{template_id}' stored on campaign"
+            )
+
+        template = await templates_collection.find_one(
+            {"_id": ObjectId(template_id)}
         )
+        if not template:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=(
+                    f"Template '{template_id}' not found — "
+                    "it may have been deleted. Update the campaign before sending."
+                )
+            )
 
-        # ✅ Update campaign state in DB
+        try:
+            from tasks.campaign.snapshot_utils import build_snapshot
+            snapshot = build_snapshot(template, campaign)
+        except ValueError as ve:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=str(ve)
+            )
+
+        # ── 4. Persist snapshot + status atomically, THEN trigger task ──────
         update_fields = {
-            "status": "sending", 
-            "started_at": datetime.utcnow()
+            "status":              "sending",
+            "started_at":          datetime.utcnow(),
+            "content_snapshot":    snapshot,
+            "snapshot_taken_at":   snapshot["taken_at"],
         }
-        
-        # If it was stopped, we might want to clear stopped_at
+
+        # Clear stopped_at if re-triggering a stopped campaign
         if campaign.get("status") == "stopped":
             update_fields["stopped_at"] = None
 
@@ -525,29 +561,41 @@ async def send_campaign(campaign_id: str):
             {"$set": update_fields}
         )
 
-        # 🔍 Structured log for monitoring
+        # ── 5. Trigger Celery batch ──────────────────────────────────────────
+        task = send_campaign_batch.delay(
+            campaign_id=campaign_id,
+            batch_size=None,
+            last_id=None
+        )
+
         logger.info(
             "send-campaign-triggered",
             extra={
-                "campaign_id": campaign_id,
-                "batch_size": batch_size,
-                "last_id": last_id,
-                "task_id": task.id
+                "campaign_id":    campaign_id,
+                "template_id":    template_id,
+                "snapshot_bytes": len(str(snapshot)),
+                "task_id":        task.id,
             }
         )
 
         return {
-            "message": "Campaign send task started",
+            "message":     "Campaign send task started",
             "campaign_id": campaign_id,
-            "task_id": task.id,
-            "status": "sending"
+            "task_id":     task.id,
+            "status":      "sending"
         }
 
     except HTTPException:
         raise
     except Exception as e:
-        logger.error("send-campaign-error", extra={"campaign_id": campaign_id, "error": str(e)})
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Send campaign error: {str(e)}")
+        logger.error(
+            "send-campaign-error",
+            extra={"campaign_id": campaign_id, "error": str(e)}
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Send campaign error: {str(e)}"
+        )
 
 @router.get("/campaigns/{campaign_id}/status")
 async def get_campaign_status(campaign_id: str):

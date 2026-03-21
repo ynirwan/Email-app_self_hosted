@@ -20,19 +20,18 @@ class TemplateRenderer:
             return []
 
         # Find all {{field_name}} patterns
-        pattern = r'\{\{([^}]+)\}\}'
+        pattern = r"\{\{([^}]+)\}\}"
         matches = re.findall(pattern, content)
         return [m.strip() for m in matches]
 
     @staticmethod
-    def render_drag_drop_template(blocks: List[Dict],
-                                  fields_data: Dict = {}) -> str:
+    def render_drag_drop_template(blocks: List[Dict], fields_data: Dict = {}) -> str:
         """Render drag-drop template blocks to HTML"""
         if not blocks:
             return ""
 
         html_parts = []
-        html_parts.append('''
+        html_parts.append("""
         <!DOCTYPE html>
         <html>
         <head>
@@ -54,63 +53,61 @@ class TemplateRenderer:
         </head>
         <body>
             <div class="email-container">
-        ''')
+        """)
 
         # Sort blocks by position
-        sorted_blocks = sorted(blocks, key=lambda x: x.get('position', 0))
+        sorted_blocks = sorted(blocks, key=lambda x: x.get("position", 0))
 
         for block in sorted_blocks:
-            block_type = block.get('type', 'text')
-            content = block.get('content', '')
-            styles = block.get('styles', {})
+            block_type = block.get("type", "text")
+            content = block.get("content", "")
+            styles = block.get("styles", {})
 
             # Replace placeholders with actual data
             if fields_data:
                 for field, value in fields_data.items():
-                    content = content.replace(f'{{{{{field}}}}}', str(value))
+                    content = content.replace(f"{{{{{field}}}}}", str(value))
 
             # Generate CSS from styles
             style_str = ""
             if styles:
                 style_parts = []
                 for key, value in styles.items():
-                    css_key = key.replace('_', '-')
+                    css_key = key.replace("_", "-")
                     style_parts.append(f"{css_key}: {value}")
                 if style_parts:
                     style_str = f' style="{"; ".join(style_parts)}"'
 
-            if block_type == 'text':
+            if block_type == "text":
                 html_parts.append(
                     f'<div class="block text-block"{style_str}>{content}</div>'
                 )
-            elif block_type == 'button':
+            elif block_type == "button":
                 html_parts.append(
                     f'<div class="block button-block"{style_str}><a href="#" class="button">{content}</a></div>'
                 )
-            elif block_type == 'image':
+            elif block_type == "image":
                 html_parts.append(
                     f'<div class="block image-block"{style_str}><img src="{content}" alt="Image" /></div>'
                 )
-            elif block_type == 'divider':
-                html_parts.append(
-                    f'<div class="block divider"{style_str}></div>')
-            elif block_type == 'spacer':
-                height = styles.get('height', '20px')
+            elif block_type == "divider":
+                html_parts.append(f'<div class="block divider"{style_str}></div>')
+            elif block_type == "spacer":
+                height = styles.get("height", "20px")
                 html_parts.append(
                     f'<div class="block spacer" style="height: {height}"></div>'
                 )
             else:
                 # Custom block type
-                html_parts.append(
-                    f'<div class="block"{style_str}>{content}</div>')
+                html_parts.append(f'<div class="block"{style_str}>{content}</div>')
 
-        html_parts.append('''
+        html_parts.append("""
             </div>
         </body>
         </html>
-        ''')
+        """)
 
-        return ''.join(html_parts)
+        return "".join(html_parts)
 
     @staticmethod
     def render_html_template(html_content: str, fields_data: Dict = {}) -> str:
@@ -123,8 +120,7 @@ class TemplateRenderer:
         # Replace placeholders with actual data
         if fields_data:
             for field, value in fields_data.items():
-                rendered_html = rendered_html.replace(f'{{{{{field}}}}}',
-                                                      str(value))
+                rendered_html = rendered_html.replace(f"{{{{{field}}}}}", str(value))
 
         return rendered_html
 
@@ -148,15 +144,15 @@ async def create_template(template: TemplateCreate):
         blocks = content_json.get("blocks", [])
         for block in blocks:
             block_content = block.get("content", "")
-            block_fields = TemplateRenderer.extract_fields_from_content(
-                block_content)
+            block_fields = TemplateRenderer.extract_fields_from_content(block_content)
             fields.extend(block_fields)
     elif mode == "html":
         html_content = content_json.get("content", "")
         fields = TemplateRenderer.extract_fields_from_content(html_content)
 
-    doc["fields"] = [f.strip() for f in list(set(fields))
-                     ]  # ✅ Strip spaces from each field
+    doc["fields"] = [
+        f.strip() for f in list(set(fields))
+    ]  # ✅ Strip spaces from each field
 
     result = await col.insert_one(doc)
     doc["_id"] = str(result.inserted_id)
@@ -196,47 +192,72 @@ async def get_template(template_id: str):
     doc["_id"] = str(doc["_id"])
     return doc
 
+    @router.put("/{template_id}", response_model=TemplateOut)
+    async def update_template(template_id: str, template: TemplateCreate):
+        """Update a template — blocked if any active campaign is using it."""
+        col = get_templates_collection()
 
-@router.put("/{template_id}", response_model=TemplateOut)
-async def update_template(template_id: str, template: TemplateCreate):
-    """Update a template"""
-    col = get_templates_collection()
+        if not ObjectId.is_valid(template_id):
+            raise HTTPException(status_code=400, detail="Invalid template ID")
 
-    if not ObjectId.is_valid(template_id):
-        raise HTTPException(status_code=400, detail="Invalid template ID")
+        # ── Guard: refuse edit while any campaign is actively sending / scheduled ─
+        campaigns_col = get_campaigns_collection()
+        active_campaigns = []
+        async for c in campaigns_col.find(
+            {"template_id": template_id, "status": {"$in": ["sending", "scheduled"]}},
+            {"title": 1, "status": 1},
+        ):
+            active_campaigns.append(
+                {
+                    "id": str(c["_id"]),
+                    "title": c.get("title", "Untitled"),
+                    "status": c.get("status"),
+                }
+            )
 
-    doc = template.dict()
-    doc["updated_at"] = datetime.utcnow()
+        if active_campaigns:
+            names = ", ".join(
+                f'"{c["title"]}" ({c["status"]})' for c in active_campaigns
+            )
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Cannot edit this template — it is used by {len(active_campaigns)} "
+                    f"active campaign(s): {names}. "
+                    "Wait for those campaigns to finish before making changes."
+                ),
+            )
 
-    # Re-extract fields
-    content_json = doc.get("content_json", {})
-    mode = content_json.get("mode", "html")
-    fields = []
+        # ── Proceed with normal update (unchanged) ────────────────────────────────
+        doc = template.dict()
+        doc["updated_at"] = datetime.utcnow()
 
-    if mode == "drag-drop":
-        blocks = content_json.get("blocks", [])
-        for block in blocks:
-            block_content = block.get("content", "")
-            block_fields = TemplateRenderer.extract_fields_from_content(
-                block_content)
-            fields.extend(block_fields)
-    elif mode == "html":
-        html_content = content_json.get("content", "")
-        fields = TemplateRenderer.extract_fields_from_content(html_content)
+        content_json = doc.get("content_json", {})
+        mode = content_json.get("mode", "html")
+        fields = []
 
-    doc["fields"] = [f.strip() for f in list(set(fields))
-                     ]  # ✅ Strip spaces from each field
+        if mode == "drag-drop":
+            blocks = content_json.get("blocks", [])
+            for block in blocks:
+                block_content = block.get("content", "")
+                block_fields = TemplateRenderer.extract_fields_from_content(
+                    block_content
+                )
+                fields.extend(block_fields)
+        elif mode == "html":
+            html_content = content_json.get("content", "")
+            fields = TemplateRenderer.extract_fields_from_content(html_content)
 
-    result = await col.update_one({"_id": ObjectId(template_id)},
-                                  {"$set": doc})
+        doc["fields"] = [f.strip() for f in list(set(fields))]
 
-    if result.matched_count == 0:
-        raise HTTPException(status_code=404, detail="Template not found")
+        result = await col.update_one({"_id": ObjectId(template_id)}, {"$set": doc})
 
-    # Return updated template
-    updated_doc = await col.find_one({"_id": ObjectId(template_id)})
-    updated_doc["_id"] = str(updated_doc["_id"])
-    return updated_doc
+        if result.matched_count == 0:
+            raise HTTPException(status_code=404, detail="Template not found")
+
+        updated_doc = await col.find_one({"_id": ObjectId(template_id)})
+        updated_doc["_id"] = str(updated_doc["_id"])
+        return updated_doc
 
 
 @router.delete("/{template_id}")
@@ -287,12 +308,12 @@ async def render_template(template_id: str, fields_data: Dict[str, Any] = {}):
     try:
         if mode == "drag-drop":
             blocks = content_json.get("blocks", [])
-            html = TemplateRenderer.render_drag_drop_template(
-                blocks, fields_data or {})
+            html = TemplateRenderer.render_drag_drop_template(blocks, fields_data or {})
         elif mode == "html":
             html_content = content_json.get("content", "")
             html = TemplateRenderer.render_html_template(
-                html_content, fields_data or {})
+                html_content, fields_data or {}
+            )
         else:
             # Handle other modes or fallback
             html = "<p>Template mode not supported for rendering</p>"
@@ -300,8 +321,9 @@ async def render_template(template_id: str, fields_data: Dict[str, Any] = {}):
         return {"html": html, "mode": mode}
 
     except Exception as e:
-        raise HTTPException(status_code=500,
-                            detail=f"Error rendering template: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Error rendering template: {str(e)}"
+        )
 
 
 @router.get("/{template_id}/preview")
@@ -358,13 +380,15 @@ async def convert_template_mode(template_id: str, target_mode: str):
     if current_mode == "html" and target_mode == "drag-drop":
         # Convert HTML to drag-drop blocks
         html_content = content_json.get("content", "")
-        blocks = [{
-            "id": int(datetime.utcnow().timestamp() * 1000),
-            "type": "text",
-            "content": html_content,
-            "styles": {},
-            "position": 0
-        }]
+        blocks = [
+            {
+                "id": int(datetime.utcnow().timestamp() * 1000),
+                "type": "text",
+                "content": html_content,
+                "styles": {},
+                "position": 0,
+            }
+        ]
         content_json = {"mode": "drag-drop", "blocks": blocks}
     elif current_mode == "drag-drop" and target_mode == "html":
         # Convert drag-drop to HTML
@@ -374,20 +398,15 @@ async def convert_template_mode(template_id: str, target_mode: str):
     else:
         raise HTTPException(
             status_code=400,
-            detail=
-            f"Conversion from {current_mode} to {target_mode} not supported")
+            detail=f"Conversion from {current_mode} to {target_mode} not supported",
+        )
 
     # Update template
-    update_doc = {
-        "content_json": content_json,
-        "updated_at": datetime.utcnow()
-    }
+    update_doc = {"content_json": content_json, "updated_at": datetime.utcnow()}
 
     await col.update_one({"_id": ObjectId(template_id)}, {"$set": update_doc})
 
-    return {
-        "message": f"Template converted from {current_mode} to {target_mode}"
-    }
+    return {"message": f"Template converted from {current_mode} to {target_mode}"}
 
 
 @router.get("/{template_id}/export")
@@ -406,20 +425,18 @@ async def export_template(template_id: str, format: str = "json"):
     doc["_id"] = str(doc["_id"])
 
     if format == "json":
-        return Response(content=json.dumps(doc, default=str, indent=2),
-                        media_type="application/json",
-                        headers={
-                            "Content-Disposition":
-                            f"attachment; filename={doc['name']}.json"
-                        })
+        return Response(
+            content=json.dumps(doc, default=str, indent=2),
+            media_type="application/json",
+            headers={"Content-Disposition": f"attachment; filename={doc['name']}.json"},
+        )
     elif format == "html":
         # Render and export as HTML
         render_result = await render_template(template_id)
-        return Response(content=render_result["html"],
-                        media_type="text/html",
-                        headers={
-                            "Content-Disposition":
-                            f"attachment; filename={doc['name']}.html"
-                        })
+        return Response(
+            content=render_result["html"],
+            media_type="text/html",
+            headers={"Content-Disposition": f"attachment; filename={doc['name']}.html"},
+        )
     else:
         raise HTTPException(status_code=400, detail="Invalid export format")
