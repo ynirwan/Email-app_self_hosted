@@ -1,184 +1,345 @@
-// frontend/src/components/Sidebar.jsx
-import { NavLink, useLocation, useNavigate } from 'react-router-dom';
-import { useState } from 'react';
-import { useUser } from '../contexts/UserContext';
-import ZeniPostLogo from './ZeniPostLogo';
+import { NavLink, useLocation, useNavigate } from "react-router-dom";
+import { useState } from "react";
+import { useUser } from "../contexts/UserContext";
+import ZeniPostLogo from "./ZeniPostLogo";
+
+// Nav groups — logical grouping, campaigns with subscribers not automation
+const NAV_GROUPS = [
+  {
+    label: "Overview",
+    items: [
+      {
+        to: "/",
+        label: "Dashboard",
+        icon: "🏠",
+        description: "Overview & stats",
+      },
+      {
+        to: "/analytics",
+        label: "Analytics",
+        icon: "📊",
+        description: "Reports & insights",
+      },
+    ],
+  },
+  {
+    label: "Audience",
+    items: [
+      {
+        to: "/subscribers",
+        label: "Subscribers",
+        icon: "👥",
+        description: "Manage contacts",
+      },
+      {
+        to: "/segmentation",
+        label: "Segments",
+        icon: "🎯",
+        description: "Target groups",
+      },
+      {
+        to: "/suppressions",
+        label: "Suppressions",
+        icon: "🛡️",
+        description: "Blocked emails",
+      },
+    ],
+  },
+  {
+    label: "Sending",
+    items: [
+      {
+        to: "/campaigns",
+        label: "Campaigns",
+        icon: "📢",
+        description: "Email campaigns",
+      },
+      {
+        to: "/templates",
+        label: "Templates",
+        icon: "📄",
+        description: "Email templates",
+      },
+      {
+        to: "/ab-testing",
+        label: "A/B Testing",
+        icon: "🧪",
+        description: "Test & optimise",
+      },
+      {
+        to: "/automation",
+        label: "Automation",
+        icon: "🤖",
+        description: "Email sequences",
+      },
+    ],
+  },
+  {
+    label: "System",
+    items: [
+      {
+        to: "/audit",
+        label: "Audit Trail",
+        icon: "📋",
+        description: "Activity logs",
+      },
+      {
+        to: "/settings/email",
+        label: "Settings",
+        icon: "⚙️",
+        description: "Configuration",
+      },
+    ],
+  },
+];
+
+function getAvatarColor(name) {
+  if (!name) return "bg-gray-400";
+  const colors = [
+    "bg-blue-500",
+    "bg-violet-500",
+    "bg-emerald-500",
+    "bg-amber-500",
+    "bg-rose-500",
+    "bg-cyan-500",
+    "bg-indigo-500",
+    "bg-teal-500",
+  ];
+  return colors[name.charCodeAt(0) % colors.length];
+}
 
 export default function Sidebar() {
   const { pathname } = useLocation();
   const navigate = useNavigate();
-  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-  const { user, userLoading: loading } = useUser();
+  const { user, userLoading } = useUser();
+
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const [collapsed, setCollapsed] = useState(false);
 
   const handleLogout = () => {
-    localStorage.removeItem('token');
-    navigate('/login');
+    localStorage.removeItem("token");
+    navigate("/login");
   };
 
-  // Navigation items
-  const navigationItems = [
-    { to: '/', label: 'Dashboard', icon: '🏠', description: 'Overview & Stats' },
-    { to: '/analytics', label: 'Analytics', icon: '📊', description: 'Reports & Insights' },
-    { to: '/subscribers', label: 'Subscribers', icon: '👥', description: 'Manage Contacts' },
-    { to: '/campaigns', label: 'Campaigns', icon: '📢', description: 'Email Campaigns' },
-    { to: '/templates', label: 'Templates', icon: '📄', description: 'Email Templates' },
-    { to: '/automation', label: 'Automation', icon: '🤖', description: 'Email Automation' },
-    { to: '/ab-testing', label: 'A/B Testing', icon: '🧪', description: 'Test & Optimize' },
-    { to: '/segmentation', label: 'Segmentation', icon: '🎯', description: 'Target Groups' },
-    { to: '/suppressions', label: 'Suppressions', icon: '🛡️', description: 'Blocked Emails' },
-    { to: '/audit', label: 'Audit Trail', icon: '📋', description: 'Activity Logs' },
-    { to: '/settings/email', label: 'Settings', icon: '⚙️', description: 'Configuration' }
-  ];
+  const avatarLetter = user?.name ? user.name.charAt(0).toUpperCase() : "?";
+  const displayName = user?.name
+    ? user.name.charAt(0).toUpperCase() + user.name.slice(1)
+    : "Unknown";
 
-  const navItem = (item) => {
-    const isActive = pathname === item.to || (item.to !== '/' && pathname.startsWith(item.to));
+  // ── Single NavItem ─────────────────────────────────────────
+  const NavItem = ({ item }) => {
+    const isActive =
+      pathname === item.to || (item.to !== "/" && pathname.startsWith(item.to));
+
     return (
       <NavLink
-        key={item.to}
         to={item.to}
-        className={({ isActive: navLinkActive }) =>
-          `group flex items-center px-4 py-3 rounded-lg transition-all duration-200 ${
-            navLinkActive || isActive
-              ? 'bg-blue-100 text-blue-700 font-semibold shadow-sm border-l-4 border-blue-500'
-              : 'hover:bg-gray-100 text-gray-700 hover:text-gray-900'
-          }`
-        }
-        onClick={() => setIsMobileMenuOpen(false)}
+        title={collapsed ? item.label : undefined}
+        aria-label={item.label}
+        onClick={() => setMobileOpen(false)}
+        className={({ isActive: navActive }) => {
+          const active = navActive || isActive;
+          return [
+            "flex items-center rounded-lg transition-all duration-150 group",
+            collapsed ? "justify-center px-2 py-2.5" : "px-3 py-2.5",
+            active
+              ? "bg-blue-50 text-blue-700"
+              : "text-gray-600 hover:bg-gray-100 hover:text-gray-900",
+          ].join(" ");
+        }}
       >
-        <span className="text-lg mr-3">{item.icon}</span>
-        <div className="flex-1 min-w-0">
-          <p className="text-sm font-medium">{item.label}</p>
-          <p className="text-xs text-gray-500 truncate">{item.description}</p>
-        </div>
-        {isActive && <div className="w-2 h-2 bg-blue-500 rounded-full ml-2"></div>}
+        {({ isActive: navActive }) => {
+          const active = navActive || isActive;
+          return (
+            <>
+              {/* Active bar on left edge */}
+              <span
+                className={[
+                  "absolute left-0 w-0.5 h-5 rounded-r-full transition-all",
+                  active ? "bg-blue-500" : "bg-transparent",
+                ].join(" ")}
+              />
+
+              <span
+                className={`text-base flex-shrink-0 ${collapsed ? "" : "mr-3"}`}
+              >
+                {item.icon}
+              </span>
+
+              {!collapsed && (
+                <div className="flex-1 min-w-0 overflow-hidden">
+                  <p
+                    className={`text-sm font-medium leading-none truncate ${active ? "text-blue-700" : ""}`}
+                  >
+                    {item.label}
+                  </p>
+                  <p className="text-xs text-gray-400 mt-0.5 truncate">
+                    {item.description}
+                  </p>
+                </div>
+              )}
+            </>
+          );
+        }}
       </NavLink>
     );
   };
 
-  const getAvatarColor = (name) => {
-    if (!name) return "bg-gray-400";
-    const first = name[0].toLowerCase();
-    const colors = {
-      a: "bg-red-500", b: "bg-orange-500", c: "bg-amber-500", d: "bg-yellow-500",
-      e: "bg-lime-500", f: "bg-green-500", g: "bg-emerald-500", h: "bg-teal-500",
-      i: "bg-cyan-500", j: "bg-sky-500", k: "bg-blue-500", l: "bg-indigo-500",
-      m: "bg-violet-500", n: "bg-purple-500", o: "bg-fuchsia-500", p: "bg-pink-500",
-      q: "bg-rose-500", r: "bg-red-600", s: "bg-orange-600", t: "bg-amber-600",
-      u: "bg-yellow-600", v: "bg-green-600", w: "bg-blue-600", x: "bg-indigo-600",
-      y: "bg-purple-600", z: "bg-pink-600"
-    };
-    return colors[first] || "bg-gray-500";
-  };
+  // ── Sidebar inner content (shared between mobile & desktop) ─
+  const SidebarContent = () => (
+    <div className="flex flex-col h-full">
+      {/* Logo + collapse toggle */}
+      <div className="flex items-center h-14 border-b border-slate-800 px-3 bg-slate-900 flex-shrink-0">
+        <div
+          className={`flex items-center ${collapsed ? "justify-center w-full" : "flex-1 min-w-0"}`}
+        >
+          <ZeniPostLogo size={28} variant="animated" />
+          {!collapsed && (
+            <span className="ml-2 text-white font-bold text-sm truncate">
+              ZeniPost
+            </span>
+          )}
+        </div>
+        {/* Collapse toggle — desktop only */}
+        <button
+          onClick={() => setCollapsed(!collapsed)}
+          className="hidden md:flex items-center justify-center w-7 h-7 rounded-md text-slate-400 hover:text-white hover:bg-slate-700 transition-colors flex-shrink-0"
+          title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+          aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+        >
+          <span className="text-xs">{collapsed ? "→" : "←"}</span>
+        </button>
+      </div>
 
-  const isEditorPage = pathname.includes('/templates/') || 
-                       pathname.includes('/automation/create') || 
-                       pathname.includes('/automation/edit');
+      {/* Nav groups */}
+      <nav
+        className="flex-1 overflow-y-auto overflow-x-hidden py-3"
+        aria-label="Main navigation"
+      >
+        {NAV_GROUPS.map((group) => (
+          <div
+            key={group.label}
+            className={`relative ${collapsed ? "px-2" : "px-3"} mb-1`}
+          >
+            {/* Group label — hidden when collapsed */}
+            {!collapsed && (
+              <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider px-3 pt-3 pb-1">
+                {group.label}
+              </p>
+            )}
+            {collapsed && <div className="border-t border-gray-200 my-2" />}
+            <div className="space-y-0.5 relative">
+              {group.items.map((item) => (
+                <NavItem key={item.to} item={item} />
+              ))}
+            </div>
+          </div>
+        ))}
+      </nav>
 
-  if (isEditorPage) return null;
+      {/* User section + logout */}
+      <div className="flex-shrink-0 border-t border-gray-200 p-3">
+        {collapsed ? (
+          // Collapsed: just avatar + logout icon stacked
+          <div className="flex flex-col items-center gap-2">
+            <div
+              className={`w-8 h-8 rounded-full flex items-center justify-center text-white text-sm font-bold ${getAvatarColor(user?.name)}`}
+              title={displayName}
+            >
+              {avatarLetter}
+            </div>
+            <button
+              onClick={handleLogout}
+              title="Logout"
+              aria-label="Logout"
+              className="w-8 h-8 flex items-center justify-center rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors"
+            >
+              <span className="text-sm">🚪</span>
+            </button>
+          </div>
+        ) : (
+          // Expanded: avatar row + logout button
+          <div className="space-y-2">
+            <div className="flex items-center gap-2.5 px-2 py-1.5 rounded-lg bg-gray-50 border border-gray-100">
+              <div
+                className={`w-7 h-7 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0 ${getAvatarColor(user?.name)}`}
+              >
+                {avatarLetter}
+              </div>
+              <div className="flex-1 min-w-0">
+                {userLoading ? (
+                  <div className="h-3 bg-gray-200 rounded animate-pulse w-20 mb-1" />
+                ) : (
+                  <>
+                    <p className="text-xs font-semibold text-gray-800 truncate">
+                      {displayName}
+                    </p>
+                    <p className="text-xs text-gray-400 truncate">
+                      {user?.email || ""}
+                    </p>
+                  </>
+                )}
+              </div>
+            </div>
+            <button
+              onClick={handleLogout}
+              className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-sm font-medium text-gray-600 hover:text-red-600 hover:bg-red-50 border border-gray-200 hover:border-red-200 transition-colors"
+            >
+              <span className="text-sm">🚪</span>
+              Sign out
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
 
   return (
     <>
-      {/* Mobile Menu Button */}
+      {/* ── Mobile hamburger ── */}
       <button
-        onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-        className="md:hidden fixed top-4 left-4 z-50 p-2 bg-blue-800 text-white rounded-lg shadow-lg"
+        onClick={() => setMobileOpen(!mobileOpen)}
+        className="md:hidden fixed top-3.5 left-4 z-50 p-2 bg-slate-900 text-white rounded-lg shadow-lg"
+        aria-label={mobileOpen ? "Close menu" : "Open menu"}
       >
-        {isMobileMenuOpen ? <span className="text-lg">✕</span> : <span className="text-lg">☰</span>}
+        <span className="text-sm leading-none">{mobileOpen ? "✕" : "☰"}</span>
       </button>
 
-      {/* Mobile Overlay */}
-      {isMobileMenuOpen && (
+      {/* ── Mobile overlay ── */}
+      {mobileOpen && (
         <div
-          className="md:hidden fixed inset-0 bg-black bg-opacity-50 z-30"
-          onClick={() => setIsMobileMenuOpen(false)}
+          className="md:hidden fixed inset-0 bg-black/50 z-30"
+          onClick={() => setMobileOpen(false)}
+          aria-hidden="true"
         />
       )}
 
-      {/* Sidebar */}
-      <div className={`
-        ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'}
-        md:translate-x-0
-        fixed top-0 left-0 z-40
-        w-64 bg-white shadow-xl
-        h-screen flex flex-col
-        transition-transform duration-300 ease-in-out
-      `}>
-        {/* Header with Animated Logo */}
-<div className="h-24 flex items-center justify-center">
-  <div className="flex items-center justify-center w-full h-full bg-slate-900 border-b border-slate-800">
-    <ZeniPostLogo size={32} variant="animated" />
-  </div>
-</div>
+      {/* ── Sidebar panel ── */}
+      <aside
+        className={[
+          "fixed top-0 left-0 z-40 h-screen bg-white shadow-xl",
+          "transition-all duration-300 ease-in-out flex-shrink-0",
+          // mobile: slide in/out
+          mobileOpen ? "translate-x-0" : "-translate-x-full",
+          // desktop: always visible, width switches
+          "md:translate-x-0",
+          collapsed ? "md:w-16" : "md:w-60",
+          // mobile always full width sidebar
+          "w-60",
+        ].join(" ")}
+        aria-label="Sidebar navigation"
+      >
+        <SidebarContent />
+      </aside>
 
-
-        {/* Navigation */}
-        <nav className="flex-1 p-4 space-y-2 overflow-y-auto">
-          {/* Main Navigation */}
-          <div className="space-y-1">
-            <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider px-3 py-2">
-              Main
-            </h3>
-            {navigationItems.slice(0, 5).map(navItem)}
-          </div>
-
-          {/* Content Management */}
-          <div className="space-y-1 pt-4">
-            <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider px-3 py-2">
-              Content
-            </h3>
-            {navigationItems.slice(5, 9).map(navItem)}
-          </div>
-
-          {/* System */}
-          <div className="space-y-1 pt-4">
-            <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider px-3 py-2">
-              System
-            </h3>
-            {navigationItems.slice(9).map(navItem)}
-          </div>
-        </nav>
-
-        {/* User Info & Logout */}
-        <div className="p-4 border-t border-gray-200 bg-gray-50">
-          <div className="flex items-center space-x-3 mb-4 p-3 bg-white rounded-lg border">
-            {/* Avatar */}
-            <div className={`w-8 h-8 rounded-full flex items-center justify-center text-white text-sm font-medium ${getAvatarColor(user?.name)}`}>
-              {user?.name ? user.name.charAt(0).toUpperCase() : "?"}
-            </div>
-
-            <div className="flex-1 min-w-0">
-              {loading ? (
-                <>
-                  <p className="text-sm font-medium text-gray-500">Loading...</p>
-                  <p className="text-xs text-gray-400">...</p>
-                </>
-              ) : (
-                <>
-                  <p className="text-sm font-medium text-gray-900">
-                    {user?.name ? `${user.name.charAt(0).toUpperCase()}${user.name.slice(1)}` : "Unknown User"}
-                  </p>
-                  <p className="text-xs text-gray-500 truncate">
-                    {user?.email || "no-email"}
-                  </p>
-                </>
-              )}
-            </div>
-          </div>
-
-          {/* Logout Button */}
-          <button
-            onClick={handleLogout}
-            className="w-full bg-red-600 text-white px-4 py-3 rounded-lg hover:bg-red-700 transition-colors flex items-center justify-center gap-2 font-medium"
-          >
-            <span className="text-lg">🚪</span>
-            Logout
-          </button>
-        </div>
-      </div>
-
-      {/* Main Content Spacer for Desktop */}
-      <div className="hidden md:block w-64 flex-shrink-0"></div>
+      {/* ── Desktop spacer — keeps main content pushed right ── */}
+      <div
+        className={[
+          "hidden md:block flex-shrink-0 transition-all duration-300",
+          collapsed ? "w-16" : "w-60",
+        ].join(" ")}
+        aria-hidden="true"
+      />
     </>
   );
 }
-
