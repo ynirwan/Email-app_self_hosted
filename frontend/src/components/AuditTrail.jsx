@@ -1,567 +1,469 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import API from '../api';
 
+// ─── helpers ────────────────────────────────────────────────
+const fmt = (n) => Number(n ?? 0).toLocaleString();
+
+const fmtTime = (timestamp) => {
+  const date = new Date(timestamp);
+  const now  = new Date();
+  const diff = now - date;
+  const mins  = Math.floor(diff / 60000);
+  const hours = Math.floor(diff / 3600000);
+  const days  = Math.floor(diff / 86400000);
+  if (mins  < 1)  return 'Just now';
+  if (mins  < 60) return `${mins}m ago`;
+  if (hours < 24) return `${hours}h ago`;
+  if (days  < 7)  return `${days}d ago`;
+  return date.toLocaleString('en-US', {
+    month: 'short', day: 'numeric',
+    year: date.getFullYear() !== now.getFullYear() ? 'numeric' : undefined,
+    hour: '2-digit', minute: '2-digit'
+  });
+};
+
+const ACTION_STYLE = {
+  create:     'bg-green-100   text-green-800',
+  update:     'bg-blue-100    text-blue-800',
+  delete:     'bg-red-100     text-red-800',
+  upload:     'bg-purple-100  text-purple-800',
+  export:     'bg-yellow-100  text-yellow-800',
+  send:       'bg-indigo-100  text-indigo-800',
+  pause:      'bg-orange-100  text-orange-800',
+  resume:     'bg-teal-100    text-teal-800',
+  test:       'bg-pink-100    text-pink-800',
+  start:      'bg-emerald-100 text-emerald-800',
+  stop:       'bg-rose-100    text-rose-800',
+  trigger:    'bg-violet-100  text-violet-800',
+  reactivate: 'bg-lime-100    text-lime-800',
+  refresh:    'bg-cyan-100    text-cyan-800',
+};
+
+const ENTITY_ICON = {
+  subscriber: '👤', list: '📋', campaign: '📧', segment: '🎯',
+  automation: '🤖', template: '📝', suppression: '🚫',
+  ab_test: '🧪', bulk_upload: '📤', email: '✉️', smtp: '🔧',
+};
+
+const ENTITY_TYPES = [
+  { value: 'subscriber',  label: '👤 Subscribers' },
+  { value: 'list',        label: '📋 Lists' },
+  { value: 'campaign',    label: '📧 Campaigns' },
+  { value: 'segment',     label: '🎯 Segments' },
+  { value: 'automation',  label: '🤖 Automation' },
+  { value: 'template',    label: '📝 Templates' },
+  { value: 'suppression', label: '🚫 Suppressions' },
+  { value: 'ab_test',     label: '🧪 A/B Tests' },
+  { value: 'bulk_upload', label: '📤 Bulk Uploads' },
+  { value: 'email',       label: '✉️ Email Settings' },
+  { value: 'smtp',        label: '🔧 SMTP Config' },
+];
+
+const ACTION_TYPES = [
+  'create','update','delete','upload','export',
+  'send','pause','resume','test','start','stop',
+  'trigger','reactivate','refresh',
+];
+
+// Renders before/after changes in a readable diff format
+function ChangesDiff({ before, after }) {
+  const hasBefore = before && Object.keys(before).length > 0;
+  const hasAfter  = after  && Object.keys(after).length  > 0;
+  if (!hasBefore && !hasAfter) return <span className="text-gray-300 text-xs">—</span>;
+
+  // Show only keys that changed, not the full object
+  const changedKeys = new Set([
+    ...(hasBefore ? Object.keys(before) : []),
+    ...(hasAfter  ? Object.keys(after)  : []),
+  ]);
+
+  const relevant = [...changedKeys].filter(k => {
+    const b = JSON.stringify(before?.[k]);
+    const a = JSON.stringify(after?.[k]);
+    return b !== a;
+  }).slice(0, 4); // cap at 4 fields to keep cell readable
+
+  if (relevant.length === 0 && (hasBefore || hasAfter)) {
+    return <span className="text-xs text-gray-400 italic">no field changes</span>;
+  }
+
+  return (
+    <div className="space-y-1 max-w-[200px]">
+      {relevant.map(key => {
+        const bVal = before?.[key];
+        const aVal = after?.[key];
+        return (
+          <div key={key} className="text-xs">
+            <span className="font-medium text-gray-500">{key}: </span>
+            {hasBefore && bVal !== undefined && (
+              <span className="bg-red-50 text-red-700 px-1 rounded line-through">
+                {String(bVal).substring(0, 20)}
+              </span>
+            )}
+            {hasBefore && hasAfter && bVal !== undefined && aVal !== undefined && (
+              <span className="text-gray-400 mx-0.5">→</span>
+            )}
+            {hasAfter && aVal !== undefined && (
+              <span className="bg-green-50 text-green-700 px-1 rounded">
+                {String(aVal).substring(0, 20)}
+              </span>
+            )}
+          </div>
+        );
+      })}
+      {changedKeys.size > 4 && (
+        <span className="text-xs text-gray-400">+{changedKeys.size - 4} more fields</span>
+      )}
+    </div>
+  );
+}
+
 export default function AuditTrail() {
-  const [logs, setLogs] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [logs, setLogs]           = useState([]);
+  const [loading, setLoading]     = useState(true);
+  const [error, setError]         = useState(null);
+  const [exporting, setExporting] = useState(false);
+  const [totalCount, setTotalCount] = useState(0);
+
   const [filters, setFilters] = useState({
-    entity_type: '',
-    action: '',
-    start_date: '',
-    end_date: '',
-    search: ''
+    entity_type: '', action: '', start_date: '', end_date: '', search: ''
   });
-  const [pagination, setPagination] = useState({
-    page: 1,
-    limit: 50,
-    total: 0
-  });
-  const [stats, setStats] = useState({
-    total: 0,
-    byAction: {},
-    byEntity: {},
-    recent24h: 0
-  });
+  const [pagination, setPagination] = useState({ page: 1, limit: 50 });
 
-  // Enhanced entity types covering all features
-  const entityTypes = [
-    { value: 'subscriber', label: '👤 Subscribers', icon: '👤' },
-    { value: 'list', label: '📋 Lists', icon: '📋' },
-    { value: 'campaign', label: '📧 Campaigns', icon: '📧' },
-    { value: 'segment', label: '🎯 Segments', icon: '🎯' },
-    { value: 'automation', label: '🤖 Automation', icon: '🤖' },
-    { value: 'template', label: '📝 Templates', icon: '📝' },
-    { value: 'suppression', label: '🚫 Suppressions', icon: '🚫' },
-    { value: 'ab_test', label: '🧪 A/B Tests', icon: '🧪' },
-    { value: 'bulk_upload', label: '📤 Bulk Uploads', icon: '📤' },
-    { value: 'email', label: '✉️ Email Settings', icon: '✉️' },
-    { value: 'smtp', label: '🔧 SMTP Config', icon: '🔧' }
-  ];
-
-  // Enhanced action types
-  const actionTypes = [
-    { value: 'create', label: 'Create', color: 'green' },
-    { value: 'update', label: 'Update', color: 'blue' },
-    { value: 'delete', label: 'Delete', color: 'red' },
-    { value: 'upload', label: 'Upload', color: 'purple' },
-    { value: 'export', label: 'Export', color: 'yellow' },
-    { value: 'send', label: 'Send', color: 'indigo' },
-    { value: 'pause', label: 'Pause', color: 'orange' },
-    { value: 'resume', label: 'Resume', color: 'teal' },
-    { value: 'test', label: 'Test', color: 'pink' },
-    { value: 'refresh', label: 'Refresh', color: 'cyan' },
-    { value: 'reactivate', label: 'Reactivate', color: 'lime' },
-    { value: 'start', label: 'Start', color: 'emerald' },
-    { value: 'stop', label: 'Stop', color: 'rose' },
-    { value: 'trigger', label: 'Trigger', color: 'violet' }
-  ];
-
-  const fetchLogs = async () => {
-    try {
-      setLoading(true);
-      const params = new URLSearchParams();
-      params.append('limit', pagination.limit);
-      params.append('skip', (pagination.page - 1) * pagination.limit);
-
-      if (filters.entity_type) params.append('entity_type', filters.entity_type);
-      if (filters.action) params.append('action', filters.action);
-      if (filters.start_date) params.append('start_date', filters.start_date);
-      if (filters.end_date) params.append('end_date', filters.end_date);
-
-      const res = await API.get(`/audit/logs?${params}`);
-      setLogs(res.data.logs);
-      setPagination(prev => ({ ...prev, total: res.data.total_count }));
-
-      // Calculate statistics
-      calculateStats(res.data.logs, res.data.total_count);
-    } catch (err) {
-      console.error("Failed to fetch audit logs", err);
-      alert("Failed to load audit logs");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const calculateStats = (logsData, total) => {
-    const byAction = {};
-    const byEntity = {};
-    const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
-    let recent24h = 0;
-
-    logsData.forEach(log => {
-      if (!log) return;
-      // Count by action
-      const action = log.action || 'unknown';
-      byAction[action] = (byAction[action] || 0) + 1;
-
-      // Count by entity
-      const entity = log.entity_type || 'unknown';
-      byEntity[entity] = (byEntity[entity] || 0) + 1;
-
-      // Count recent activities
-      if (log.timestamp && new Date(log.timestamp) > twentyFourHoursAgo) {
-        recent24h++;
-      }
-    });
-
-    setStats({ total, byAction, byEntity, recent24h });
-  };
-
-  useEffect(() => {
-    fetchLogs();
-  }, [pagination.page, filters.entity_type, filters.action, filters.start_date, filters.end_date]);
-
-  const formatTimestamp = (timestamp) => {
-    const date = new Date(timestamp);
-    const now = new Date();
-    const diffMs = now - date;
-    const diffMins = Math.floor(diffMs / 60000);
-    const diffHours = Math.floor(diffMs / 3600000);
-    const diffDays = Math.floor(diffMs / 86400000);
-
-    if (diffMins < 1) return 'Just now';
-    if (diffMins < 60) return `${diffMins}m ago`;
-    if (diffHours < 24) return `${diffHours}h ago`;
-    if (diffDays < 7) return `${diffDays}d ago`;
-
-    return date.toLocaleString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      year: date.getFullYear() !== now.getFullYear() ? 'numeric' : undefined,
-      hour: '2-digit',
-      minute: '2-digit'
-    });
-  };
-
-  const getActionBadge = (action) => {
-    const actionConfig = actionTypes.find(a => a.value === action);
-    const color = actionConfig?.color || 'gray';
-
-    const colorClasses = {
-      green: 'bg-green-100 text-green-800 border-green-200',
-      blue: 'bg-blue-100 text-blue-800 border-blue-200',
-      red: 'bg-red-100 text-red-800 border-red-200',
-      purple: 'bg-purple-100 text-purple-800 border-purple-200',
-      yellow: 'bg-yellow-100 text-yellow-800 border-yellow-200',
-      indigo: 'bg-indigo-100 text-indigo-800 border-indigo-200',
-      orange: 'bg-orange-100 text-orange-800 border-orange-200',
-      teal: 'bg-teal-100 text-teal-800 border-teal-200',
-      pink: 'bg-pink-100 text-pink-800 border-pink-200',
-      cyan: 'bg-cyan-100 text-cyan-800 border-cyan-200',
-      lime: 'bg-lime-100 text-lime-800 border-lime-200',
-      emerald: 'bg-emerald-100 text-emerald-800 border-emerald-200',
-      rose: 'bg-rose-100 text-rose-800 border-rose-200',
-      violet: 'bg-violet-100 text-violet-800 border-violet-200',
-      gray: 'bg-gray-100 text-gray-800 border-gray-200'
-    };
-
-    return colorClasses[color];
-  };
-
-  const getEntityIcon = (entityType) => {
-    const entity = entityTypes.find(e => e.value === entityType);
-    return entity?.icon || '📄';
+  const setFilter = (key, value) => {
+    setFilters(p => ({ ...p, [key]: value }));
+    setPagination(p => ({ ...p, page: 1 }));
   };
 
   const clearFilters = () => {
-    setFilters({
-      entity_type: '',
-      action: '',
-      start_date: '',
-      end_date: '',
-      search: ''
-    });
-    setPagination(prev => ({ ...prev, page: 1 }));
+    setFilters({ entity_type: '', action: '', start_date: '', end_date: '', search: '' });
+    setPagination(p => ({ ...p, page: 1 }));
   };
 
+  const activeFilterCount = [
+    filters.entity_type, filters.action, filters.start_date,
+    filters.end_date, filters.search
+  ].filter(Boolean).length;
+
+  const fetchLogs = useCallback(async () => {
+    try {
+      setLoading(true); setError(null);
+      const params = new URLSearchParams();
+      params.append('limit', pagination.limit);
+      params.append('skip', (pagination.page - 1) * pagination.limit);
+      if (filters.entity_type) params.append('entity_type', filters.entity_type);
+      if (filters.action)      params.append('action', filters.action);
+      if (filters.start_date)  params.append('start_date', filters.start_date);
+      if (filters.end_date)    params.append('end_date', filters.end_date);
+      if (filters.search)      params.append('search', filters.search);
+
+      const res = await API.get(`/audit/logs?${params}`);
+      setLogs(res.data.logs || []);
+      setTotalCount(res.data.total_count || 0);
+    } catch {
+      setError('Failed to load audit logs');
+      setLogs([]);
+    } finally { setLoading(false); }
+  }, [pagination.page, pagination.limit, filters]);
+
+  useEffect(() => { fetchLogs(); }, [fetchLogs]);
+
   const exportLogs = async () => {
+    setExporting(true);
     try {
       const params = new URLSearchParams();
       if (filters.entity_type) params.append('entity_type', filters.entity_type);
-      if (filters.action) params.append('action', filters.action);
-      if (filters.start_date) params.append('start_date', filters.start_date);
-      if (filters.end_date) params.append('end_date', filters.end_date);
+      if (filters.action)      params.append('action', filters.action);
+      if (filters.start_date)  params.append('start_date', filters.start_date);
+      if (filters.end_date)    params.append('end_date', filters.end_date);
 
-      const response = await API.get(`/audit/export?${params}`, {
-        responseType: 'blob'
-      });
-
-      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const res = await API.get(`/audit/export?${params}`, { responseType: 'blob' });
+      const url  = window.URL.createObjectURL(new Blob([res.data]));
       const link = document.createElement('a');
       link.href = url;
-      link.setAttribute('download', `audit-logs-${new Date().toISOString()}.csv`);
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-    } catch (err) {
-      console.error("Failed to export logs", err);
-      alert("Failed to export audit logs");
-    }
+      link.setAttribute('download', `audit-logs-${new Date().toISOString().split('T')[0]}.csv`);
+      document.body.appendChild(link); link.click(); link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch {
+      setError('Failed to export audit logs — please try again');
+    } finally { setExporting(false); }
   };
 
-  const filteredLogs = logs.filter(log => {
-    if (!filters.search) return true;
-    const searchLower = filters.search.toLowerCase();
-    return (
-      log.user_action?.toLowerCase().includes(searchLower) ||
-      log.entity_type?.toLowerCase().includes(searchLower) ||
-      log.action?.toLowerCase().includes(searchLower) ||
-      log.entity_id?.toLowerCase().includes(searchLower)
-    );
+  const totalPages = Math.ceil(totalCount / pagination.limit);
+  const showFrom   = (pagination.page - 1) * pagination.limit + 1;
+  const showTo     = Math.min(pagination.page * pagination.limit, totalCount);
+
+  // Stats derived from current page (honest about scope)
+  const pageActionCounts = {};
+  logs.forEach(log => {
+    const a = log.action || 'unknown';
+    pageActionCounts[a] = (pageActionCounts[a] || 0) + 1;
   });
 
   return (
-    <div className="max-w-8xl mx-auto mt-10 px-4">
-      {/* Header */}
-      <div className="flex justify-between items-center mb-1">
-        <div>
-          <h2 className="text-3xl font-bold text-gray-800">📋 Audit Trail</h2>
-          <p className="text-gray-600 mt-1">Complete activity log across all system features</p>
-        </div>
-        <div className="flex gap-2">
-          <button
-            onClick={exportLogs}
-            className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 flex items-center gap-2"
-            title="Export audit logs"
-          >
-            <span>📥</span> Export
+    <div className="space-y-5">
+
+      {/* ── Action bar ── */}
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="flex items-center gap-2">
+          <button onClick={fetchLogs}
+            className="px-4 py-2 border border-gray-200 text-sm font-medium rounded-lg hover:bg-gray-50 text-gray-600">
+            🔄 Refresh
           </button>
-          <button
-            onClick={clearFilters}
-            className="bg-gray-600 text-white px-4 py-2 rounded hover:bg-gray-700"
-          >
-            Clear Filters
-          </button>
-          <button
-            onClick={fetchLogs}
-            className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 flex items-center gap-2"
-          >
-            <span>🔄</span> Refresh
-          </button>
+          {activeFilterCount > 0 && (
+            <button onClick={clearFilters}
+              className="px-4 py-2 border border-gray-200 text-sm font-medium rounded-lg hover:bg-gray-50 text-gray-600">
+              ✕ Clear filters ({activeFilterCount})
+            </button>
+          )}
         </div>
+        <button onClick={exportLogs} disabled={exporting}
+          className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white text-sm font-semibold rounded-lg hover:bg-green-700 disabled:opacity-50">
+          {exporting ? '⏳ Exporting…' : '📥 Export CSV'}
+        </button>
       </div>
 
-      {/* Statistics Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-1">
-        <div className="bg-gradient-to-br from-blue-50 to-blue-100 p-4 rounded-lg border border-blue-200 shadow-sm">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-blue-600 font-medium">Total Activities</p>
-              <p className="text-3xl font-bold text-blue-800">{stats.total.toLocaleString()}</p>
-            </div>
-            <span className="text-4xl">📊</span>
-          </div>
-        </div>
-
-        <div className="bg-gradient-to-br from-green-50 to-green-100 p-4 rounded-lg border border-green-200 shadow-sm">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-green-600 font-medium">Last 24 Hours</p>
-              <p className="text-3xl font-bold text-green-800">{stats.recent24h}</p>
-            </div>
-            <span className="text-4xl">⏱️</span>
-          </div>
-        </div>
-
-        <div className="bg-gradient-to-br from-purple-50 to-purple-100 p-4 rounded-lg border border-purple-200 shadow-sm">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-purple-600 font-medium">Entity Types</p>
-              <p className="text-3xl font-bold text-purple-800">{Object.keys(stats.byEntity).length}</p>
-            </div>
-            <span className="text-4xl">🗂️</span>
-          </div>
-        </div>
-
-        <div className="bg-gradient-to-br from-orange-50 to-orange-100 p-4 rounded-lg border border-orange-200 shadow-sm">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-orange-600 font-medium">Action Types</p>
-              <p className="text-3xl font-bold text-orange-800">{Object.keys(stats.byAction).length}</p>
-            </div>
-            <span className="text-4xl">⚡</span>
-          </div>
-        </div>
-      </div>
-
-      {/* Filters Section */}
-      <div className="bg-white p-6 rounded-lg shadow-md mb-1 border border-gray-200">
-        <h3 className="font-semibold mb-4 text-lg flex items-center gap-2">
-          <span>🔍</span> Filter Activities
-        </h3>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
-          <div>
-            <label className="block text-sm font-medium mb-2 text-gray-700">Entity Type</label>
-            <select
-              value={filters.entity_type}
-              onChange={e => setFilters({ ...filters, entity_type: e.target.value })}
-              className="border border-gray-300 p-2 rounded w-full focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            >
-              <option value="">All Types</option>
-              {entityTypes.map(entity => (
-                <option key={entity.value} value={entity.value}>
-                  {entity.label}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium mb-2 text-gray-700">Action</label>
-            <select
-              value={filters.action}
-              onChange={e => setFilters({ ...filters, action: e.target.value })}
-              className="border border-gray-300 p-2 rounded w-full focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            >
-              <option value="">All Actions</option>
-              {actionTypes.map(action => (
-                <option key={action.value} value={action.value}>
-                  {action.label}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium mb-2 text-gray-700">Start Date</label>
-            <input
-              type="datetime-local"
-              value={filters.start_date}
-              onChange={e => setFilters({ ...filters, start_date: e.target.value })}
-              className="border border-gray-300 p-2 rounded w-full focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium mb-2 text-gray-700">End Date</label>
-            <input
-              type="datetime-local"
-              value={filters.end_date}
-              onChange={e => setFilters({ ...filters, end_date: e.target.value })}
-              className="border border-gray-300 p-2 rounded w-full focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium mb-2 text-gray-700">Search</label>
-            <input
-              type="text"
-              placeholder="Search activities..."
-              value={filters.search}
-              onChange={e => setFilters({ ...filters, search: e.target.value })}
-              className="border border-gray-300 p-2 rounded w-full focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            />
-          </div>
-        </div>
-      </div>
-
-      {/* Quick Stats by Action */}
-      <div className="bg-white p-4 rounded-lg shadow-md mb-1 border border-gray-200">
-        <h3 className="font-semibold mb-1 text-gray-800">Activity Breakdown</h3>
-        <div className="flex flex-wrap gap-3">
-          {actionTypes.map(actionType => {
-            const count = stats.byAction[actionType.value] || 0;
-            if (count === 0) return null;
-            return (
-              <div
-                key={actionType.value}
-                className={`px-3 py-2 rounded-lg border ${getActionBadge(actionType.value)} cursor-pointer hover:shadow-md transition-shadow`}
-                onClick={() => setFilters({ ...filters, action: actionType.value })}
-              >
-                <span className="font-semibold">{actionType.label}</span>
-                <span className="ml-2 text-sm">({count})</span>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-       
-      {/* Activity Timeline View (Optional) */}
-      {filteredLogs.length > 0 && (
-        <div className="mt-6 bg-white p-6 rounded-lg shadow-md border border-gray-200">
-          <h3 className="font-semibold mb-4 text-lg flex items-center gap-2">
-            <span>📅</span> Recent Activity Timeline
-          </h3>
-          <div className="space-y-3 max-h-96 overflow-y-auto">
-                {filteredLogs.slice(0, 10).map((log, index) => (
-                  <div key={index} className="flex items-start gap-3 p-3 hover:bg-gray-50 rounded transition-colors">
-                    <div className="flex-shrink-0">
-                      <span className="text-2xl">{getEntityIcon(log.entity_type)}</span>
-                    </div>
-                    <div className="flex-grow">
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className={`px-2 py-0.5 rounded text-xs font-bold ${getActionBadge(log.action)}`}>
-                          {log.action || 'unknown'}
-                        </span>
-                        <span className="text-xs text-gray-500">{formatTimestamp(log.timestamp)}</span>
-                      </div>
-                      <p className="text-sm text-gray-700">{log.user_action || 'No description available'}</p>
-                    </div>
-                  </div>
-                ))}
-          </div>
+      {/* ── Error ── */}
+      {error && (
+        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm flex items-center justify-between">
+          ⚠️ {error}
+          <button onClick={fetchLogs} className="underline ml-3">Retry</button>
         </div>
       )}
-         
-      {/* Audit Logs Table */}
-      <div className="bg-white shadow-lg rounded-lg border border-gray-200">
+
+      {/* ── Summary stat cards — only Total from API is reliable ── */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        {[
+          { label: 'Total Activities',  value: fmt(totalCount),                          color: 'text-blue-700',   bg: 'bg-blue-50   border-blue-200' },
+          { label: 'This Page',         value: fmt(logs.length),                         color: 'text-gray-700',   bg: 'bg-gray-50   border-gray-200' },
+          { label: 'Entity Types',      value: new Set(logs.map(l => l.entity_type)).size, color: 'text-purple-700', bg: 'bg-purple-50 border-purple-200' },
+          { label: 'Action Types',      value: Object.keys(pageActionCounts).length,     color: 'text-orange-700', bg: 'bg-orange-50 border-orange-200' },
+        ].map(s => (
+          <div key={s.label} className={`rounded-xl border p-4 ${s.bg}`}>
+            <p className={`text-2xl font-bold tabular-nums ${s.color}`}>{s.value}</p>
+            <p className="text-xs font-medium text-gray-500 mt-0.5">{s.label}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* ── Table with filters in toolbar ── */}
+      <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+
+        {/* Toolbar with all filter controls */}
+        <div className="px-5 py-4 border-b border-gray-100 space-y-3">
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-gray-700">
+              Activity Log
+              {totalCount > 0 && (
+                <span className="ml-2 text-xs font-normal text-gray-400">
+                  {fmt(totalCount)} total
+                  {activeFilterCount > 0 && ' (filtered)'}
+                </span>
+              )}
+            </h2>
+          </div>
+
+          {/* Filter row */}
+          <div className="flex flex-wrap gap-2">
+            {/* Entity type */}
+            <select value={filters.entity_type} onChange={e => setFilter('entity_type', e.target.value)}
+              className="px-3 py-1.5 text-sm border border-gray-200 rounded-lg bg-white text-gray-600 focus:ring-2 focus:ring-blue-500">
+              <option value="">All entities</option>
+              {ENTITY_TYPES.map(e => (
+                <option key={e.value} value={e.value}>{e.label}</option>
+              ))}
+            </select>
+
+            {/* Action */}
+            <select value={filters.action} onChange={e => setFilter('action', e.target.value)}
+              className="px-3 py-1.5 text-sm border border-gray-200 rounded-lg bg-white text-gray-600 focus:ring-2 focus:ring-blue-500">
+              <option value="">All actions</option>
+              {ACTION_TYPES.map(a => (
+                <option key={a} value={a} className="capitalize">{a}</option>
+              ))}
+            </select>
+
+            {/* Date range */}
+            <div className="flex items-center gap-1.5">
+              <input type="datetime-local" value={filters.start_date}
+                onChange={e => setFilter('start_date', e.target.value)}
+                className="px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500" />
+              <span className="text-gray-400 text-xs">→</span>
+              <input type="datetime-local" value={filters.end_date}
+                onChange={e => setFilter('end_date', e.target.value)}
+                className="px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500" />
+            </div>
+
+            {/* Search — sent to API, searches full dataset */}
+            <div className="relative flex-1 min-w-[180px]">
+              <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 text-xs">🔍</span>
+              <input type="text" placeholder="Search all activities…" value={filters.search}
+                onChange={e => setFilter('search', e.target.value)}
+                className="pl-7 pr-3 py-1.5 w-full text-sm border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500" />
+              {filters.search && (
+                <button onClick={() => setFilter('search', '')}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-300 hover:text-gray-500 text-xs">✕</button>
+              )}
+            </div>
+          </div>
+
+          {/* Action breakdown pills — clickable shortcuts for the action filter */}
+          {Object.keys(pageActionCounts).length > 0 && (
+            <div className="flex flex-wrap gap-1.5">
+              {Object.entries(pageActionCounts)
+                .sort(([,a],[,b]) => b - a)
+                .map(([action, count]) => (
+                  <button key={action} onClick={() => setFilter('action', filters.action === action ? '' : action)}
+                    className={`px-2.5 py-1 text-xs font-medium rounded-full border transition-colors
+                      ${filters.action === action
+                        ? (ACTION_STYLE[action] || 'bg-gray-100 text-gray-700') + ' ring-2 ring-offset-1 ring-blue-400'
+                        : (ACTION_STYLE[action] || 'bg-gray-100 text-gray-700')
+                      }`}>
+                    {action} <span className="opacity-70 ml-0.5">({count})</span>
+                  </button>
+                ))}
+            </div>
+          )}
+        </div>
+
+        {/* Table */}
         {loading ? (
-          <div className="p-12 text-center">
-            <div className="inline-block w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mb-4"></div>
-            <p className="text-gray-600 font-medium">Loading activities...</p>
+          <div className="flex items-center justify-center py-16 gap-3 text-gray-400">
+            <div className="animate-spin h-5 w-5 border-2 border-gray-300 border-t-blue-500 rounded-full" />
+            Loading activities…
+          </div>
+        ) : logs.length === 0 ? (
+          <div className="py-16 text-center">
+            <p className="text-3xl mb-2">🔍</p>
+            <p className="text-sm font-medium text-gray-700 mb-1">No activities found</p>
+            {activeFilterCount > 0 && (
+              <button onClick={clearFilters} className="text-xs text-blue-600 mt-1 hover:underline">
+                Clear filters
+              </button>
+            )}
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full table-auto text-sm">
-              <thead className="bg-gradient-to-r from-gray-50 to-gray-100 border-b-2 border-gray-200">
-                <tr>
-                  <th className="p-4 text-left font-semibold text-gray-700">Time</th>
-                  <th className="p-4 text-left font-semibold text-gray-700">Entity</th>
-                  <th className="p-4 text-left font-semibold text-gray-700">Action</th>
-                  <th className="p-4 text-left font-semibold text-gray-700">Description</th>
-                  <th className="p-4 text-left font-semibold text-gray-700">Changes</th>
-                  <th className="p-4 text-left font-semibold text-gray-700">Metadata</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredLogs.length === 0 ? (
-                  <tr>
-                    <td colSpan="6" className="p-12 text-center">
-                      <div className="text-gray-400 text-6xl mb-4">🔍</div>
-                      <p className="text-gray-500 font-medium text-lg">No activities found</p>
-                      <p className="text-gray-400 text-sm mt-2">Try adjusting your filters or search criteria</p>
-                    </td>
+          <>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="bg-gray-50 border-b border-gray-100">
+                    <th className="px-5 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-32">Time</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-32">Entity</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-24">Action</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Description</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-56">Changes</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-48">Metadata</th>
                   </tr>
-                ) : (
-                  filteredLogs.map((log, index) => (
-                    <tr
-                      key={index}
-                      className="border-t border-gray-100 hover:bg-blue-50 transition-colors"
-                    >
-                      <td className="p-4">
-                        <div className="flex flex-col">
-                          <span className="text-xs font-medium text-gray-600">
-                            {formatTimestamp(log.timestamp)}
-                          </span>
-                          <span className="text-xs text-gray-400 font-mono">
-                            {new Date(log.timestamp).toLocaleTimeString()}
-                          </span>
-                        </div>
+                </thead>
+                <tbody className="divide-y divide-gray-50">
+                  {logs.map((log, index) => (
+                    <tr key={index} className="hover:bg-gray-50 transition-colors">
+
+                      {/* Time */}
+                      <td className="px-5 py-3.5">
+                        <p className="text-xs font-medium text-gray-700">{fmtTime(log.timestamp)}</p>
+                        <p className="text-xs text-gray-400 font-mono mt-0.5">
+                          {new Date(log.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        </p>
                       </td>
 
-                      <td className="p-4">
-                        <div className="flex items-center gap-2">
-                          <span className="text-xl">{getEntityIcon(log.entity_type)}</span>
-                          <span className="text-xs font-medium bg-gray-100 px-2 py-1 rounded border border-gray-200">
-                            {log.entity_type}
-                          </span>
-                        </div>
-                      </td>
-
-                      <td className="p-4">
-                        <span className={`px-3 py-1 rounded-full text-xs font-bold border ${getActionBadge(log.action)}`}>
-                          {log.action?.toUpperCase() || 'UNKNOWN'}
-                        </span>
-                      </td>
-
-                      <td className="p-4 max-w-md">
-                        <div className="text-sm text-gray-700 line-clamp-2" title={log.user_action}>
-                          {log.user_action}
+                      {/* Entity */}
+                      <td className="px-4 py-3.5">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-base">{ENTITY_ICON[log.entity_type] || '📄'}</span>
+                          <span className="text-xs font-medium text-gray-700 capitalize">{log.entity_type}</span>
                         </div>
                         {log.entity_id && (
-                          <div className="text-xs text-gray-400 mt-1 font-mono">
-                            ID: {log.entity_id.substring(0, 8)}...
-                          </div>
+                          <p className="text-xs text-gray-400 font-mono mt-0.5">
+                            {log.entity_id.substring(0, 8)}…
+                          </p>
                         )}
                       </td>
 
-                      <td className="p-4">
-                        <div className="space-y-1 max-w-xs">
-                          {log.before_data && Object.keys(log.before_data).length > 0 && (
-                            <div className="bg-red-50 p-2 rounded border border-red-200">
-                              <span className="font-semibold text-red-700 text-xs">Before:</span>
-                              <div className="text-xs text-red-600 mt-1 max-h-20 overflow-auto">
-                                {JSON.stringify(log.before_data, null, 2)}
-                              </div>
-                            </div>
-                          )}
-                          {log.after_data && Object.keys(log.after_data).length > 0 && (
-                            <div className="bg-green-50 p-2 rounded border border-green-200">
-                              <span className="font-semibold text-green-700 text-xs">After:</span>
-                              <div className="text-xs text-green-600 mt-1 max-h-20 overflow-auto">
-                                {JSON.stringify(log.after_data, null, 2)}
-                              </div>
-                            </div>
-                          )}
-                        </div>
+                      {/* Action badge */}
+                      <td className="px-4 py-3.5">
+                        <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-semibold uppercase tracking-wide
+                          ${ACTION_STYLE[log.action] || 'bg-gray-100 text-gray-700'}`}>
+                          {log.action || '—'}
+                        </span>
                       </td>
 
-                      <td className="p-4">
-                        <div className="flex flex-wrap gap-1 max-w-xs">
-                          {log.metadata && Object.entries(log.metadata).map(([key, value]) => {
-                            if (!value || key === '_id') return null;
-                            return (
-                              <span
-                                key={key}
-                                className="text-xs bg-blue-50 text-blue-700 px-2 py-1 rounded border border-blue-200"
-                                title={`${key}: ${value}`}
-                              >
-                                {key}: {typeof value === 'object' ? JSON.stringify(value).substring(0, 20) + '...' : String(value).substring(0, 20)}
+                      {/* Description */}
+                      <td className="px-4 py-3.5 max-w-xs">
+                        <p className="text-sm text-gray-700 line-clamp-2" title={log.user_action}>
+                          {log.user_action || <span className="text-gray-400 italic">No description</span>}
+                        </p>
+                      </td>
+
+                      {/* Changes — readable diff, not raw JSON */}
+                      <td className="px-4 py-3.5">
+                        <ChangesDiff before={log.before_data} after={log.after_data} />
+                      </td>
+
+                      {/* Metadata */}
+                      <td className="px-4 py-3.5">
+                        {log.metadata && Object.keys(log.metadata).length > 0 ? (
+                          <div className="flex flex-wrap gap-1">
+                            {Object.entries(log.metadata)
+                              .filter(([k, v]) => v && k !== '_id')
+                              .slice(0, 3)
+                              .map(([key, value]) => (
+                                <span key={key}
+                                  className="text-xs bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded border border-blue-100"
+                                  title={`${key}: ${value}`}>
+                                  {key}: {String(value).substring(0, 15)}
+                                </span>
+                              ))}
+                            {Object.keys(log.metadata).filter(k => log.metadata[k] && k !== '_id').length > 3 && (
+                              <span className="text-xs text-gray-400">
+                                +{Object.keys(log.metadata).filter(k => log.metadata[k] && k !== '_id').length - 3}
                               </span>
-                            );
-                          })}
-                        </div>
+                            )}
+                          </div>
+                        ) : (
+                          <span className="text-gray-300 text-xs">—</span>
+                        )}
                       </td>
                     </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
+                  ))}
+                </tbody>
+              </table>
+            </div>
 
             {/* Pagination */}
-            {filteredLogs.length > 0 && (
-              <div className="p-4 border-t border-gray-200 flex justify-between items-center bg-gray-50">
-                <span className="text-sm text-gray-600">
-                  Showing <span className="font-semibold">{(pagination.page - 1) * pagination.limit + 1}</span> to{' '}
-                  <span className="font-semibold">{Math.min(pagination.page * pagination.limit, pagination.total)}</span> of{' '}
-                  <span className="font-semibold">{pagination.total.toLocaleString()}</span> activities
+            <div className="flex items-center justify-between px-5 py-3.5 border-t border-gray-100 bg-gray-50">
+              <p className="text-xs text-gray-500">
+                Showing <span className="font-semibold text-gray-700">{fmt(showFrom)}–{fmt(showTo)}</span> of{' '}
+                <span className="font-semibold text-gray-700">{fmt(totalCount)}</span> activities
+              </p>
+              <div className="flex items-center gap-1.5">
+                <button onClick={() => setPagination(p => ({ ...p, page: 1 }))}
+                  disabled={pagination.page === 1}
+                  className="px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg disabled:opacity-40 hover:bg-white transition-colors">
+                  First
+                </button>
+                <button onClick={() => setPagination(p => ({ ...p, page: Math.max(1, p.page - 1) }))}
+                  disabled={pagination.page === 1}
+                  className="px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg disabled:opacity-40 hover:bg-white transition-colors">
+                  ← Prev
+                </button>
+                <span className="px-3 py-1.5 bg-blue-600 text-white text-xs font-semibold rounded-lg">
+                  {pagination.page} / {totalPages}
                 </span>
-                <div className="flex gap-2 items-center">
-                  <button
-                    onClick={() => setPagination(prev => ({ ...prev, page: 1 }))}
-                    disabled={pagination.page === 1}
-                    className="px-3 py-1 border border-gray-300 rounded disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-100 text-sm"
-                  >
-                    First
-                  </button>
-                  <button
-                    onClick={() => setPagination(prev => ({ ...prev, page: Math.max(1, prev.page - 1) }))}
-                    disabled={pagination.page === 1}
-                    className="px-3 py-1 border border-gray-300 rounded disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-100 text-sm"
-                  >
-                    ← Previous
-                  </button>
-                  <span className="px-4 py-1 bg-blue-100 text-blue-800 rounded font-semibold text-sm">
-                    Page {pagination.page} of {Math.ceil(pagination.total / pagination.limit)}
-                  </span>
-                  <button
-                    onClick={() => setPagination(prev => ({ ...prev, page: prev.page + 1 }))}
-                    disabled={pagination.page >= Math.ceil(pagination.total / pagination.limit)}
-                    className="px-3 py-1 border border-gray-300 rounded disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-100 text-sm"
-                  >
-                    Next →
-                  </button>
-                  <button
-                    onClick={() => setPagination(prev => ({ ...prev, page: Math.ceil(pagination.total / pagination.limit) }))}
-                    disabled={pagination.page >= Math.ceil(pagination.total / pagination.limit)}
-                    className="px-3 py-1 border border-gray-300 rounded disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-100 text-sm"
-                  >
-                    Last
-                  </button>
-                </div>
+                <button onClick={() => setPagination(p => ({ ...p, page: p.page + 1 }))}
+                  disabled={pagination.page >= totalPages}
+                  className="px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg disabled:opacity-40 hover:bg-white transition-colors">
+                  Next →
+                </button>
+                <button onClick={() => setPagination(p => ({ ...p, page: totalPages }))}
+                  disabled={pagination.page >= totalPages}
+                  className="px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg disabled:opacity-40 hover:bg-white transition-colors">
+                  Last
+                </button>
               </div>
-            )}
-          </div>
+            </div>
+          </>
         )}
       </div>
     </div>

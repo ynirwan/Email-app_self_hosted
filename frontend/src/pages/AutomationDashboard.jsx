@@ -1,464 +1,528 @@
-// src/pages/AutomationDashboard.jsx - Enhanced Version
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useMemo } from "react";
 import {
-  Plus, Play, Pause, BarChart3, Mail, Users, Trash2, Edit,
-  TrendingUp, Clock, CheckCircle, AlertCircle, Copy, Eye
-} from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
-import API from '../api';
+  Plus,
+  Play,
+  Pause,
+  BarChart3,
+  Trash2,
+  Edit,
+  Copy,
+  Clock,
+} from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import API from "../api";
 
-const AutomationDashboard = () => {
+function useToast() {
+  const [toasts, setToasts] = useState([]);
+  const show = useCallback((message, type = "info") => {
+    const id = Date.now();
+    setToasts((p) => [...p, { id, message, type }]);
+    setTimeout(() => setToasts((p) => p.filter((t) => t.id !== id)), 4000);
+  }, []);
+  const dismiss = (id) => setToasts((p) => p.filter((t) => t.id !== id));
+  return { toasts, show, dismiss };
+}
+
+function ToastContainer({ toasts, dismiss }) {
+  return (
+    <div className="fixed top-4 right-4 z-50 space-y-2 pointer-events-none">
+      {toasts.map((t) => (
+        <div
+          key={t.id}
+          onClick={() => dismiss(t.id)}
+          className={`pointer-events-auto flex items-center gap-2 px-4 py-3 rounded-lg shadow-lg text-sm font-medium cursor-pointer max-w-sm
+            ${t.type === "success" ? "bg-green-600 text-white" : t.type === "error" ? "bg-red-600 text-white" : "bg-gray-800 text-white"}`}
+        >
+          {t.type === "success" ? "✓" : t.type === "error" ? "✕" : "ℹ"}{" "}
+          {t.message}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+const RateBar = ({ value, max = 60, color = "bg-blue-500" }) => (
+  <div className="flex items-center gap-2">
+    <div className="flex-1 bg-gray-100 rounded-full h-1.5 max-w-[60px]">
+      <div
+        className={`${color} h-1.5 rounded-full`}
+        style={{ width: `${Math.min((value / max) * 100, 100)}%` }}
+      />
+    </div>
+    <span className="text-xs tabular-nums text-gray-700 w-10">
+      {value.toFixed(1)}%
+    </span>
+  </div>
+);
+
+const STATUS_STYLE = {
+  active: "bg-green-100 text-green-800",
+  paused: "bg-yellow-100 text-yellow-800",
+  draft: "bg-gray-100  text-gray-700",
+};
+
+export default function AutomationDashboard() {
   const navigate = useNavigate();
   const [automations, setAutomations] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-  const [filterStatus, setFilterStatus] = useState('all'); // all, active, paused, draft
-  const [searchQuery, setSearchQuery] = useState('');
+  const [actionLoading, setActionLoading] = useState({});
+  const [filterStatus, setFilterStatus] = useState("all");
+  const [searchQuery, setSearchQuery] = useState("");
+  const { toasts, show: toast, dismiss } = useToast();
 
-  useEffect(() => {
-    fetchAutomations();
-  }, []);
+  const setRowBusy = (id, v) => setActionLoading((p) => ({ ...p, [id]: v }));
 
-  const fetchAutomations = async () => {
+  const fetchAutomations = useCallback(async () => {
     try {
       setLoading(true);
-      setError(null);
-
-      const response = await API.get('/automation/rules');
-
-      // ⭐ FIXED: Correct response structure handling
-      let actualAutomations = [];
-
-      if (response?.data?.rules && Array.isArray(response.data.rules)) {
-        actualAutomations = response.data.rules;
-      } else if (response?.rules && Array.isArray(response.rules)) {
-        actualAutomations = response.rules;
-      } else if (Array.isArray(response?.data)) {
-        actualAutomations = response.data;
-      } else if (Array.isArray(response)) {
-        actualAutomations = response;
-      } else {
-        actualAutomations = [];
-      }
-
-      setAutomations(actualAutomations);
-
-    } catch (error) {
-      setError('Failed to fetch automations');
+      const response = await API.get("/automation/rules");
+      const data = response?.data?.rules || response?.data || [];
+      setAutomations(Array.isArray(data) ? data : []);
+    } catch {
+      toast("Failed to load automations", "error");
       setAutomations([]);
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  const toggleAutomation = async (id, currentStatus) => {
-    const newStatus = currentStatus === 'active' ? 'paused' : 'active';
+  useEffect(() => {
+    fetchAutomations();
+  }, [fetchAutomations]);
+
+  const toggleAutomation = async (id, name, currentStatus) => {
+    const newStatus = currentStatus === "active" ? "paused" : "active";
+    setRowBusy(id, "toggle");
     try {
-
-      // ⭐ FIXED: Correct endpoint method
       await API.post(`/automation/rules/${id}/status`, { status: newStatus });
-
-      await fetchAutomations();
-    } catch (error) {
-      setError('Failed to update automation status');
-      setTimeout(() => setError(null), 3000);
+      toast(
+        `"${name}" ${newStatus === "active" ? "activated" : "paused"}`,
+        "success",
+      );
+      fetchAutomations();
+    } catch (err) {
+      toast(err.response?.data?.detail || "Failed to update status", "error");
+    } finally {
+      setRowBusy(id, null);
     }
   };
 
   const duplicateAutomation = async (automation) => {
+    setRowBusy(automation.id, "dup");
     try {
-      const duplicatedData = {
+      const payload = {
         ...automation,
         name: `${automation.name} (Copy)`,
         active: false,
-        status: 'draft'
+        status: "draft",
       };
-      delete duplicatedData.id;
-      delete duplicatedData._id;
-      delete duplicatedData.created_at;
-      delete duplicatedData.updated_at;
-      delete duplicatedData.emails_sent;
-      delete duplicatedData.open_rate;
-      delete duplicatedData.click_rate;
-
-      await API.post('/automation/rules', duplicatedData);
-      await fetchAutomations();
-    } catch (error) {
-      setError('Failed to duplicate automation');
-      setTimeout(() => setError(null), 3000);
+      [
+        "id",
+        "_id",
+        "created_at",
+        "updated_at",
+        "emails_sent",
+        "open_rate",
+        "click_rate",
+      ].forEach((k) => delete payload[k]);
+      await API.post("/automation/rules", payload);
+      toast(`"${automation.name}" duplicated as draft`, "success");
+      fetchAutomations();
+    } catch {
+      toast("Failed to duplicate automation", "error");
+    } finally {
+      setRowBusy(automation.id, null);
     }
   };
 
-  const deleteAutomation = async (id) => {
-    if (!window.confirm('Are you sure you want to delete this automation? This action cannot be undone.')) return;
-
+  const deleteAutomation = async (id, name) => {
+    if (!confirm(`Delete "${name}"? This cannot be undone.`)) return;
+    setRowBusy(id, "delete");
     try {
       await API.delete(`/automation/rules/${id}`);
-      await fetchAutomations(); // Refresh list after delete
-    } catch (error) {
-      setError('Failed to delete automation');
-      setTimeout(() => setError(null), 3000);
+      toast(`"${name}" deleted`, "success");
+      fetchAutomations();
+    } catch {
+      toast("Failed to delete automation", "error");
+    } finally {
+      setRowBusy(id, null);
     }
   };
 
-  // Filter and search automations
-  const filteredAutomations = Array.isArray(automations)
-    ? automations.filter(automation => {
-      // Status filter
-      if (filterStatus !== 'all' && automation.status !== filterStatus) {
-        return false;
-      }
+  const stats = useMemo(
+    () => ({
+      total: automations.length,
+      active: automations.filter((a) => a.status === "active").length,
+      paused: automations.filter((a) => a.status === "paused").length,
+      draft: automations.filter((a) => a.status === "draft").length,
+      totalSent: automations.reduce((s, a) => s + (a.emails_sent || 0), 0),
+      avgOpen:
+        automations.length > 0
+          ? automations.reduce((s, a) => s + (a.open_rate || 0), 0) /
+            automations.length
+          : 0,
+      avgClick:
+        automations.length > 0
+          ? automations.reduce((s, a) => s + (a.click_rate || 0), 0) /
+            automations.length
+          : 0,
+    }),
+    [automations],
+  );
 
-      // Search filter
-      if (searchQuery) {
-        const query = searchQuery.toLowerCase();
-        return (
-          automation.name.toLowerCase().includes(query) ||
-          automation.trigger.toLowerCase().includes(query)
-        );
-      }
+  const filtered = useMemo(() => {
+    let list = automations;
+    if (filterStatus !== "all")
+      list = list.filter((a) => a.status === filterStatus);
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      list = list.filter(
+        (a) =>
+          (a.name || "").toLowerCase().includes(q) ||
+          (a.trigger || "").toLowerCase().includes(q),
+      );
+    }
+    return list;
+  }, [automations, filterStatus, searchQuery]);
 
-      return true;
-    })
-    : [];
-
-  // Calculate stats
-  const stats = {
-    total: automations.length,
-    active: automations.filter(a => a.status === 'active').length,
-    paused: automations.filter(a => a.status === 'paused').length,
-    totalSent: automations.reduce((sum, a) => sum + (a.emails_sent || 0), 0),
-    avgOpenRate: automations.length > 0
-      ? (automations.reduce((sum, a) => sum + (a.open_rate || 0), 0) / automations.length)
-      : 0,
-    avgClickRate: automations.length > 0
-      ? (automations.reduce((sum, a) => sum + (a.click_rate || 0), 0) / automations.length)
-      : 0
-  };
-
-  if (loading) {
+  if (loading)
     return (
-      <div className="flex flex-col justify-center items-center p-8 min-h-screen">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mb-4"></div>
-        <span className="text-gray-600">Loading automations...</span>
+      <div className="flex items-center justify-center py-24 gap-3 text-gray-400">
+        <div className="animate-spin h-5 w-5 border-2 border-gray-300 border-t-blue-500 rounded-full" />
+        Loading automations…
       </div>
     );
-  }
 
   return (
-    <div className="space-y-8">
-      {/* Error Alert */}
-      {error && (
-        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg mb-6 flex items-start">
-          <AlertCircle className="mr-3 flex-shrink-0 mt-0.5" size={20} />
-          <div className="flex-1">
-            <p className="font-medium">Error</p>
-            <p className="text-sm mt-1">{error}</p>
-          </div>
-          <button
-            onClick={() => setError(null)}
-            className="text-red-600 hover:text-red-800 ml-4"
-          >
-            ✕
-          </button>
-        </div>
-      )}
+    <div className="space-y-6">
+      <ToastContainer toasts={toasts} dismiss={dismiss} />
 
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-8 gap-4">
-        <div>
-          <h1 className="text-3xl font-bold text-gray-900">Email Automation</h1>
-          <p className="text-gray-600 mt-1">Automate your email workflows and engage subscribers</p>
-        </div>
-        <div className="flex gap-3">
+      {/* action bar */}
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <button
+          onClick={() => navigate("/automation/create")}
+          className="flex items-center gap-2 px-5 py-2.5 bg-blue-600 text-white text-sm font-semibold rounded-lg hover:bg-blue-700 transition-colors"
+        >
+          <Plus size={16} /> Create Automation
+        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => navigate("/automation/analytics")}
+            className="flex items-center gap-2 px-4 py-2 border border-gray-200 text-sm font-medium rounded-lg hover:bg-gray-50 text-gray-600"
+          >
+            <BarChart3 size={14} /> Analytics
+          </button>
           <button
             onClick={fetchAutomations}
-            className="bg-gray-100 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-200 transition-colors"
+            className="px-4 py-2 border border-gray-200 text-sm font-medium rounded-lg hover:bg-gray-50 text-gray-600"
           >
             🔄 Refresh
           </button>
-          <button
-            onClick={() => navigate('/automation/create')}
-            className="bg-blue-600 text-white px-2 py-2 rounded-lg flex items-center gap-1 hover:bg-blue-700 transition-colors"
-          >
-            <Plus size={20} />
-            Create Automation
-          </button>
-          <button
-            onClick={() => navigate('/automation/analytics')}
-            className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700"
-          >
-            Analytics
-          </button>
         </div>
       </div>
 
-      {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-        <div className="bg-white p-6 rounded-lg shadow-sm border hover:shadow-md transition-shadow">
-          <div className="flex items-center gap-3">
-            <div className="p-3 bg-blue-100 rounded-lg">
-              <Mail className="text-blue-600" size={24} />
-            </div>
-            <div>
-              <p className="text-gray-600 text-sm">Active Automations</p>
-              <p className="text-2xl font-bold">{stats.active}</p>
-              <p className="text-xs text-gray-500 mt-1">of {stats.total} total</p>
-            </div>
+      {/* stat cards — consistent style with rest of app */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
+        {[
+          {
+            label: "Total",
+            value: stats.total,
+            bg: "bg-blue-50   border-blue-200",
+            color: "text-blue-700",
+          },
+          {
+            label: "Active",
+            value: stats.active,
+            bg: "bg-green-50  border-green-200",
+            color: "text-green-700",
+            pulse: stats.active > 0,
+          },
+          {
+            label: "Paused",
+            value: stats.paused,
+            bg: "bg-yellow-50 border-yellow-200",
+            color: "text-yellow-700",
+          },
+          {
+            label: "Draft",
+            value: stats.draft,
+            bg: "bg-gray-50   border-gray-200",
+            color: "text-gray-600",
+          },
+          {
+            label: "Emails Sent",
+            value: stats.totalSent.toLocaleString(),
+            bg: "bg-purple-50 border-purple-200",
+            color: "text-purple-700",
+          },
+          {
+            label: "Avg Open",
+            value: `${stats.avgOpen.toFixed(1)}%`,
+            bg: "bg-teal-50   border-teal-200",
+            color: "text-teal-700",
+          },
+          {
+            label: "Avg Click",
+            value: `${stats.avgClick.toFixed(1)}%`,
+            bg: "bg-orange-50 border-orange-200",
+            color: "text-orange-700",
+          },
+        ].map((s) => (
+          <div key={s.label} className={`rounded-xl border p-4 ${s.bg}`}>
+            <p
+              className={`text-2xl font-bold tabular-nums flex items-center gap-1.5 ${s.color}`}
+            >
+              {s.value}
+              {s.pulse && (
+                <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
+              )}
+            </p>
+            <p className="text-xs font-medium text-gray-500 mt-0.5">
+              {s.label}
+            </p>
           </div>
-        </div>
-
-        <div className="bg-white p-6 rounded-lg shadow-sm border hover:shadow-md transition-shadow">
-          <div className="flex items-center gap-3">
-            <div className="p-3 bg-green-100 rounded-lg">
-              <CheckCircle className="text-green-600" size={24} />
-            </div>
-            <div>
-              <p className="text-gray-600 text-sm">Total Emails Sent</p>
-              <p className="text-2xl font-bold">{stats.totalSent.toLocaleString()}</p>
-              <p className="text-xs text-gray-400 mt-1">all time</p>
-            </div>
-          </div>
-        </div>
-
-        <div className="bg-white p-6 rounded-lg shadow-sm border hover:shadow-md transition-shadow">
-          <div className="flex items-center gap-3">
-            <div className="p-3 bg-purple-100 rounded-lg">
-              <TrendingUp className="text-purple-600" size={24} />
-            </div>
-            <div>
-              <p className="text-gray-600 text-sm">Avg Open Rate</p>
-              <p className="text-2xl font-bold">{stats.avgOpenRate.toFixed(1)}%</p>
-              <p className="text-xs text-gray-500 mt-1">Across all automations</p>
-            </div>
-          </div>
-        </div>
-
-        <div className="bg-white p-6 rounded-lg shadow-sm border hover:shadow-md transition-shadow">
-          <div className="flex items-center gap-3">
-            <div className="p-3 bg-orange-100 rounded-lg">
-              <BarChart3 className="text-orange-600" size={24} />
-            </div>
-            <div>
-              <p className="text-gray-600 text-sm">Avg Click Rate</p>
-              <p className="text-2xl font-bold">{stats.avgClickRate.toFixed(1)}%</p>
-              <p className="text-xs text-gray-500 mt-1">Engagement metric</p>
-            </div>
-          </div>
-        </div>
+        ))}
       </div>
 
-      {/* Filters and Search */}
-      <div className="bg-white rounded-lg shadow-sm border p-4 mb-6">
-        <div className="flex flex-col sm:flex-row gap-4">
-          <div className="flex-1">
-            <input
-              type="text"
-              placeholder="🔍 Search automations by name or trigger..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            />
-          </div>
-          <div className="flex gap-2">
-            <button
-              onClick={() => setFilterStatus('all')}
-              className={`px-4 py-2 rounded-lg transition-colors ${filterStatus === 'all'
-                  ? 'bg-blue-600 text-white'
-                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                }`}
-            >
-              All ({stats.total})
-            </button>
-            <button
-              onClick={() => setFilterStatus('active')}
-              className={`px-4 py-2 rounded-lg transition-colors ${filterStatus === 'active'
-                  ? 'bg-green-600 text-white'
-                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                }`}
-            >
-              Active ({stats.active})
-            </button>
-            <button
-              onClick={() => setFilterStatus('paused')}
-              className={`px-4 py-2 rounded-lg transition-colors ${filterStatus === 'paused'
-                  ? 'bg-yellow-600 text-white'
-                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                }`}
-            >
-              Paused ({stats.paused})
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {/* Automations List */}
-      <div className="bg-white rounded-lg shadow-sm border overflow-hidden">
-        <div className="px-6 py-4 border-b border-gray-200 flex justify-between items-center">
-          <h2 className="text-lg font-semibold text-gray-900">
-            Your Automations {filteredAutomations.length > 0 && `(${filteredAutomations.length})`}
-          </h2>
-        </div>
-
-        {filteredAutomations.length === 0 ? (
-          <div className="text-center py-16">
-            <Mail size={64} className="mx-auto text-gray-300 mb-4" />
-            {searchQuery || filterStatus !== 'all' ? (
-              <>
-                <h3 className="text-lg font-medium text-gray-900 mb-2">No automations found</h3>
-                <p className="text-gray-600 mb-6">Try adjusting your filters or search query</p>
-                <button
-                  onClick={() => {
-                    setSearchQuery('');
-                    setFilterStatus('all');
-                  }}
-                  className="bg-gray-100 hover:bg-gray-200 px-4 py-2 rounded-lg"
-                >
-                  Clear Filters
-                </button>
-              </>
-            ) : (
-              <>
-                <h3 className="text-lg font-medium text-gray-900 mb-2">No automations yet</h3>
-                <p className="text-gray-600 mb-6">Create your first email automation to engage subscribers automatically</p>
-                <button
-                  onClick={() => navigate('/automation/create')}
-                  className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700"
-                >
-                  Create Your First Automation
-                </button>
-              </>
+      {/* table — filters merged into toolbar */}
+      <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+        <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-4 border-b border-gray-100">
+          <h2 className="text-sm font-semibold text-gray-700">
+            Automations
+            {filtered.length !== automations.length && (
+              <span className="ml-2 text-xs font-normal text-gray-400">
+                ({filtered.length} of {automations.length})
+              </span>
             )}
+          </h2>
+          <div className="flex items-center gap-2 flex-wrap">
+            {/* status filter tabs */}
+            <div className="flex border border-gray-200 rounded-lg overflow-hidden text-xs font-medium">
+              {[
+                { value: "all", label: `All (${stats.total})` },
+                { value: "active", label: `Active (${stats.active})` },
+                { value: "paused", label: `Paused (${stats.paused})` },
+                { value: "draft", label: `Draft (${stats.draft})` },
+              ].map((opt) => (
+                <button
+                  key={opt.value}
+                  onClick={() => setFilterStatus(opt.value)}
+                  className={`px-3 py-1.5 transition-colors ${filterStatus === opt.value ? "bg-blue-600 text-white" : "text-gray-600 hover:bg-gray-50"}`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+            {/* search */}
+            <div className="relative">
+              <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 text-xs">
+                🔍
+              </span>
+              <input
+                type="text"
+                placeholder="Search…"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pl-7 pr-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 w-44"
+              />
+              {searchQuery && (
+                <button
+                  onClick={() => setSearchQuery("")}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-300 hover:text-gray-500 text-xs"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {automations.length === 0 ? (
+          <div className="py-16 text-center">
+            <p className="text-3xl mb-2">⚡</p>
+            <p className="text-sm font-medium text-gray-700 mb-1">
+              No automations yet
+            </p>
+            <p className="text-xs text-gray-400 mb-4">
+              Create your first automation to engage subscribers automatically
+            </p>
+            <button
+              onClick={() => navigate("/automation/create")}
+              className="px-4 py-2 bg-blue-600 text-white text-sm font-semibold rounded-lg hover:bg-blue-700"
+            >
+              Create Automation
+            </button>
+          </div>
+        ) : filtered.length === 0 ? (
+          <div className="py-12 text-center">
+            <p className="text-sm text-gray-500">
+              No automations match your filters
+            </p>
+            <button
+              onClick={() => {
+                setSearchQuery("");
+                setFilterStatus("all");
+              }}
+              className="text-xs text-blue-600 mt-2 hover:underline"
+            >
+              Clear filters
+            </button>
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-gray-50 border-b border-gray-100">
+                  <th className="px-5 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Name
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Trigger
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-24">
                     Status
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider w-16">
                     Steps
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider w-20">
                     Sent
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Performance
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-40">
+                    <span className="text-green-600">Open</span> /{" "}
+                    <span className="text-purple-600">Click</span>
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Actions
                   </th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-200 bg-white">
-                {filteredAutomations.map((automation) => (
-                  <tr key={automation.id} className="hover:bg-gray-50 transition-colors">
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="flex items-center">
-                        <div>
-                          <div className="font-medium text-gray-900">{automation.name}</div>
-                          <div className="text-sm text-gray-500 flex items-center gap-1">
-                            <Clock size={12} />
-                            {new Date(automation.created_at).toLocaleDateString()}
-                          </div>
+              <tbody className="divide-y divide-gray-50">
+                {filtered.map((a) => {
+                  const busy = actionLoading[a.id];
+                  return (
+                    <tr
+                      key={a.id}
+                      className="hover:bg-gray-50 transition-colors"
+                    >
+                      <td className="px-5 py-3.5">
+                        <p className="font-medium text-gray-900 truncate max-w-[180px]">
+                          {a.name}
+                        </p>
+                        <p className="text-xs text-gray-400 flex items-center gap-1 mt-0.5">
+                          <Clock size={10} />
+                          {new Date(a.created_at).toLocaleDateString()}
+                        </p>
+                      </td>
+                      <td className="px-4 py-3.5">
+                        <span className="px-2 py-0.5 text-xs rounded-full bg-blue-100 text-blue-800 capitalize whitespace-nowrap">
+                          {(a.trigger || "unknown").replace(/_/g, " ")}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3.5">
+                        <span
+                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${STATUS_STYLE[a.status] || STATUS_STYLE.draft}`}
+                        >
+                          {a.status === "active" && (
+                            <span className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse" />
+                          )}
+                          {a.status}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3.5 text-right text-xs tabular-nums text-gray-600">
+                        {a.steps?.length || 0}
+                      </td>
+                      <td className="px-4 py-3.5 text-right text-xs tabular-nums font-medium text-gray-700">
+                        {(a.emails_sent || 0).toLocaleString()}
+                      </td>
+                      <td className="px-4 py-3.5 space-y-1.5">
+                        <RateBar
+                          value={a.open_rate || 0}
+                          color="bg-green-500"
+                        />
+                        <RateBar
+                          value={a.click_rate || 0}
+                          color="bg-purple-500"
+                        />
+                      </td>
+                      <td className="px-4 py-3.5">
+                        <div className="flex items-center justify-end gap-1.5 flex-wrap">
+                          <button
+                            onClick={() =>
+                              toggleAutomation(a.id, a.name, a.status)
+                            }
+                            disabled={!!busy}
+                            className={`px-2.5 py-1.5 text-xs font-medium border rounded-lg transition-colors disabled:opacity-50 flex items-center gap-1
+                              ${a.status === "active" ? "border-yellow-200 hover:bg-yellow-50 text-yellow-700" : "border-green-200 hover:bg-green-50 text-green-700"}`}
+                          >
+                            {busy === "toggle" ? (
+                              "⏳"
+                            ) : a.status === "active" ? (
+                              <>
+                                <Pause size={11} />
+                                Pause
+                              </>
+                            ) : (
+                              <>
+                                <Play size={11} />
+                                Activate
+                              </>
+                            )}
+                          </button>
+                          <button
+                            onClick={() => navigate(`/automation/edit/${a.id}`)}
+                            className="px-2.5 py-1.5 text-xs font-medium border border-gray-200 rounded-lg hover:bg-gray-50 text-gray-600 flex items-center gap-1"
+                          >
+                            <Edit size={11} />
+                            Edit
+                          </button>
+                          <button
+                            onClick={() =>
+                              navigate(`/automation/analytics/${a.id}`)
+                            }
+                            className="px-2.5 py-1.5 text-xs font-medium border border-purple-200 rounded-lg hover:bg-purple-50 text-purple-700 flex items-center gap-1"
+                          >
+                            <BarChart3 size={11} />
+                            Stats
+                          </button>
+                          <button
+                            onClick={() => duplicateAutomation(a)}
+                            disabled={!!busy}
+                            className="px-2.5 py-1.5 text-xs font-medium border border-gray-200 rounded-lg hover:bg-gray-50 text-gray-600 disabled:opacity-50 flex items-center gap-1"
+                          >
+                            {busy === "dup" ? (
+                              "⏳"
+                            ) : (
+                              <>
+                                <Copy size={11} />
+                                Clone
+                              </>
+                            )}
+                          </button>
+                          <button
+                            onClick={() => deleteAutomation(a.id, a.name)}
+                            disabled={!!busy}
+                            className="px-2.5 py-1.5 text-xs font-medium border border-red-200 rounded-lg hover:bg-red-50 text-red-600 disabled:opacity-50 flex items-center gap-1"
+                          >
+                            {busy === "delete" ? (
+                              "⏳"
+                            ) : (
+                              <>
+                                <Trash2 size={11} />
+                                Delete
+                              </>
+                            )}
+                          </button>
                         </div>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <span className="px-3 py-1 text-xs rounded-full bg-blue-100 text-blue-800 capitalize">
-                        {automation.trigger?.replace('_', ' ') || 'Unknown'}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <span className={`px-3 py-1 text-xs rounded-full font-medium inline-flex items-center gap-1 ${automation.status === 'active' ? 'bg-green-100 text-green-800' :
-                          automation.status === 'paused' ? 'bg-yellow-100 text-yellow-800' :
-                            'bg-gray-100 text-gray-800'
-                        }`}>
-                        {automation.status === 'active' && <Play size={10} />}
-                        {automation.status === 'paused' && <Pause size={10} />}
-                        {automation.status}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {automation.steps?.length || 0} emails
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 font-medium">
-                      {(automation.emails_sent || 0).toLocaleString()}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="text-sm">
-                        <div className="flex items-center gap-2">
-                          <div className="text-gray-900 font-medium">
-                            {(automation.open_rate || 0).toFixed(1)}%
-                          </div>
-                          <span className="text-gray-400">opens</span>
-                        </div>
-                        <div className="flex items-center gap-2 mt-1">
-                          <div className="text-gray-600">
-                            {(automation.click_rate || 0).toFixed(1)}%
-                          </div>
-                          <span className="text-gray-400">clicks</span>
-                        </div>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm">
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={() => toggleAutomation(automation.id, automation.status)}
-                          className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                          title={automation.status === 'active' ? 'Pause' : 'Activate'}
-                        >
-                          {automation.status === 'active' ? <Pause size={16} /> : <Play size={16} />}
-                        </button>
-                        <button
-                          onClick={() => navigate(`/automation/edit/${automation.id}`)}
-                          className="p-2 text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
-                          title="Edit"
-                        >
-                          <Edit size={16} />
-                        </button>
-                        <button
-                          onClick={() => navigate(`/automation/analytics/${automation.id}`)}
-                          className="p-2 text-purple-600 hover:bg-purple-50 rounded-lg transition-colors"
-                          title="Analytics"
-                        >
-                          <BarChart3 size={16} />
-                        </button>
-                        <button
-                          onClick={() => duplicateAutomation(automation)}
-                          className="p-2 text-green-600 hover:bg-green-50 rounded-lg transition-colors"
-                          title="Duplicate"
-                        >
-                          <Copy size={16} />
-                        </button>
-                        <button
-                          onClick={() => deleteAutomation(automation.id)}
-                          className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                          title="Delete"
-                        >
-                          <Trash2 size={16} />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
         )}
       </div>
-
-
     </div>
   );
-};
-
-export default AutomationDashboard;
+}
