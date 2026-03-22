@@ -7,7 +7,6 @@
 #      test["content_snapshot"] (written at start_ab_test time).
 #      Falls back to live template fetch if snapshot absent
 #      (backward compatibility for existing running tests).
-#   2. template_processor import retained but only used in fallback.
 #   3. All other tasks (batch, expiry, auto_complete) unchanged.
 # ============================================================
 
@@ -24,7 +23,7 @@ from database import (
 )
 from routes.smtp_services.email_service_factory import get_email_service_sync
 from celery_app import celery_app
-from tasks.template_cache import template_processor  # fallback only
+from tasks.campaign.template_renderer import template_renderer
 
 logger = logging.getLogger(__name__)
 
