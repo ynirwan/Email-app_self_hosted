@@ -1,22 +1,27 @@
 # backend/tasks/campaign/email_campaign_tasks.py
-# SNAPSHOT ARCHITECTURE — no template cache, no Redis template reads
+# PRODUCTION-READY EMAIL CAMPAIGN TASKS WITH SNAPSHOT SUPPORT
 #
-# Send flow:
-#   1. /send route (or start_campaign) writes content_snapshot to campaign doc.
-#   2. _get_snapshot() reads it once per worker, caches in _snapshot_cache (Python dict).
-#   3. template_renderer.personalize_template() does Jinja2 / {{ var }} replacement.
-#   4. No Redis, no template DB reads after first email per worker.
-#
-# Also: suppression check (step 4b), subscriber projection, start_campaign snapshot.
+# KEY CHANGES vs original:
+#   - Module-level _campaign_meta_cache and _snapshot_cache replace
+#     per-email template fetches.
+#   - _get_campaign_meta(campaign_id): DB read once per worker per campaign,
+#     then memory only. Projection: only fields needed for sending.
+#   - _get_snapshot(campaign_id): reads content_snapshot once per worker
+#     per campaign. Falls back to live template_processor for old campaigns
+#     that have no snapshot (backward compatibility).
+#   - send_single_campaign_email: Step 5 now uses snapshot instead of
+#     template_cache removed — snapshot used instead, direct Mongo fetch as fallback.
+#   - finalize_campaign: evicts both caches on completion.
+#   - Everything else unchanged.
 
 import logging
 import time
+import redis as _redis_module
 from datetime import datetime, timedelta
 from typing import Dict, List, Any, Optional
 from bson import ObjectId
 from celery_app import celery_app
 
-from core.config import settings
 from tasks.task_config import task_settings
 from database import (
     get_sync_campaigns_collection,
@@ -24,13 +29,14 @@ from database import (
     get_sync_subscribers_collection,
     get_sync_templates_collection,
 )
-from .resource_manager import resource_manager
-from .rate_limiter import rate_limiter, EmailProvider, RateLimitResult
-from .dlq_manager import dlq_manager
-from .campaign_control import campaign_controller
+from tasks.campaign.resource_manager import resource_manager
+from tasks.campaign.rate_limiter import rate_limiter, EmailProvider, RateLimitResult
+from tasks.campaign.dlq_manager import dlq_manager
+from tasks.campaign.campaign_control import campaign_controller
+from tasks.campaign.metrics_collector import metrics_collector
 from .template_renderer import template_renderer
-from .provider_manager import email_provider_manager
-from .audit_logger import (
+from tasks.campaign.provider_manager import email_provider_manager
+from tasks.campaign.audit_logger import (
     log_campaign_event,
     log_email_event,
     AuditEventType,
@@ -112,14 +118,12 @@ def _get_snapshot(campaign_id: str) -> Optional[Dict[str, Any]]:
         return None
 
     logger.warning(
-        f"Campaign {campaign_id}: no snapshot — fetching template directly (old campaign)"
+        f"Campaign {campaign_id}: content_snapshot absent — fetching template directly (old campaign)"
     )
     templates_collection = get_sync_templates_collection()
     template = templates_collection.find_one({"_id": ObjectId(template_id)})
     if not template:
-        logger.error(
-            f"Campaign {campaign_id}: fallback template {template_id} not found"
-        )
+        logger.error(f"Campaign {campaign_id}: fallback template {template_id} not found")
         return None
 
     html_content = template.get("html_content", "")
@@ -127,22 +131,19 @@ def _get_snapshot(campaign_id: str) -> Optional[Dict[str, Any]]:
         content_json = template.get("content_json", {})
         if content_json:
             from tasks.campaign.snapshot_utils import _extract_html_from_content_json
-
             html_content = _extract_html_from_content_json(content_json)
 
     if not html_content:
-        logger.error(
-            f"Campaign {campaign_id}: fallback template {template_id} has no HTML"
-        )
+        logger.error(f"Campaign {campaign_id}: fallback template has no HTML")
         return None
 
     result = {
-        "html_content": html_content,
-        "text_content": template.get("text_content", ""),
-        "subject": template.get("subject", ""),
-        "field_map": doc.get("field_map", {}),
+        "html_content":    html_content,
+        "text_content":    template.get("text_content", ""),
+        "subject":         template.get("subject", ""),
+        "field_map":       doc.get("field_map", {}),
         "fallback_values": doc.get("fallback_values", {}),
-        "from_snapshot": False,
+        "from_snapshot":   False,
     }
     _snapshot_cache[campaign_id] = result
     return result
@@ -237,6 +238,23 @@ def log_email_status(
 # ============================================================
 
 
+def _decrement_queued(campaign_id: str):
+    """
+    Decrement queued_count by 1, floored at 0.
+    Uses findAndModify-style update to avoid negative values.
+    """
+    try:
+        col = get_sync_campaigns_collection()
+        oid = ObjectId(campaign_id)
+        # Decrement only if current value > 0
+        col.update_one(
+            {"_id": oid, "queued_count": {"$gt": 0}},
+            {"$inc": {"queued_count": -1}}
+        )
+    except Exception:
+        pass  # best-effort
+
+
 @celery_app.task(
     bind=True,
     max_retries=task_settings.MAX_EMAIL_RETRIES,
@@ -254,6 +272,7 @@ def send_single_campaign_email(self, campaign_id: str, subscriber_id: str):
         )
         if not can_process:
             if reason == "campaign_paused":
+                _decrement_queued(campaign_id)
                 return {
                     "status": "paused",
                     "reason": reason,
@@ -264,6 +283,7 @@ def send_single_campaign_email(self, campaign_id: str, subscriber_id: str):
                     countdown=60, exc=Exception(f"System overloaded: {reason}")
                 )
             else:
+                _decrement_queued(campaign_id)
                 return {
                     "status": "resource_unavailable",
                     "reason": reason,
@@ -277,27 +297,32 @@ def send_single_campaign_email(self, campaign_id: str, subscriber_id: str):
         # ── STEP 2: CAMPAIGN STATUS (from cache) ─────────────────────────────
         campaign_meta = _get_campaign_meta(campaign_id)
         if not campaign_meta:
+            _decrement_queued(campaign_id)
             return {"status": "failed", "reason": "campaign_not_found"}
 
         if (
             campaign_controller.is_campaign_paused(campaign_id)
             or campaign_meta.get("status") == "paused"
         ):
+            _decrement_queued(campaign_id)
             return {"status": "paused", "reason": "campaign_paused"}
 
         if (
             campaign_controller.is_campaign_stopped(campaign_id)
             or campaign_meta.get("status") == "stopped"
         ):
+            _decrement_queued(campaign_id)
             return {"status": "stopped", "reason": "campaign_stopped"}
 
         # ── STEP 3: SUBSCRIBER ───────────────────────────────────────────────
         subscriber = subscribers_collection.find_one({"_id": ObjectId(subscriber_id)})
         if not subscriber:
+            _decrement_queued(campaign_id)
             return {"status": "failed", "reason": "subscriber_not_found"}
 
         recipient_email = subscriber.get("email")
         if not recipient_email:
+            _decrement_queued(campaign_id)
             return {"status": "failed", "reason": "email_missing"}
 
         # ── STEP 4: DUPLICATE CHECK ──────────────────────────────────────────
@@ -310,20 +335,22 @@ def send_single_campaign_email(self, campaign_id: str, subscriber_id: str):
             {"_id": 1},
         )
         if existing_sent:
+            _decrement_queued(campaign_id)
+            campaigns_collection.update_one(
+                {"_id": ObjectId(campaign_id)},
+                {"$inc": {"processed_count": 1}}
+            )
             return {"status": "skipped", "reason": "already_sent"}
 
         # ── STEP 4b: SUPPRESSION CHECK ───────────────────────────────────────
         from database import get_sync_suppressions_collection
-
-        if get_sync_suppressions_collection().find_one(
-            {"email": recipient_email}, {"_id": 1}
-        ):
-            logger.debug(f"Skipping suppressed email: {recipient_email}")
-            return {
-                "status": "skipped",
-                "reason": "suppressed",
-                "email": recipient_email,
-            }
+        if get_sync_suppressions_collection().find_one({"email": recipient_email}, {"_id": 1}):
+            _decrement_queued(campaign_id)
+            campaigns_collection.update_one(
+                {"_id": ObjectId(campaign_id)},
+                {"$inc": {"processed_count": 1}}
+            )
+            return {"status": "skipped", "reason": "suppressed", "email": recipient_email}
 
         # ── STEP 5: RATE LIMITING ────────────────────────────────────────────
         provider_type = EmailProvider.DEFAULT
@@ -363,12 +390,14 @@ def send_single_campaign_email(self, campaign_id: str, subscriber_id: str):
                         "reason": "circuit_breaker_open",
                         "dlq_result": dlq_result,
                     }
+                _decrement_queued(campaign_id)
                 return {"status": "failed", "reason": "circuit_breaker_open"}
 
         # ── STEP 6: GET SNAPSHOT (cached per worker) ─────────────────────────
         snap = _get_snapshot(campaign_id)
         if not snap or not snap.get("html_content"):
             logger.error(f"No usable snapshot or template for campaign {campaign_id}")
+            _decrement_queued(campaign_id)
             return {"status": "failed", "reason": "template_missing"}
 
         field_map = snap["field_map"]
@@ -465,6 +494,7 @@ def send_single_campaign_email(self, campaign_id: str, subscriber_id: str):
 
         if "error" in personalized:
             logger.error(f"Template personalization failed: {personalized['error']}")
+            _decrement_queued(campaign_id)
             return {"status": "failed", "reason": "template_personalization_failed"}
 
         # ── STEP 8: SEND ─────────────────────────────────────────────────────
@@ -664,6 +694,31 @@ def send_single_campaign_email(self, campaign_id: str, subscriber_id: str):
 def send_campaign_batch(
     self, campaign_id: str, batch_size: int = None, last_id: str = None
 ):
+    """
+    Process one batch of subscribers.
+
+    Redis lock: only ONE batch per campaign runs at a time.
+    If a batch is already running, this task exits immediately.
+    This prevents duplicate queueing and negative queued_count.
+    """
+    # ── Redis lock — one batch per campaign at a time ─────────────────────────
+    try:
+        _redis = _redis_module.Redis.from_url(task_settings.REDIS_URL, decode_responses=True)
+        lock_key = f"campaign_batch_lock:{campaign_id}"
+        # TTL = soft_time_limit + buffer so lock auto-expires if worker crashes
+        acquired = _redis.set(lock_key, self.request.id, nx=True, ex=360)
+        if not acquired:
+            running_task = _redis.get(lock_key)
+            logger.info(
+                f"Batch lock held by task {running_task} for campaign {campaign_id} — skipping duplicate"
+            )
+            return {"status": "skipped_duplicate_batch", "campaign_id": campaign_id, "lock_held_by": running_task}
+    except Exception as lock_err:
+        # Redis unavailable — continue without lock (degraded mode)
+        logger.warning(f"Could not acquire batch lock for {campaign_id}: {lock_err}")
+        _redis = None
+        lock_key = None
+
     try:
         start_time = time.time()
         if not batch_size:
@@ -695,8 +750,11 @@ def send_campaign_batch(
                 "campaign_id": campaign_id,
             }
 
-        if campaign_controller.is_campaign_paused(campaign_id):
-            return {"status": "paused", "campaign_id": campaign_id}
+        # Hard stop if paused — do not queue any new emails.
+        # resume_campaign will fire a fresh send_campaign_batch when ready.
+        if campaign.get("status") == "paused" or campaign_controller.is_campaign_paused(campaign_id):
+            return {"status": "paused", "reason": "campaign_paused", "campaign_id": campaign_id}
+
         if campaign_controller.is_campaign_stopped(campaign_id):
             return {"status": "stopped", "campaign_id": campaign_id}
 
@@ -705,11 +763,7 @@ def send_campaign_batch(
         if not subscribers:
             processed_count = campaign.get("processed_count", 0)
             target_count = campaign.get("target_list_count", 0)
-            # Only finalize when pagination exhausted or target truly met.
-            # Never finalize when target_count=0 (means it was never computed).
-            if last_id is not None or (
-                target_count > 0 and processed_count >= target_count
-            ):
+            if processed_count >= target_count or not target_count:
                 finalize_result = finalize_campaign(campaign_id)
                 return {
                     "status": "campaign_completed",
@@ -778,7 +832,7 @@ def send_campaign_batch(
             next_task_id = next_task.id
 
         execution_time = time.time() - start_time
-        return {
+        result = {
             "status": "batch_processed",
             "campaign_id": campaign_id,
             "batch_size": len(new_subscribers),
@@ -788,6 +842,7 @@ def send_campaign_batch(
             "execution_time": execution_time,
             "last_subscriber_id": str(subscribers[-1]["_id"]) if subscribers else None,
         }
+        return result
 
     except Exception as e:
         logger.error(f"Batch processing failed for {campaign_id}: {e}")
@@ -798,13 +853,31 @@ def send_campaign_batch(
             "last_id": last_id,
         }
 
+    finally:
+        # Always release lock so the next batch can run
+        try:
+            if _redis and lock_key:
+                # Only delete if we still own it (another task may have taken it)
+                current = _redis.get(lock_key)
+                if current == self.request.id:
+                    _redis.delete(lock_key)
+        except Exception:
+            pass
+
 
 def get_subscribers_for_campaign(
     campaign_id: str, batch_size: int, last_id: str = None
 ) -> List[Dict]:
+    """
+    Fetch next batch of subscribers for a campaign.
+    Excludes emails that are in the suppressions collection (unsubscribed,
+    bounced, spam complaints) so they are never fetched or queued.
+    """
     try:
-        campaigns_collection = get_sync_campaigns_collection()
-        subscribers_collection = get_sync_subscribers_collection()
+        from database import get_sync_suppressions_collection
+        campaigns_collection    = get_sync_campaigns_collection()
+        subscribers_collection  = get_sync_subscribers_collection()
+        suppressions_collection = get_sync_suppressions_collection()
 
         campaign = campaigns_collection.find_one(
             {"_id": ObjectId(campaign_id)}, {"target_lists": 1, "target_segments": 1}
@@ -812,8 +885,24 @@ def get_subscribers_for_campaign(
         if not campaign:
             return []
 
+        # Build suppressed email set for this batch window
+        # Fetch all suppressed emails upfront (cached in memory for this batch)
+        suppressed_emails = set(
+            doc["email"] for doc in
+            suppressions_collection.find({}, {"email": 1, "_id": 0})
+            if doc.get("email")
+        )
+
         target_lists = campaign.get("target_lists", [])
-        query = {"email": {"$exists": True, "$ne": ""}, "status": "active"}
+        query = {
+            "email": {"$exists": True, "$ne": ""},
+            "status": "active",
+        }
+
+        # Exclude suppressed emails at DB level when the set is small enough
+        # (MongoDB $nin has a practical limit; for large sets we filter in Python)
+        if suppressed_emails and len(suppressed_emails) <= 5000:
+            query["email"] = {"$nin": list(suppressed_emails), "$exists": True, "$ne": ""}
 
         if target_lists:
             query["$or"] = [
@@ -824,18 +913,16 @@ def get_subscribers_for_campaign(
         if last_id:
             query["_id"] = {"$gt": ObjectId(last_id)}
 
-        projection = {
-            "_id": 1,
-            "email": 1,
-            "status": 1,
-            "standard_fields": 1,
-            "custom_fields": 1,
-        }
-        return list(
-            subscribers_collection.find(query, projection)
-            .sort("_id", 1)
-            .limit(batch_size)
+        projection = {"_id": 1, "email": 1, "status": 1, "standard_fields": 1, "custom_fields": 1}
+        subscribers = list(
+            subscribers_collection.find(query, projection).sort("_id", 1).limit(batch_size)
         )
+
+        # Python-side filter for large suppression sets
+        if suppressed_emails and len(suppressed_emails) > 5000:
+            subscribers = [s for s in subscribers if s.get("email") not in suppressed_emails]
+
+        return subscribers
 
     except Exception as e:
         logger.error(f"Failed to get subscribers for campaign {campaign_id}: {e}")
@@ -849,6 +936,17 @@ def finalize_campaign(campaign_id: str) -> Dict[str, Any]:
         email_logs_collection = get_sync_email_logs_collection()
 
         campaign = campaigns_collection.find_one({"_id": ObjectId(campaign_id)})
+        if not campaign:
+            return {"error": "campaign_not_found"}
+
+        # Guard: don't finalize while tasks are still in flight.
+        # queued_count > 0 means some send_single tasks haven't completed yet.
+        queued_count = campaign.get("queued_count", 0)
+        if queued_count > 0:
+            logger.warning(
+                f"finalize_campaign called for {campaign_id} but queued_count={queued_count} — deferring"
+            )
+            return {"status": "deferred", "reason": "tasks_still_queued", "queued_count": queued_count}
 
         if campaign and campaign.get("stop_type") == "graceful":
             campaigns_collection.update_one(
@@ -869,9 +967,20 @@ def finalize_campaign(campaign_id: str) -> Dict[str, Any]:
         sent_count = status_counts.get("sent", 0)
         delivered_count = status_counts.get("delivered", 0)
         failed_count = status_counts.get("failed", 0)
-        final_status = (
-            "completed" if (sent_count > 0 or delivered_count > 0) else "failed"
-        )
+        # completed = at least some sent/delivered
+        # partial = some sent but also failures (still completed, not failed)
+        # failed = zero sent AND zero delivered (complete failure)
+        if sent_count > 0 or delivered_count > 0:
+            final_status = "completed"
+        elif total_processed == 0:
+            # Nothing processed at all — likely misconfigured campaign
+            final_status = "failed"
+        else:
+            # Everything failed — all processed but none sent
+            final_status = "failed"
+        # NOTE: final_status is scoped to THIS campaign_id only.
+        # Each campaign finalizes independently — a failure here cannot
+        # affect any other campaign running simultaneously.
 
         campaigns_collection.update_one(
             {"_id": ObjectId(campaign_id)},
@@ -926,64 +1035,34 @@ def finalize_campaign(campaign_id: str) -> Dict[str, Any]:
 
 @celery_app.task(bind=True, queue="campaigns", name="tasks.start_campaign")
 def start_campaign(self, campaign_id: str):
-    """
-    Start a scheduled campaign.
-    Writes content_snapshot so workers use snapshot — identical to /send route.
-    """
     try:
         campaigns_collection = get_sync_campaigns_collection()
-        templates_collection = get_sync_templates_collection()
-
-        campaign = campaigns_collection.find_one(
+        result = campaigns_collection.update_one(
             {
                 "_id": ObjectId(campaign_id),
                 "status": {"$in": ["draft", "scheduled", "queued"]},
-            }
+            },
+            {
+                "$set": {
+                    "status": "sending",
+                    "started_at": datetime.utcnow(),
+                    "last_batch_at": datetime.utcnow(),
+                    "sent_count": 0,
+                    "failed_count": 0,
+                    "delivered_count": 0,
+                    "processed_count": 0,
+                    "queued_count": 0,
+                }
+            },
         )
-        if not campaign:
+        if result.modified_count == 0:
             return {"error": "campaign_not_startable", "campaign_id": campaign_id}
-
-        update_fields = {
-            "status": "sending",
-            "started_at": datetime.utcnow(),
-            "last_batch_at": datetime.utcnow(),
-            "sent_count": 0,
-            "failed_count": 0,
-            "delivered_count": 0,
-            "processed_count": 0,
-            "queued_count": 0,
-        }
-
-        template_id = campaign.get("template_id")
-        if template_id and ObjectId.is_valid(str(template_id)):
-            template = templates_collection.find_one({"_id": ObjectId(template_id)})
-            if template:
-                try:
-                    from tasks.campaign.snapshot_utils import build_snapshot
-
-                    snapshot = build_snapshot(template, campaign)
-                    update_fields["content_snapshot"] = snapshot
-                    update_fields["snapshot_taken_at"] = snapshot["taken_at"]
-                    logger.info(
-                        f"Snapshot written for scheduled campaign {campaign_id}"
-                    )
-                except Exception as snap_err:
-                    logger.warning(
-                        f"Snapshot failed for {campaign_id}: {snap_err} — will use live fallback"
-                    )
-
-        campaigns_collection.update_one(
-            {"_id": ObjectId(campaign_id)}, {"$set": update_fields}
-        )
 
         if task_settings.ENABLE_AUDIT_LOGGING:
             log_campaign_event(
                 AuditEventType.CAMPAIGN_STARTED,
                 campaign_id,
-                {
-                    "started_by": "scheduler",
-                    "started_at": datetime.utcnow().isoformat(),
-                },
+                {"started_by": "system", "started_at": datetime.utcnow().isoformat()},
             )
 
         initial_batch_task = send_campaign_batch.delay(

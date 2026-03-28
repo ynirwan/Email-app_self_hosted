@@ -1,41 +1,141 @@
 # backend/tasks/campaign/template_renderer.py
 """
-Pure template personalization engine — no Redis, no DB, no caching.
+Pure Jinja2 / {{ var }} renderer.
 
-Replaces template_cache.TemplateProcessor for the send path.
-Snapshot architecture means the HTML is already in memory; this module
-only handles {{ var }} replacement and Jinja2 rendering.
+When context contains __field_types__ (set at upload time via registry):
+  - Values are already native Python types — no inference needed.
+  - Just build recipient sub-dict and dot-notation nesting.
 
-Used by:
-  - tasks/campaign/email_campaign_tasks.py  (campaign sending)
-  - tasks/ab_testing.py                     (A/B test sending)
+When __field_types__ is absent (old campaigns, no registry):
+  - Fall back to value-shape inference (JSON, pipe, numeric detection).
+
+autoescape=False: email HTML we control. True wraps values in Markup,
+breaking numeric comparisons like {{ price > 10 }}.
 """
 
+import json
 import logging
 import re
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
-from jinja2 import Environment, select_autoescape
+from jinja2 import Environment
 
 logger = logging.getLogger(__name__)
 
+SYSTEM_KEYS = {
+    "__field_types__",
+    "recipient",
+    "unsubscribe_url",
+    "subscriber_id",
+    "current_date",
+    "current_year",
+    "sent_at",
+    "subscription_date",
+}
+
+
+# ── Inference helpers (fallback only for old campaigns) ───────────────────────
+
+
+def _try_number(v: str) -> Any:
+    try:
+        return int(v)
+    except (ValueError, TypeError):
+        pass
+    try:
+        return float(v)
+    except (ValueError, TypeError):
+        pass
+    return v
+
+
+def _try_json(v: str) -> Any:
+    s = v.strip()
+    if s and s[0] in ("[", "{"):
+        try:
+            return json.loads(s)
+        except (json.JSONDecodeError, ValueError):
+            pass
+    return v
+
+
+def _infer_list(v: str) -> List[Dict]:
+    items = []
+    for row in v.strip().split(";"):
+        row = row.strip()
+        if not row or "|" not in row:
+            continue
+        p = [x.strip() for x in row.split("|")]
+        cols = [
+            "name",
+            "price",
+            "on_sale",
+            "description",
+            "original_price",
+            "new",
+            "note",
+        ]
+        obj = {}
+        for i, col in enumerate(cols):
+            raw = p[i] if i < len(p) else ""
+            if col in ("on_sale", "new"):
+                obj[col] = raw.lower() in ("true", "1", "yes")
+            elif col in ("price", "original_price"):
+                obj[col] = _try_number(raw) if raw else 0
+            else:
+                obj[col] = raw
+        for j, extra in enumerate(p[len(cols) :], len(cols)):
+            obj[f"col_{j}"] = extra
+        items.append(obj)
+    return items
+
+
+def _infer_object(v: str, key_hints: Optional[List[str]] = None) -> Dict:
+    keys = key_hints or ["code", "description", "expires_at", "discount", "terms"]
+    parts = [x.strip() for x in v.split("|")]
+    result = {}
+    for i, k in enumerate(keys):
+        result[k] = parts[i] if i < len(parts) else ""
+    for j, extra in enumerate(parts[len(keys) :], len(keys)):
+        result[f"key_{j}"] = extra
+    return result
+
+
+def _infer_value(key: str, value: Any) -> Any:
+    """Guess type from value shape. Used only when no registry present."""
+    if not isinstance(value, str):
+        return value
+    s = value.strip()
+
+    # JSON array or object
+    parsed = _try_json(s)
+    if parsed is not value:
+        return parsed
+
+    # Pipe + semicolon → list
+    if ";" in s and "|" in s:
+        items = _infer_list(s)
+        if items:
+            return items
+
+    # Pipe only → object (but skip if key looks like a phone or address)
+    if "|" in s:
+        return _infer_object(s)
+
+    # Pure numeric string (not zip codes — those have leading zeros we must keep)
+    if re.match(r"^-?\d+\.?\d*$", s):
+        return _try_number(s)
+
+    return s
+
 
 class TemplateRenderer:
-    """
-    Stateless Jinja2 / {{ var }} renderer.
-    No __init__ dependencies — safe to instantiate at module level.
-    """
-
     def __init__(self):
-        # Regex for simple {{ var }} patterns
         self.variable_pattern = re.compile(r"\{\{\s*([^}]+)\s*\}\}")
-        # Single shared Jinja2 env (thread-safe, stateless)
-        self.jinja_env = Environment(autoescape=select_autoescape(["html", "xml"]))
+        self.jinja_env = Environment(autoescape=False)
 
-    # ──────────────────────────────────────────────────────────────────────────
-    # PUBLIC API
-    # ──────────────────────────────────────────────────────────────────────────
+    # ── Public API ─────────────────────────────────────────────────────────────
 
     def personalize_template(
         self,
@@ -43,32 +143,19 @@ class TemplateRenderer:
         subscriber_data: Dict[str, Any],
         extra_context: Dict[str, Any] = None,
     ) -> Dict[str, Any]:
-        """
-        Render html_content, text_content, subject with subscriber data.
-
-        template       — dict with keys: html_content, text_content, subject
-        subscriber_data — subscriber document from MongoDB
-        extra_context  — already-built context dict from the task (field_map
-                         applied, unsubscribe_url, system fields, etc.)
-                         When supplied it is used as-is; subscriber_data is
-                         only used to fill gaps not already in extra_context.
-        """
         if not template:
             return {"error": "template_missing"}
-
         try:
-            if extra_context is not None:
-                context = extra_context
-            else:
-                context = self._build_context(subscriber_data, {})
-
-            personalized = {}
+            ctx = (
+                extra_context
+                if extra_context is not None
+                else self._build_base_context(subscriber_data, {})
+            )
+            result = {}
             for field in ("html_content", "text_content", "subject"):
                 raw = template.get(field, "")
-                personalized[field] = self._render(raw, context) if raw else raw
-
-            return personalized
-
+                result[field] = self._render(raw, ctx) if raw else raw
+            return result
         except Exception as e:
             logger.error(f"Template personalization failed: {e}")
             return {
@@ -78,18 +165,30 @@ class TemplateRenderer:
                 "error": str(e),
             }
 
-    # ──────────────────────────────────────────────────────────────────────────
-    # INTERNAL
-    # ──────────────────────────────────────────────────────────────────────────
+    # ── Rendering ──────────────────────────────────────────────────────────────
 
-    def _build_context(
-        self,
-        subscriber_data: Dict[str, Any],
-        fallback_values: Dict[str, Any],
-    ) -> Dict[str, Any]:
-        """Build a flat personalization context from subscriber doc."""
+    def _render(self, content: str, context: Dict[str, Any]) -> str:
+        if not content:
+            return content
+        if "{%" in content or "{#" in content:
+            try:
+                nested = self._build_jinja_context(context)
+                return self.jinja_env.from_string(content).render(nested)
+            except Exception as e:
+                logger.warning(f"Jinja2 render failed ({e}), simple replacement")
+        return self._simple_replace(content, context)
+
+    def _simple_replace(self, content: str, context: Dict[str, Any]) -> str:
+        def sub(m):
+            val = context.get(m.group(1).strip())
+            return str(val) if val is not None else m.group(0)
+
+        return self.variable_pattern.sub(sub, content)
+
+    # ── Context building ───────────────────────────────────────────────────────
+
+    def _build_base_context(self, subscriber_data, fallback_values):
         ctx = dict(fallback_values)
-
         ctx.setdefault("email", subscriber_data.get("email", ""))
         ctx.setdefault(
             "first_name",
@@ -98,109 +197,52 @@ class TemplateRenderer:
         ctx.setdefault(
             "last_name", subscriber_data.get("standard_fields", {}).get("last_name", "")
         )
-
-        for key, value in subscriber_data.get("custom_fields", {}).items():
-            ctx.setdefault(key, value)
-
+        for k, v in subscriber_data.get("custom_fields", {}).items():
+            ctx.setdefault(k, v)
         ctx.update(
             {
                 "subscriber_id": str(subscriber_data.get("_id", "")),
-                "subscription_date": str(subscriber_data.get("created_at", "")),
                 "current_date": datetime.utcnow().strftime("%Y-%m-%d"),
                 "current_year": str(datetime.utcnow().year),
             }
         )
         return ctx
 
-    def _render(self, content: str, context: Dict[str, Any]) -> str:
-        """
-        Render a content string.
-        Uses Jinja2 when {%…%} or {#…#} tags are present,
-        falls back to simple {{ var }} regex replacement.
-        """
-        if not content:
-            return content
+    def _build_jinja_context(self, context: Dict[str, Any]) -> Dict[str, Any]:
+        field_types = context.get("__field_types__", {})
+        has_registry = bool(field_types)
 
-        if "{%" in content or "{#" in content:
-            try:
-                nested = self._build_nested_context(context)
-                return self.jinja_env.from_string(content).render(nested)
-            except Exception as e:
-                logger.warning(
-                    f"Jinja2 render failed ({e}), falling back to simple replacement"
-                )
+        nested = {}
 
-        # Simple {{ var }} replacement
-        def replace_var(match):
-            var = match.group(1).strip()
-            val = context.get(var)
-            return str(val) if val is not None else match.group(0)
+        if has_registry:
+            # ── TYPED PATH: values already converted at upload ─────────────
+            # Just copy as-is; no inference.
+            for k, v in context.items():
+                if k not in SYSTEM_KEYS:
+                    nested[k] = v
+        else:
+            # ── INFERENCE PATH: old campaigns without registry ─────────────
+            for k, v in context.items():
+                if k not in SYSTEM_KEYS:
+                    nested[k] = _infer_value(k, v)
 
-        return self.variable_pattern.sub(replace_var, content)
+        # Build recipient sub-dict from all flat scalars
+        recipient = {}
+        for k, v in nested.items():
+            if not isinstance(v, (dict, list)):
+                recipient[k] = v
+        nested["recipient"] = recipient
 
-    def _build_nested_context(self, context: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Convert dot-notation keys to nested dicts and parse pipe-separated
-        string arrays into lists — required for Jinja2 for-loops.
-        """
-        nested = dict(context)
-
-        # dot notation → nested dicts  e.g. "recipient.name" → {"recipient": {"name": ...}}
-        for key, value in list(context.items()):
-            if "." in key:
-                parts = key.split(".")
+        # Expand dot-notation keys
+        for k, v in list(context.items()):
+            if "." in k and k not in SYSTEM_KEYS:
+                parts = k.split(".")
                 cur = nested
                 for part in parts[:-1]:
-                    if part not in cur or not isinstance(cur[part], dict):
-                        cur[part] = {}
-                    cur = cur[part]
-                cur[parts[-1]] = value
-
-        # parse  "name|price|on_sale|desc; name2|..."  strings into lists
-        for key, value in list(nested.items()):
-            if isinstance(value, str) and ";" in value and "|" in value:
-                try:
-                    items = []
-                    for item_str in value.strip().split(";"):
-                        item_str = item_str.strip()
-                        if item_str and "|" in item_str:
-                            p = item_str.split("|")
-                            items.append(
-                                {
-                                    "name": p[0].strip() if len(p) > 0 else "",
-                                    "price": p[1].strip() if len(p) > 1 else "",
-                                    "on_sale": p[2].strip().lower()
-                                    in ("true", "1", "yes")
-                                    if len(p) > 2
-                                    else False,
-                                    "description": p[3].strip() if len(p) > 3 else "",
-                                }
-                            )
-                    if items:
-                        nested[key] = items
-                except Exception:
-                    pass  # leave as string if parsing fails
-
-            # promo object: "code|description|expires_at"
-            elif (
-                isinstance(value, str)
-                and "|" in value
-                and ";" not in value
-                and key == "promo"
-            ):
-                try:
-                    p = value.split("|")
-                    if len(p) >= 2:
-                        nested[key] = {
-                            "code": p[0].strip(),
-                            "description": p[1].strip(),
-                            "expires_at": p[2].strip() if len(p) > 2 else "",
-                        }
-                except Exception:
-                    pass
+                    cur = cur.setdefault(part, {})
+                cur[parts[-1]] = v
 
         return nested
 
 
-# Module-level singleton — import this everywhere
 template_renderer = TemplateRenderer()

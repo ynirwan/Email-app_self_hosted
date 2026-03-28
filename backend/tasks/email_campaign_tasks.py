@@ -21,7 +21,6 @@ from typing import Dict, List, Any, Optional
 from bson import ObjectId
 from celery_app import celery_app
 
-from core.config import settings
 from tasks.task_config import task_settings
 from database import (
     get_sync_campaigns_collection,
@@ -29,14 +28,14 @@ from database import (
     get_sync_subscribers_collection,
     get_sync_templates_collection,
 )
-from .resource_manager import resource_manager
-from .rate_limiter import rate_limiter, EmailProvider, RateLimitResult
-from .dlq_manager import dlq_manager
-from .campaign_control import campaign_controller
-from .metrics_collector import metrics_collector
+from tasks.campaign.resource_manager import resource_manager
+from tasks.campaign.rate_limiter import rate_limiter, EmailProvider, RateLimitResult
+from tasks.campaign.dlq_manager import dlq_manager
+from tasks.campaign.campaign_control import campaign_controller
+from tasks.campaign.metrics_collector import metrics_collector
 from .template_cache import template_processor  # fallback only
-from .provider_manager import email_provider_manager
-from .audit_logger import (
+from tasks.campaign.provider_manager import email_provider_manager
+from tasks.campaign.audit_logger import (
     log_campaign_event,
     log_email_event,
     log_system_event,
@@ -228,6 +227,16 @@ def log_email_status(
 # ============================================================
 
 
+def _decrement_queued(campaign_id: str):
+    """Decrement queued_count when a task exits without sending."""
+    try:
+        get_sync_campaigns_collection().update_one(
+            {"_id": ObjectId(campaign_id)}, {"$inc": {"queued_count": -1}}
+        )
+    except Exception:
+        pass  # best-effort
+
+
 @celery_app.task(
     bind=True,
     max_retries=task_settings.MAX_EMAIL_RETRIES,
@@ -245,6 +254,7 @@ def send_single_campaign_email(self, campaign_id: str, subscriber_id: str):
         )
         if not can_process:
             if reason == "campaign_paused":
+                _decrement_queued(campaign_id)
                 return {
                     "status": "paused",
                     "reason": reason,
@@ -268,27 +278,32 @@ def send_single_campaign_email(self, campaign_id: str, subscriber_id: str):
         # ── STEP 2: CAMPAIGN STATUS (from cache) ─────────────────────────────
         campaign_meta = _get_campaign_meta(campaign_id)
         if not campaign_meta:
+            _decrement_queued(campaign_id)
             return {"status": "failed", "reason": "campaign_not_found"}
 
         if (
             campaign_controller.is_campaign_paused(campaign_id)
             or campaign_meta.get("status") == "paused"
         ):
+            _decrement_queued(campaign_id)
             return {"status": "paused", "reason": "campaign_paused"}
 
         if (
             campaign_controller.is_campaign_stopped(campaign_id)
             or campaign_meta.get("status") == "stopped"
         ):
+            _decrement_queued(campaign_id)
             return {"status": "stopped", "reason": "campaign_stopped"}
 
         # ── STEP 3: SUBSCRIBER ───────────────────────────────────────────────
         subscriber = subscribers_collection.find_one({"_id": ObjectId(subscriber_id)})
         if not subscriber:
+            _decrement_queued(campaign_id)
             return {"status": "failed", "reason": "subscriber_not_found"}
 
         recipient_email = subscriber.get("email")
         if not recipient_email:
+            _decrement_queued(campaign_id)
             return {"status": "failed", "reason": "email_missing"}
 
         # ── STEP 4: DUPLICATE CHECK ──────────────────────────────────────────
@@ -301,6 +316,7 @@ def send_single_campaign_email(self, campaign_id: str, subscriber_id: str):
             {"_id": 1},
         )
         if existing_sent:
+            _decrement_queued(campaign_id)
             return {"status": "skipped", "reason": "already_sent"}
 
         # ── STEP 5: RATE LIMITING ────────────────────────────────────────────
@@ -341,12 +357,14 @@ def send_single_campaign_email(self, campaign_id: str, subscriber_id: str):
                         "reason": "circuit_breaker_open",
                         "dlq_result": dlq_result,
                     }
+                _decrement_queued(campaign_id)
                 return {"status": "failed", "reason": "circuit_breaker_open"}
 
         # ── STEP 6: GET SNAPSHOT (cached per worker) ─────────────────────────
         snap = _get_snapshot(campaign_id)
         if not snap or not snap.get("html_content"):
             logger.error(f"No usable snapshot or template for campaign {campaign_id}")
+            _decrement_queued(campaign_id)
             return {"status": "failed", "reason": "template_missing"}
 
         field_map = snap["field_map"]
@@ -443,6 +461,7 @@ def send_single_campaign_email(self, campaign_id: str, subscriber_id: str):
 
         if "error" in personalized:
             logger.error(f"Template personalization failed: {personalized['error']}")
+            _decrement_queued(campaign_id)
             return {"status": "failed", "reason": "template_personalization_failed"}
 
         # ── STEP 8: SEND ─────────────────────────────────────────────────────
@@ -812,6 +831,21 @@ def finalize_campaign(campaign_id: str) -> Dict[str, Any]:
         email_logs_collection = get_sync_email_logs_collection()
 
         campaign = campaigns_collection.find_one({"_id": ObjectId(campaign_id)})
+        if not campaign:
+            return {"error": "campaign_not_found"}
+
+        # Guard: don't finalize while tasks are still in flight.
+        # queued_count > 0 means some send_single tasks haven't completed yet.
+        queued_count = campaign.get("queued_count", 0)
+        if queued_count > 0:
+            logger.warning(
+                f"finalize_campaign called for {campaign_id} but queued_count={queued_count} — deferring"
+            )
+            return {
+                "status": "deferred",
+                "reason": "tasks_still_queued",
+                "queued_count": queued_count,
+            }
 
         if campaign and campaign.get("stop_type") == "graceful":
             campaigns_collection.update_one(
@@ -832,9 +866,20 @@ def finalize_campaign(campaign_id: str) -> Dict[str, Any]:
         sent_count = status_counts.get("sent", 0)
         delivered_count = status_counts.get("delivered", 0)
         failed_count = status_counts.get("failed", 0)
-        final_status = (
-            "completed" if (sent_count > 0 or delivered_count > 0) else "failed"
-        )
+        # completed = at least some sent/delivered
+        # partial = some sent but also failures (still completed, not failed)
+        # failed = zero sent AND zero delivered (complete failure)
+        if sent_count > 0 or delivered_count > 0:
+            final_status = "completed"
+        elif total_processed == 0:
+            # Nothing processed at all — likely misconfigured campaign
+            final_status = "failed"
+        else:
+            # Everything failed — all processed but none sent
+            final_status = "failed"
+        # NOTE: final_status is scoped to THIS campaign_id only.
+        # Each campaign finalizes independently — a failure here cannot
+        # affect any other campaign running simultaneously.
 
         campaigns_collection.update_one(
             {"_id": ObjectId(campaign_id)},
