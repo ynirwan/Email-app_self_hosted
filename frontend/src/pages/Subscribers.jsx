@@ -4,7 +4,35 @@ import API from "../api";
 import Papa from "papaparse";
 import { useNavigate } from "react-router-dom";
 
-// ─── debounce extracted outside component (fixes hooks-in-component issue) ───
+// ─── All 14 backend standard fields ──────────────────────────
+const ALL_STANDARD_FIELDS = [
+  "first_name",
+  "last_name",
+  "phone",
+  "company",
+  "country",
+  "city",
+  "state",
+  "zip_code",
+  "language",
+  "timezone",
+  "gender",
+  "date_of_birth",
+  "website",
+  "job_title",
+];
+
+// ─── Field types matching backend FieldType enum ──────────────
+const FIELD_TYPES = [
+  { value: "string", label: "Text" },
+  { value: "number", label: "Number" },
+  { value: "boolean", label: "Boolean" },
+  { value: "date", label: "Date" },
+  { value: "list", label: "List" },
+  { value: "object", label: "Object" },
+];
+
+// ─── debounce ─────────────────────────────────────────────────
 function useDebounce(value, delay) {
   const [debouncedValue, setDebouncedValue] = useState(value);
   useEffect(() => {
@@ -14,7 +42,7 @@ function useDebounce(value, delay) {
   return debouncedValue;
 }
 
-// ─── helpers ─────────────────────────────────────────────────
+// ─── helpers ──────────────────────────────────────────────────
 const fmt = (n) => Number(n ?? 0).toLocaleString();
 const validateEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 
@@ -289,7 +317,9 @@ function ProcessingBanner({
   );
 }
 
-// ─── AddSubscriberModal (extracted) ──────────────────────────
+// ─── AddSubscriberModal ───────────────────────────────────────
+// FIX: listFields response uses .standard / .custom (not .standard_fields / .custom_fields)
+// FIX: only show fields that exist; don't double-instantiate SubscriberIn
 function AddSubscriberModal({
   editingSubscriber,
   subscriberForm,
@@ -306,11 +336,15 @@ function AddSubscriberModal({
   onClose,
 }) {
   const isEditing = !!editingSubscriber;
+
+  // For editing: show whatever fields the subscriber already has
+  // For adding: show fields from the list registry (already correctly keyed)
   const stdFields = isEditing
     ? Object.keys(editingSubscriber?.standard_fields || {})
     : listFields.standard.length > 0
       ? listFields.standard
       : ["first_name", "last_name"];
+
   const custFields = isEditing
     ? Object.keys(editingSubscriber?.custom_fields || {})
     : listFields.custom;
@@ -408,27 +442,34 @@ function AddSubscriberModal({
             </select>
           </div>
 
-          {stdFields.map((field) => (
-            <div key={field}>
-              <label className="block text-sm font-medium mb-1 capitalize">
-                {field.replace(/_/g, " ")}
-              </label>
-              <input
-                type="text"
-                value={subscriberForm.standard_fields?.[field] || ""}
-                onChange={(e) =>
-                  setSubscriberForm((p) => ({
-                    ...p,
-                    standard_fields: {
-                      ...p.standard_fields,
-                      [field]: e.target.value,
-                    },
-                  }))
-                }
-                className="w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
-              />
+          {stdFields.length > 0 && (
+            <div className="border-t pt-3">
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">
+                Standard Fields
+              </p>
+              {stdFields.map((field) => (
+                <div key={field} className="mb-3">
+                  <label className="block text-sm font-medium mb-1 capitalize">
+                    {field.replace(/_/g, " ")}
+                  </label>
+                  <input
+                    type="text"
+                    value={subscriberForm.standard_fields?.[field] || ""}
+                    onChange={(e) =>
+                      setSubscriberForm((p) => ({
+                        ...p,
+                        standard_fields: {
+                          ...p.standard_fields,
+                          [field]: e.target.value,
+                        },
+                      }))
+                    }
+                    className="w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+              ))}
             </div>
-          ))}
+          )}
 
           {custFields.length > 0 && (
             <div className="border-t pt-3">
@@ -483,7 +524,6 @@ function AddSubscriberModal({
 export default function Subscribers() {
   const navigate = useNavigate();
 
-  // ── state ──────────────────────────────────────────────────
   const [subscribers, setSubscribers] = useState([]);
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
@@ -493,29 +533,24 @@ export default function Subscribers() {
   const [searchStats, setSearchStats] = useState(null);
   const [searchWarning, setSearchWarning] = useState("");
   const [searchStrategy] = useState("smart");
-  const searchTimeoutRef = useRef(null);
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [csvHeaders, setCsvHeaders] = useState([]);
   const [csvData, setCsvData] = useState([]);
   const [listName, setListName] = useState("");
-  const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadStatus, setUploadStatus] = useState("");
-  const [uploadStats, setUploadStats] = useState({
-    total: 0,
-    processed: 0,
-    speed: 0,
-    method: "",
-  });
   const [subscriberPage, setSubscriberPage] = useState(1);
   const [subscriberTotalPages, setSubscriberTotalPages] = useState(1);
   const [subscriberTotal, setSubscriberTotal] = useState(0);
-  const [fieldMap, setFieldMap] = useState({
+
+  // FIX: fieldMap.standard now covers all 14 standard fields (not just first_name/last_name)
+  const emptyFieldMap = {
     email: "",
-    standard: { first_name: "", last_name: "" },
+    standard: Object.fromEntries(ALL_STANDARD_FIELDS.map((f) => [f, ""])),
     custom: [],
-  });
+  };
+  const [fieldMap, setFieldMap] = useState(emptyFieldMap);
+
   const [lists, setLists] = useState([]);
-  const [selectedListName, setSelectedListName] = useState("");
   const [selectedSubscribers, setSelectedSubscribers] = useState([]);
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingSubscriber, setEditingSubscriber] = useState(null);
@@ -523,6 +558,8 @@ export default function Subscribers() {
   const [showProcessingBanner, setShowProcessingBanner] = useState(false);
   const pollingIntervalRef = useRef(null);
   const [notifications, setNotifications] = useState([]);
+
+  // FIX: listFields uses .standard / .custom matching backend response keys
   const [listFields, setListFields] = useState({ standard: [], custom: [] });
   const [loadingFields, setLoadingFields] = useState(false);
   const [isNewList, setIsNewList] = useState(false);
@@ -612,7 +649,6 @@ export default function Subscribers() {
     return () => stopPollingJobs();
   }, [startPollingJobs]);
 
-  // ── auto-search on debounced term ──────────────────────────
   useEffect(() => {
     if (debouncedSearchTerm.length >= 2 || debouncedSearchTerm.length === 0) {
       fetchAllSubscribers(1, debouncedSearchTerm, statusFilter);
@@ -684,63 +720,68 @@ export default function Subscribers() {
     });
   };
 
+  // FIX: upload uses background-upload only (no /bulk)
+  // FIX: all 14 standard fields are mapped, custom fields include their declared type
   const handleUploadList = async () => {
     if (!fieldMap.email || !listName.trim()) return;
     try {
       setUploadStatus("processing");
 
-      // ✅ BUILD FIELD REGISTRY from fieldMap
+      // Build the field registry — standard fields that have a CSV column mapped,
+      // custom fields with their declared type
+      const mappedStandardFields = ALL_STANDARD_FIELDS.filter(
+        (key) => fieldMap.standard[key],
+      );
+
       const fieldRegistry = {
         list_name: listName.trim(),
-        standard: Object.keys(fieldMap.standard).filter(
-          (key) => fieldMap.standard[key],
-        ),
+        standard: mappedStandardFields,
         custom: fieldMap.custom
           .filter((cf) => cf.label && cf.value)
           .reduce((acc, cf) => {
             acc[cf.label] = {
-              type: "string", // FieldType enum value (string, number, boolean, date, list, object)
-              columns: null, // For LIST type - array of column names
-              keys: null, // For OBJECT type - array of key names
+              type: cf.type || "string", // FIX: use declared type, not hardcoded "string"
+              columns: null,
+              keys: null,
             };
             return acc;
           }, {}),
       };
 
-      // 🔍 DEBUG: Check what we're actually sending
-      console.log("🚀 FIELD REGISTRY:", JSON.stringify(fieldRegistry, null, 2));
-
+      // Build flat fields per subscriber — backend apply_registry() will split them
       const subscribers = csvData
         .map((row) => {
-          // ✅ FLAT FIELDS structure - backend will split using registry
           const fields = {};
 
-          // Add standard fields to flat fields object
-          if (fieldMap.standard.first_name) {
-            fields.first_name =
-              row[csvHeaders.indexOf(fieldMap.standard.first_name)];
-          }
-          if (fieldMap.standard.last_name) {
-            fields.last_name =
-              row[csvHeaders.indexOf(fieldMap.standard.last_name)];
-          }
+          // Map all 14 standard fields if they have a CSV column assigned
+          ALL_STANDARD_FIELDS.forEach((fieldName) => {
+            const csvCol = fieldMap.standard[fieldName];
+            if (csvCol) {
+              const val = row[csvHeaders.indexOf(csvCol)];
+              if (val !== undefined && val !== "") {
+                fields[fieldName] = val;
+              }
+            }
+          });
 
-          // Add custom fields to flat fields object
+          // Map custom fields
           fieldMap.custom.forEach((cf) => {
             if (cf.label && cf.value) {
-              fields[cf.label] = row[csvHeaders.indexOf(cf.value)];
+              const val = row[csvHeaders.indexOf(cf.value)];
+              if (val !== undefined && val !== "") {
+                fields[cf.label] = val;
+              }
             }
           });
 
           return {
             email: row[csvHeaders.indexOf(fieldMap.email)],
             status: "active",
-            fields: fields, // ✅ Single flat fields object
+            fields, // flat — backend splits using registry
           };
         })
-        .filter((s) => s.email);
+        .filter((s) => s.email && s.email.trim());
 
-      // ✅ INCLUDE field_registry IN UPLOAD PAYLOAD
       const uploadPayload = {
         list_name: listName.trim(),
         subscribers,
@@ -751,6 +792,7 @@ export default function Subscribers() {
         "/subscribers/background-upload",
         uploadPayload,
       );
+
       if (response.data?.job_id) {
         showToast(
           `Upload started for "${listName}" — processing in background`,
@@ -781,13 +823,8 @@ export default function Subscribers() {
     setCsvHeaders([]);
     setCsvData([]);
     setListName("");
-    setUploadProgress(0);
     setUploadStatus("");
-    setFieldMap({
-      email: "",
-      standard: { first_name: "", last_name: "" },
-      custom: [],
-    });
+    setFieldMap(emptyFieldMap);
   };
 
   // ── subscriber CRUD ────────────────────────────────────────
@@ -801,7 +838,14 @@ export default function Subscribers() {
       return;
     }
     try {
-      await API.post("/subscribers/", subscriberForm);
+      // FIX: send the payload directly — no double-instantiation needed
+      await API.post("/subscribers/", {
+        email: subscriberForm.email.toLowerCase().trim(),
+        list: subscriberForm.list,
+        status: subscriberForm.status,
+        standard_fields: subscriberForm.standard_fields || {},
+        custom_fields: subscriberForm.custom_fields || {},
+      });
       showToast("Subscriber added", "success");
       setShowAddModal(false);
       setSubscriberForm(emptyForm);
@@ -817,7 +861,13 @@ export default function Subscribers() {
 
   const handleEditSubscriber = async () => {
     try {
-      await API.put(`/subscribers/${editingSubscriber._id}`, subscriberForm);
+      await API.put(`/subscribers/${editingSubscriber._id}`, {
+        email: subscriberForm.email.toLowerCase().trim(),
+        list: subscriberForm.list,
+        status: subscriberForm.status,
+        standard_fields: subscriberForm.standard_fields || {},
+        custom_fields: subscriberForm.custom_fields || {},
+      });
       showToast("Subscriber updated", "success");
       setShowAddModal(false);
       setEditingSubscriber(null);
@@ -852,6 +902,7 @@ export default function Subscribers() {
     setShowAddModal(true);
   };
 
+  // FIX: backend returns { standard: [...], custom: [...] } — not standard_fields/custom_fields
   const handleListSelectForAdd = async (val) => {
     if (val === "__new__") {
       setIsNewList(true);
@@ -864,8 +915,8 @@ export default function Subscribers() {
       try {
         const res = await API.get(`/subscribers/lists/${val}/fields`);
         setListFields({
-          standard: res.data.standard_fields || [],
-          custom: res.data.custom_fields || [],
+          standard: res.data.standard || [], // FIX: was res.data.standard_fields
+          custom: res.data.custom || [], // FIX: was res.data.custom_fields
         });
       } catch {
         setListFields({ standard: [], custom: [] });
@@ -1152,7 +1203,6 @@ export default function Subscribers() {
                 );
               })}
             </tbody>
-            {/* Summary row */}
             {lists.length > 1 && (
               <tfoot>
                 <tr className="bg-gray-50 border-t-2 border-gray-200">
@@ -1197,7 +1247,6 @@ export default function Subscribers() {
             )}
           </div>
           <div className="flex items-center gap-2">
-            {/* Status filter */}
             <select
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value)}
@@ -1209,7 +1258,6 @@ export default function Subscribers() {
               <option value="bounced">Bounced</option>
               <option value="unsubscribed">Unsubscribed</option>
             </select>
-            {/* Search */}
             <div className="relative">
               <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 text-xs">
                 🔍
@@ -1374,7 +1422,6 @@ export default function Subscribers() {
             </div>
 
             <div className="px-6 py-5 space-y-5">
-              {/* Progress bar while processing */}
               {uploadStatus === "processing" && (
                 <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
                   <div className="flex items-center gap-2 mb-2">
@@ -1421,7 +1468,8 @@ export default function Subscribers() {
 
                   <div>
                     <p className="text-sm font-medium mb-3">Map CSV Fields</p>
-                    <div className="space-y-3">
+                    <div className="space-y-4">
+                      {/* Email — required */}
                       <div>
                         <label className="block text-xs font-medium text-gray-600 mb-1">
                           Email Column *
@@ -1444,95 +1492,137 @@ export default function Subscribers() {
                           ))}
                         </select>
                       </div>
-                      <div className="grid grid-cols-2 gap-3">
-                        {["first_name", "last_name"].map((field) => (
-                          <div key={field}>
-                            <label className="block text-xs font-medium text-gray-600 mb-1 capitalize">
-                              {field.replace("_", " ")}
-                            </label>
-                            <select
-                              value={fieldMap.standard[field]}
-                              onChange={(e) =>
-                                setFieldMap((p) => ({
-                                  ...p,
-                                  standard: {
-                                    ...p.standard,
-                                    [field]: e.target.value,
-                                  },
-                                }))
-                              }
-                              className="w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
-                            >
-                              <option value="">Optional…</option>
-                              {csvHeaders.map((h, i) => (
-                                <option key={i} value={h}>
-                                  {h}
-                                </option>
-                              ))}
-                            </select>
-                          </div>
-                        ))}
-                      </div>
 
-                      {fieldMap.custom.length > 0 && (
-                        <div className="space-y-2">
-                          {fieldMap.custom.map((cf, idx) => (
-                            <div key={idx} className="flex gap-2">
-                              <input
-                                type="text"
-                                placeholder="Field name"
-                                value={cf.label}
-                                onChange={(e) => {
-                                  const u = [...fieldMap.custom];
-                                  u[idx] = { ...u[idx], label: e.target.value };
-                                  setFieldMap((p) => ({ ...p, custom: u }));
-                                }}
-                                className="flex-1 px-3 py-2 border rounded-lg text-sm"
-                              />
+                      {/* FIX: all 14 standard fields, in a 2-col grid */}
+                      <div>
+                        <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
+                          Standard Fields
+                        </p>
+                        <div className="grid grid-cols-2 gap-3">
+                          {ALL_STANDARD_FIELDS.map((field) => (
+                            <div key={field}>
+                              <label className="block text-xs font-medium text-gray-600 mb-1 capitalize">
+                                {field.replace(/_/g, " ")}
+                              </label>
                               <select
-                                value={cf.value}
-                                onChange={(e) => {
-                                  const u = [...fieldMap.custom];
-                                  u[idx] = { ...u[idx], value: e.target.value };
-                                  setFieldMap((p) => ({ ...p, custom: u }));
-                                }}
-                                className="flex-1 px-3 py-2 border rounded-lg text-sm"
+                                value={fieldMap.standard[field]}
+                                onChange={(e) =>
+                                  setFieldMap((p) => ({
+                                    ...p,
+                                    standard: {
+                                      ...p.standard,
+                                      [field]: e.target.value,
+                                    },
+                                  }))
+                                }
+                                className="w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
                               >
-                                <option value="">CSV column…</option>
+                                <option value="">Optional…</option>
                                 {csvHeaders.map((h, i) => (
                                   <option key={i} value={h}>
                                     {h}
                                   </option>
                                 ))}
                               </select>
-                              <button
-                                onClick={() =>
-                                  setFieldMap((p) => ({
-                                    ...p,
-                                    custom: p.custom.filter(
-                                      (_, i) => i !== idx,
-                                    ),
-                                  }))
-                                }
-                                className="px-3 py-2 border border-red-200 text-red-600 rounded-lg hover:bg-red-50 text-sm"
-                              >
-                                ✕
-                              </button>
                             </div>
                           ))}
                         </div>
-                      )}
-                      <button
-                        onClick={() =>
-                          setFieldMap((p) => ({
-                            ...p,
-                            custom: [...p.custom, { label: "", value: "" }],
-                          }))
-                        }
-                        className="text-sm text-blue-600 hover:underline"
-                      >
-                        + Add custom field
-                      </button>
+                      </div>
+
+                      {/* Custom fields — with type selector */}
+                      <div>
+                        <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
+                          Custom Fields
+                        </p>
+                        {fieldMap.custom.length > 0 && (
+                          <div className="space-y-2 mb-2">
+                            {fieldMap.custom.map((cf, idx) => (
+                              <div key={idx} className="flex gap-2 items-start">
+                                <input
+                                  type="text"
+                                  placeholder="Field name"
+                                  value={cf.label}
+                                  onChange={(e) => {
+                                    const u = [...fieldMap.custom];
+                                    u[idx] = {
+                                      ...u[idx],
+                                      label: e.target.value,
+                                    };
+                                    setFieldMap((p) => ({ ...p, custom: u }));
+                                  }}
+                                  className="flex-1 px-3 py-2 border rounded-lg text-sm"
+                                />
+                                <select
+                                  value={cf.value}
+                                  onChange={(e) => {
+                                    const u = [...fieldMap.custom];
+                                    u[idx] = {
+                                      ...u[idx],
+                                      value: e.target.value,
+                                    };
+                                    setFieldMap((p) => ({ ...p, custom: u }));
+                                  }}
+                                  className="flex-1 px-3 py-2 border rounded-lg text-sm"
+                                >
+                                  <option value="">CSV column…</option>
+                                  {csvHeaders.map((h, i) => (
+                                    <option key={i} value={h}>
+                                      {h}
+                                    </option>
+                                  ))}
+                                </select>
+                                {/* FIX: type selector — was always hardcoded "string" */}
+                                <select
+                                  value={cf.type || "string"}
+                                  onChange={(e) => {
+                                    const u = [...fieldMap.custom];
+                                    u[idx] = {
+                                      ...u[idx],
+                                      type: e.target.value,
+                                    };
+                                    setFieldMap((p) => ({ ...p, custom: u }));
+                                  }}
+                                  className="w-24 px-2 py-2 border rounded-lg text-sm"
+                                  title="Field type"
+                                >
+                                  {FIELD_TYPES.map((t) => (
+                                    <option key={t.value} value={t.value}>
+                                      {t.label}
+                                    </option>
+                                  ))}
+                                </select>
+                                <button
+                                  onClick={() =>
+                                    setFieldMap((p) => ({
+                                      ...p,
+                                      custom: p.custom.filter(
+                                        (_, i) => i !== idx,
+                                      ),
+                                    }))
+                                  }
+                                  className="px-3 py-2 border border-red-200 text-red-600 rounded-lg hover:bg-red-50 text-sm"
+                                >
+                                  ✕
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        <button
+                          onClick={() =>
+                            setFieldMap((p) => ({
+                              ...p,
+                              custom: [
+                                ...p.custom,
+                                { label: "", value: "", type: "string" },
+                              ],
+                            }))
+                          }
+                          className="text-sm text-blue-600 hover:underline"
+                        >
+                          + Add custom field
+                        </button>
+                      </div>
                     </div>
                   </div>
 
