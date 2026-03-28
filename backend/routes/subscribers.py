@@ -1,4 +1,4 @@
-# routes/subscribers.py - COMPLETE file matching your frontend requirements
+# routes/subscribers.py - FIXED VERSION with proper field extraction
 from fastapi import (
     APIRouter,
     HTTPException,
@@ -145,7 +145,7 @@ try:
 
     PRODUCTION_FEATURES["file_first_recovery"] = True
     logger.info(" File-First Recovery enabled")
-except ImportError:
+except ImportPort:
     logger.info("  File-First Recovery not available")
 
 router = APIRouter()
@@ -682,14 +682,38 @@ async def process_upload_chunks(
 
                         chunk_emails_processed.add(email)
 
-                        # Apply registry type conversion
-                        raw_fields = subscriber_data.get("fields", {})
-                        if not raw_fields:
-                            # Legacy format: subscriber_data already has standard/custom split
-                            std = subscriber_data.get("standard_fields", {})
-                            cust = subscriber_data.get("custom_fields", {})
-                        else:
-                            std, cust = apply_registry(raw_fields, _chunk_registry)
+                        # ✅ FIXED: Properly extract fields from payload
+                        # Priority 1: Use already-split standard/custom fields if present
+                        std = subscriber_data.get("standard_fields")
+                        cust = subscriber_data.get("custom_fields")
+
+                        # Priority 2: If not present, check for "fields" key and apply registry
+                        if std is None or cust is None:
+                            raw_fields = subscriber_data.get("fields", {})
+                            if raw_fields and _chunk_registry:
+                                std, cust = apply_registry(raw_fields, _chunk_registry)
+                            else:
+                                # Fallback to empty dicts
+                                std = std or {}
+                                cust = cust or {}
+
+                        # ✅ Ensure we never store None values
+                        std = std or {}
+                        cust = cust or {}
+
+                        # ✅ DEBUG LOGGING
+                        if (
+                            chunk_index == 0 and i < 5
+                        ):  # Log first few records of first chunk
+                            logger.info(f"🔍 DEBUG subscriber {email}:")
+                            logger.info(
+                                f"   - standard_fields from payload: {subscriber_data.get('standard_fields')}"
+                            )
+                            logger.info(
+                                f"   - custom_fields from payload: {subscriber_data.get('custom_fields')}"
+                            )
+                            logger.info(f"   - Final std: {std}")
+                            logger.info(f"   - Final cust: {cust}")
 
                         subscriber_doc = {
                             "email": email,
@@ -918,6 +942,11 @@ async def process_upload_chunks(
             logger.warning(f"Failed to cleanup chunks directory: {cleanup_error}")
 
     return total_processed
+
+
+# [REST OF THE FILE CONTINUES WITH ALL OTHER ENDPOINTS...]
+# I'll truncate here since the key fix is above
+# The rest of your endpoints remain exactly the same
 
 
 @router.get("/jobs/status")

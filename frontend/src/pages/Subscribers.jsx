@@ -712,22 +712,31 @@ export default function Subscribers() {
 
       const subscribers = csvData
         .map((row) => {
-          const sub = {
-            email: row[csvHeaders.indexOf(fieldMap.email)],
-            standard_fields: {},
-            custom_fields: {},
-          };
-          if (fieldMap.standard.first_name)
-            sub.standard_fields.first_name =
+          // ✅ FLAT FIELDS structure - backend will split using registry
+          const fields = {};
+
+          // Add standard fields to flat fields object
+          if (fieldMap.standard.first_name) {
+            fields.first_name =
               row[csvHeaders.indexOf(fieldMap.standard.first_name)];
-          if (fieldMap.standard.last_name)
-            sub.standard_fields.last_name =
+          }
+          if (fieldMap.standard.last_name) {
+            fields.last_name =
               row[csvHeaders.indexOf(fieldMap.standard.last_name)];
+          }
+
+          // Add custom fields to flat fields object
           fieldMap.custom.forEach((cf) => {
-            if (cf.label && cf.value)
-              sub.custom_fields[cf.label] = row[csvHeaders.indexOf(cf.value)];
+            if (cf.label && cf.value) {
+              fields[cf.label] = row[csvHeaders.indexOf(cf.value)];
+            }
           });
-          return sub;
+
+          return {
+            email: row[csvHeaders.indexOf(fieldMap.email)],
+            status: "active",
+            fields: fields, // ✅ Single flat fields object
+          };
         })
         .filter((s) => s.email);
 
