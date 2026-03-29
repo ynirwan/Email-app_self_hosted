@@ -1,11 +1,14 @@
 from fastapi import APIRouter, HTTPException, Response
 from typing import List, Dict, Any, Optional
 from bson import ObjectId
-from database import get_templates_collection
+from database import get_templates_collection, get_campaigns_collection
 from models.campaign_model import TemplateCreate, TemplateOut
 import re
 import json
-from datetime import datetime
+import logging
+from datetime import datetime, timedelta
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["templates"])
 
@@ -192,72 +195,102 @@ async def get_template(template_id: str):
     doc["_id"] = str(doc["_id"])
     return doc
 
-    @router.put("/{template_id}", response_model=TemplateOut)
-    async def update_template(template_id: str, template: TemplateCreate):
-        """Update a template — blocked if any active campaign is using it."""
-        col = get_templates_collection()
 
-        if not ObjectId.is_valid(template_id):
-            raise HTTPException(status_code=400, detail="Invalid template ID")
+@router.put("/{template_id}", response_model=TemplateOut)
+async def update_template(template_id: str, template: TemplateCreate):
+    """Update a template — blocked if any active campaign is using it."""
+    col = get_templates_collection()
 
-        # ── Guard: refuse edit while any campaign is actively sending / scheduled ─
-        campaigns_col = get_campaigns_collection()
-        active_campaigns = []
-        async for c in campaigns_col.find(
-            {"template_id": template_id, "status": {"$in": ["sending", "scheduled"]}},
-            {"title": 1, "status": 1},
-        ):
+    if not ObjectId.is_valid(template_id):
+        raise HTTPException(status_code=400, detail="Invalid template ID")
+
+    # ── Guard: refuse edit while any campaign is actively sending / scheduled ─
+    # "sending" with no recent heartbeat (>30 min) is a stuck campaign — allow edit.
+    # "scheduled" is always blocked (it hasn't started yet, editing matters).
+    campaigns_col = get_campaigns_collection()
+    stale_threshold = datetime.utcnow() - timedelta(minutes=30)
+    active_campaigns = []
+
+    async for c in campaigns_col.find(
+        {"template_id": template_id, "status": {"$in": ["sending", "scheduled"]}},
+        {"title": 1, "status": 1, "last_batch_at": 1, "started_at": 1},
+    ):
+        status = c.get("status")
+        if status == "scheduled":
+            # Always block — campaign hasn't started yet, it will use this template
             active_campaigns.append(
                 {
                     "id": str(c["_id"]),
                     "title": c.get("title", "Untitled"),
-                    "status": c.get("status"),
+                    "status": status,
                 }
             )
-
-        if active_campaigns:
-            names = ", ".join(
-                f'"{c["title"]}" ({c["status"]})' for c in active_campaigns
-            )
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    f"Cannot edit this template — it is used by {len(active_campaigns)} "
-                    f"active campaign(s): {names}. "
-                    "Wait for those campaigns to finish before making changes."
-                ),
-            )
-
-        # ── Proceed with normal update (unchanged) ────────────────────────────────
-        doc = template.dict()
-        doc["updated_at"] = datetime.utcnow()
-
-        content_json = doc.get("content_json", {})
-        mode = content_json.get("mode", "html")
-        fields = []
-
-        if mode == "drag-drop":
-            blocks = content_json.get("blocks", [])
-            for block in blocks:
-                block_content = block.get("content", "")
-                block_fields = TemplateRenderer.extract_fields_from_content(
-                    block_content
+        elif status == "sending":
+            # Only block if the campaign has a recent heartbeat (genuinely in-flight)
+            heartbeat = c.get("last_batch_at") or c.get("started_at")
+            if heartbeat and heartbeat > stale_threshold:
+                active_campaigns.append(
+                    {
+                        "id": str(c["_id"]),
+                        "title": c.get("title", "Untitled"),
+                        "status": status,
+                    }
                 )
-                fields.extend(block_fields)
-        elif mode == "html":
-            html_content = content_json.get("content", "")
-            fields = TemplateRenderer.extract_fields_from_content(html_content)
+            else:
+                # Stuck campaign — auto-mark as failed so it stops blocking
+                await campaigns_col.update_one(
+                    {"_id": c["_id"]},
+                    {
+                        "$set": {
+                            "status": "failed",
+                            "error_message": "Marked failed automatically: no heartbeat for >30 minutes",
+                            "updated_at": datetime.utcnow(),
+                        }
+                    },
+                )
+                logger.warning(
+                    f"Auto-failed stuck campaign {c['_id']} (no heartbeat since {heartbeat})"
+                )
 
-        doc["fields"] = [f.strip() for f in list(set(fields))]
+    if active_campaigns:
+        names = ", ".join(f'"{c["title"]}" ({c["status"]})' for c in active_campaigns)
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Cannot edit this template — it is used by {len(active_campaigns)} "
+                f"active campaign(s): {names}. "
+                "Wait for those campaigns to finish before making changes."
+            ),
+        )
 
-        result = await col.update_one({"_id": ObjectId(template_id)}, {"$set": doc})
+    # ── Proceed with normal update (unchanged) ────────────────────────────────
+    doc = template.dict()
+    doc["updated_at"] = datetime.utcnow()
 
-        if result.matched_count == 0:
-            raise HTTPException(status_code=404, detail="Template not found")
+    content_json = doc.get("content_json", {})
+    mode = content_json.get("mode", "html")
+    fields = []
 
-        updated_doc = await col.find_one({"_id": ObjectId(template_id)})
-        updated_doc["_id"] = str(updated_doc["_id"])
-        return updated_doc
+    if mode == "drag-drop":
+        blocks = content_json.get("blocks", [])
+        for block in blocks:
+            block_content = block.get("content", "")
+            block_fields = TemplateRenderer.extract_fields_from_content(block_content)
+            fields.extend(block_fields)
+    elif mode == "html":
+        html_content = content_json.get("content", "")
+        fields = TemplateRenderer.extract_fields_from_content(html_content)
+
+    doc["fields"] = [f.strip() for f in list(set(fields))]
+
+    result = await col.update_one({"_id": ObjectId(template_id)}, {"$set": doc})
+
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Template not found")
+
+    updated_doc = await col.find_one({"_id": ObjectId(template_id)})
+    updated_doc["_id"] = str(updated_doc["_id"])
+    return updated_doc
 
 
 @router.delete("/{template_id}")
