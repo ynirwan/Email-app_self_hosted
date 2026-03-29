@@ -25,8 +25,6 @@ class FieldType(str, Enum):
     NUMBER = "number"  # int or float
     BOOLEAN = "boolean"  # true/false/yes/no/1/0 -> bool
     DATE = "date"  # any parseable date -> "YYYY-MM-DD"
-    LIST = "list"  # pipe+semicolon -> [{name,price,on_sale,...}]
-    OBJECT = "object"  # pipe -> {key: value}
 
 
 STANDARD_FIELD_NAMES = {
@@ -49,12 +47,6 @@ STANDARD_FIELD_NAMES = {
 
 class CustomFieldDef(BaseModel):
     type: FieldType = FieldType.STRING
-    columns: Optional[List[str]] = (
-        None  # LIST: column order e.g. ["name","price","on_sale"]
-    )
-    keys: Optional[List[str]] = (
-        None  # OBJECT: key order e.g. ["code","description","expires_at"]
-    )
 
 
 class ListFieldRegistry(BaseModel):

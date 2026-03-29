@@ -2,22 +2,17 @@
 """
 Pure Jinja2 / {{ var }} renderer.
 
-When context contains __field_types__ (set at upload time via registry):
-  - Values are already native Python types — no inference needed.
-  - Just build recipient sub-dict and dot-notation nesting.
-
-When __field_types__ is absent (old campaigns, no registry):
-  - Fall back to value-shape inference (JSON, pipe, numeric detection).
+Values are already native Python types (converted at upload time via the
+field registry). Build a flat context dict, run Jinja2, done.
 
 autoescape=False: email HTML we control. True wraps values in Markup,
 breaking numeric comparisons like {{ price > 10 }}.
 """
 
-import json
 import logging
 import re
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict
 
 from jinja2 import Environment
 
@@ -33,101 +28,6 @@ SYSTEM_KEYS = {
     "sent_at",
     "subscription_date",
 }
-
-
-# ── Inference helpers (fallback only for old campaigns) ───────────────────────
-
-
-def _try_number(v: str) -> Any:
-    try:
-        return int(v)
-    except (ValueError, TypeError):
-        pass
-    try:
-        return float(v)
-    except (ValueError, TypeError):
-        pass
-    return v
-
-
-def _try_json(v: str) -> Any:
-    s = v.strip()
-    if s and s[0] in ("[", "{"):
-        try:
-            return json.loads(s)
-        except (json.JSONDecodeError, ValueError):
-            pass
-    return v
-
-
-def _infer_list(v: str) -> List[Dict]:
-    items = []
-    for row in v.strip().split(";"):
-        row = row.strip()
-        if not row or "|" not in row:
-            continue
-        p = [x.strip() for x in row.split("|")]
-        cols = [
-            "name",
-            "price",
-            "on_sale",
-            "description",
-            "original_price",
-            "new",
-            "note",
-        ]
-        obj = {}
-        for i, col in enumerate(cols):
-            raw = p[i] if i < len(p) else ""
-            if col in ("on_sale", "new"):
-                obj[col] = raw.lower() in ("true", "1", "yes")
-            elif col in ("price", "original_price"):
-                obj[col] = _try_number(raw) if raw else 0
-            else:
-                obj[col] = raw
-        for j, extra in enumerate(p[len(cols) :], len(cols)):
-            obj[f"col_{j}"] = extra
-        items.append(obj)
-    return items
-
-
-def _infer_object(v: str, key_hints: Optional[List[str]] = None) -> Dict:
-    keys = key_hints or ["code", "description", "expires_at", "discount", "terms"]
-    parts = [x.strip() for x in v.split("|")]
-    result = {}
-    for i, k in enumerate(keys):
-        result[k] = parts[i] if i < len(parts) else ""
-    for j, extra in enumerate(parts[len(keys) :], len(keys)):
-        result[f"key_{j}"] = extra
-    return result
-
-
-def _infer_value(key: str, value: Any) -> Any:
-    """Guess type from value shape. Used only when no registry present."""
-    if not isinstance(value, str):
-        return value
-    s = value.strip()
-
-    # JSON array or object
-    parsed = _try_json(s)
-    if parsed is not value:
-        return parsed
-
-    # Pipe + semicolon → list
-    if ";" in s and "|" in s:
-        items = _infer_list(s)
-        if items:
-            return items
-
-    # Pipe only → object (but skip if key looks like a phone or address)
-    if "|" in s:
-        return _infer_object(s)
-
-    # Pure numeric string (not zip codes — those have leading zeros we must keep)
-    if re.match(r"^-?\d+\.?\d*$", s):
-        return _try_number(s)
-
-    return s
 
 
 class TemplateRenderer:
@@ -195,7 +95,8 @@ class TemplateRenderer:
             subscriber_data.get("standard_fields", {}).get("first_name", ""),
         )
         ctx.setdefault(
-            "last_name", subscriber_data.get("standard_fields", {}).get("last_name", "")
+            "last_name",
+            subscriber_data.get("standard_fields", {}).get("last_name", ""),
         )
         for k, v in subscriber_data.get("custom_fields", {}).items():
             ctx.setdefault(k, v)
@@ -209,29 +110,13 @@ class TemplateRenderer:
         return ctx
 
     def _build_jinja_context(self, context: Dict[str, Any]) -> Dict[str, Any]:
-        field_types = context.get("__field_types__", {})
-        has_registry = bool(field_types)
-
-        nested = {}
-
-        if has_registry:
-            # ── TYPED PATH: values already converted at upload ─────────────
-            # Just copy as-is; no inference.
-            for k, v in context.items():
-                if k not in SYSTEM_KEYS:
-                    nested[k] = v
-        else:
-            # ── INFERENCE PATH: old campaigns without registry ─────────────
-            for k, v in context.items():
-                if k not in SYSTEM_KEYS:
-                    nested[k] = _infer_value(k, v)
+        # Values are already native Python types — copy as-is, no inference.
+        nested = {k: v for k, v in context.items() if k not in SYSTEM_KEYS}
 
         # Build recipient sub-dict from all flat scalars
-        recipient = {}
-        for k, v in nested.items():
-            if not isinstance(v, (dict, list)):
-                recipient[k] = v
-        nested["recipient"] = recipient
+        nested["recipient"] = {
+            k: v for k, v in nested.items() if not isinstance(v, (dict, list))
+        }
 
         # Expand dot-notation keys
         for k, v in list(context.items()):

@@ -967,6 +967,10 @@ def finalize_campaign(campaign_id: str) -> Dict[str, Any]:
         sent_count = status_counts.get("sent", 0)
         delivered_count = status_counts.get("delivered", 0)
         failed_count = status_counts.get("failed", 0)
+        # FIX: emails promoted from "sent" → "delivered" by webhooks are genuinely delivered.
+        # The canonical "emails that reached the inbox" = sent + delivered.
+        # Store both separately AND a combined total so stats never double-count.
+        canonical_sent = sent_count + delivered_count
         # completed = at least some sent/delivered
         # partial = some sent but also failures (still completed, not failed)
         # failed = zero sent AND zero delivered (complete failure)

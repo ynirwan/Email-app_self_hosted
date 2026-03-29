@@ -9,8 +9,7 @@ The renderer receives them as-is — no type guessing needed.
 """
 
 import logging
-import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict
 from datetime import datetime
 
 from schemas.subscriber_schema import (
@@ -21,19 +20,6 @@ from schemas.subscriber_schema import (
 )
 
 logger = logging.getLogger(__name__)
-
-# Default column names for LIST fields when none declared in registry
-DEFAULT_LIST_COLUMNS = [
-    "name",
-    "price",
-    "on_sale",
-    "description",
-    "original_price",
-    "new",
-    "note",
-]
-# Default key names for OBJECT fields
-DEFAULT_OBJECT_KEYS = ["code", "description", "expires_at", "discount", "terms"]
 
 
 def _to_number(v: str) -> Any:
@@ -68,59 +54,13 @@ def _to_date(v: str) -> str:
     return v  # return original if unparseable
 
 
-def _to_list(v: str, columns: List[str]) -> List[Dict[str, Any]]:
-    """Parse semicolon-separated pipe rows into a list of dicts."""
-    if not isinstance(v, str):
-        return v if isinstance(v, list) else []
-    items = []
-    for row in v.strip().split(";"):
-        row = row.strip()
-        if not row:
-            continue
-        parts = [p.strip() for p in row.split("|")]
-        obj = {}
-        for i, col in enumerate(columns):
-            if i >= len(parts):
-                # default for missing columns
-                obj[col] = False if col in ("on_sale", "new") else ""
-            elif col in ("on_sale", "new"):
-                obj[col] = _to_boolean(parts[i])
-            elif col in ("price", "original_price", "qty", "quantity"):
-                obj[col] = _to_number(parts[i]) if parts[i] else 0
-            else:
-                obj[col] = parts[i]
-        # any extra pipe columns beyond declared
-        for j, extra in enumerate(parts[len(columns) :], start=len(columns)):
-            obj[f"col_{j}"] = extra
-        items.append(obj)
-    return items
-
-
-def _to_object(v: str, keys: List[str]) -> Dict[str, Any]:
-    """Parse single pipe row into a dict."""
-    if not isinstance(v, str):
-        return v if isinstance(v, dict) else {}
-    parts = [p.strip() for p in v.split("|")]
-    result = {}
-    for i, key in enumerate(keys):
-        result[key] = parts[i] if i < len(parts) else ""
-    for j, extra in enumerate(parts[len(keys) :], start=len(keys)):
-        result[f"key_{j}"] = extra
-    return result
-
-
 def convert_value(value: Any, field_def: CustomFieldDef) -> Any:
     """Convert a raw CSV value to its declared native Python type."""
     if value is None or value == "":
-        # Return typed zero/empty rather than raw empty
         if field_def.type == FieldType.NUMBER:
             return 0
         if field_def.type == FieldType.BOOLEAN:
             return False
-        if field_def.type == FieldType.LIST:
-            return []
-        if field_def.type == FieldType.OBJECT:
-            return {}
         return ""
 
     s = str(value)
@@ -137,15 +77,7 @@ def convert_value(value: Any, field_def: CustomFieldDef) -> Any:
     if field_def.type == FieldType.DATE:
         return _to_date(s)
 
-    if field_def.type == FieldType.LIST:
-        cols = field_def.columns or DEFAULT_LIST_COLUMNS
-        return _to_list(s, cols)
-
-    if field_def.type == FieldType.OBJECT:
-        keys = field_def.keys or DEFAULT_OBJECT_KEYS
-        return _to_object(s, keys)
-
-    return s  # fallback
+    return s  # fallback for any unrecognized type
 
 
 def apply_registry(
