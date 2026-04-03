@@ -1098,6 +1098,51 @@ async def cleanup_campaign_resources(campaign_id: str):
         )
 
 
+# ── Manual finalize for campaigns stuck in "sending" ─────────────────────────
+@router.post("/campaigns/{campaign_id}/finalize")
+async def force_finalize_campaign(campaign_id: str):
+    """
+    Force-finalize a campaign that is stuck in 'sending' status.
+    Safe to call any time — finalize_campaign() checks queued_count before
+    writing final stats, so calling it while tasks are still running just
+    defers until they complete.
+    """
+    try:
+        if not ObjectId.is_valid(campaign_id):
+            raise HTTPException(status_code=400, detail="Invalid campaign ID")
+
+        campaigns_collection = get_campaigns_collection()
+        campaign = await campaigns_collection.find_one({"_id": ObjectId(campaign_id)})
+        if not campaign:
+            raise HTTPException(status_code=404, detail="Campaign not found")
+
+        if campaign.get("status") not in ("sending", "processing", "queued"):
+            return {
+                "message": f"Campaign is already in '{campaign['status']}' state — no action needed",
+                "status": campaign["status"],
+            }
+
+        from tasks.campaign.email_campaign_tasks import finalize_campaign
+
+        result = finalize_campaign(campaign_id)
+
+        # Re-fetch to return final status
+        updated = await campaigns_collection.find_one({"_id": ObjectId(campaign_id)})
+        final_status = updated.get("status", "unknown") if updated else "unknown"
+
+        return {
+            "message": f"Finalize triggered — campaign is now '{final_status}'",
+            "campaign_id": campaign_id,
+            "final_status": final_status,
+            "finalize_result": result,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Force finalize failed for {campaign_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # New render endpoint to merge template content + dynamic fields for the campaign
 @router.post("/campaigns/{campaign_id}/render")
 async def render_campaign_email(campaign_id: str):

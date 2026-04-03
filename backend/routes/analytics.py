@@ -106,7 +106,8 @@ async def get_campaign_analytics(campaign_id: str):
                 "created_at": campaign.get("created_at"),
                 "started_at": campaign.get("started_at"),
                 "completed_at": campaign.get("completed_at"),
-                "last_batch_at": campaign.get("last_batch_at")
+                "last_batch_at": campaign.get("last_batch_at"),
+                "content_snapshot": campaign.get("content_snapshot")
             },
             "analytics": {
                 "_id": analytics["_id"],
