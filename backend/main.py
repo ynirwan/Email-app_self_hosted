@@ -118,6 +118,7 @@ from routes import (
     automation_analytics,
     audit,
     unsubscribe,
+    tracking,
 )
 
 # ============================================
@@ -715,6 +716,9 @@ app.include_router(webhooks.router, prefix="/api", tags=["Webhooks"])
 # Unsubscribe — public (clicked from email, no user session)
 app.include_router(unsubscribe.router, prefix="/api", tags=["Unsubscribe"])
 
+# Tracking pixel / click redirect — public (called from email clients)
+app.include_router(tracking.public_router, prefix="/api", tags=["Tracking"])
+
 # ── Protected routes ──────────────────────────────────────────────────────
 app.include_router(
     templates.router,
@@ -736,6 +740,13 @@ app.include_router(
 
 app.include_router(
     setting.router, prefix="/api/settings", tags=["Settings"], dependencies=_auth_dep
+)
+
+app.include_router(
+    tracking.settings_router,
+    prefix="/api/settings",
+    tags=["Settings"],
+    dependencies=_auth_dep,
 )
 
 app.include_router(

@@ -64,8 +64,10 @@ class Settings:
     CORS_ALLOW_METHODS: List[str] = ["*"]
     CORS_ALLOW_HEADERS: List[str] = ["*"]
 
-    # ===== UNSUBSCRIBE CONFIGURATION =====
+    # ===== TRACKING DOMAINS =====
     UNSUBSCRIBE_DOMAIN: str = os.getenv("UNSUBSCRIBE_DOMAIN", "gnagainbox.com")
+    OPEN_TRACKING_DOMAIN: str = os.getenv("OPEN_TRACKING_DOMAIN", "gnagainbox.com")
+    CLICK_TRACKING_DOMAIN: str = os.getenv("CLICK_TRACKING_DOMAIN", "gnagainbox.com")
 
     # ===== FILE UPLOAD =====
     MAX_FILE_SIZE_MB: int = int(os.getenv("MAX_FILE_SIZE_MB", "50"))
