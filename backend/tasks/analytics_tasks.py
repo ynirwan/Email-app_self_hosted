@@ -118,6 +118,43 @@ def generate_reports(self, report_type: str, campaign_id: str = None):
         logger.exception("Report generation error")
         raise
 
+@celery_app.task(bind=True, queue="analytics", name="tasks.aggregate_real_time_analytics")
+def aggregate_real_time_analytics(self):
+    """Aggregate real-time analytics for active campaigns (runs every 5 min)."""
+    try:
+        campaigns_collection = get_sync_campaigns_collection()
+        email_logs_collection = get_sync_email_logs_collection()
+
+        active_campaigns = list(campaigns_collection.find(
+            {"status": {"$in": ["sending", "paused"]}},
+            {"_id": 1, "processed_count": 1, "failed_count": 1, "queued_count": 1}
+        ))
+
+        updated = 0
+        for campaign in active_campaigns:
+            campaign_id = campaign["_id"]
+            pipeline = [
+                {"$match": {"campaign_id": campaign_id}},
+                {"$group": {"_id": "$latest_status", "count": {"$sum": 1}}}
+            ]
+            stats = {s["_id"]: s["count"] for s in email_logs_collection.aggregate(pipeline)}
+            campaigns_collection.update_one(
+                {"_id": campaign_id},
+                {"$set": {
+                    "real_time_sent": stats.get("sent", 0) + stats.get("delivered", 0),
+                    "real_time_failed": stats.get("failed", 0),
+                    "real_time_updated_at": datetime.utcnow(),
+                }}
+            )
+            updated += 1
+
+        logger.info(f"aggregate_real_time_analytics: updated {updated} active campaigns")
+        return {"updated_campaigns": updated}
+    except Exception as e:
+        logger.error(f"aggregate_real_time_analytics failed: {e}")
+        return {"error": str(e)}
+
+
 @celery_app.task(bind=True, queue="analytics", name="tasks.track_email_sending_throughput")
 def track_email_sending_throughput(self):
     """Track email sending throughput - simplified version"""

@@ -595,6 +595,31 @@ def cleanup_health_reports(self):
         logger.error(f"Health reports cleanup failed: {e}")
         return {"error": str(e)}
 
+@celery_app.task(bind=True, queue="monitoring", name="tasks.monitor_system_resources")
+def monitor_system_resources(self):
+    """Collect basic system resource metrics (CPU, memory) and log them."""
+    try:
+        import psutil
+        cpu_percent = psutil.cpu_percent(interval=1)
+        mem = psutil.virtual_memory()
+        disk = psutil.disk_usage("/")
+        metrics = {
+            "cpu_percent": cpu_percent,
+            "memory_percent": mem.percent,
+            "memory_used_mb": round(mem.used / 1024 / 1024, 1),
+            "disk_percent": disk.percent,
+            "timestamp": datetime.utcnow().isoformat(),
+        }
+        logger.info(f"System resources — CPU: {cpu_percent}%, MEM: {mem.percent}%, DISK: {disk.percent}%")
+        return metrics
+    except ImportError:
+        logger.warning("psutil not available — skipping system resource monitoring")
+        return {"status": "skipped", "reason": "psutil_not_installed"}
+    except Exception as e:
+        logger.error(f"monitor_system_resources failed: {e}")
+        return {"error": str(e)}
+
+
 # Global health monitor instance
 health_monitor = HealthMonitor()
 

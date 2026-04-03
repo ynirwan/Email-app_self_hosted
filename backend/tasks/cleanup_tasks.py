@@ -69,3 +69,61 @@ def cleanup_failed_campaigns(self):
         logger.exception("Failed campaign cleanup error")
         raise
 
+
+@celery_app.task(bind=True, queue="cleanup", name="tasks.cleanup_old_jobs")
+def cleanup_old_jobs(self, days_old: int = 7):
+    """Remove completed/expired background job records older than days_old days."""
+    try:
+        from database import get_sync_db
+        db = get_sync_db()
+        cutoff = datetime.utcnow() - timedelta(days=days_old)
+        result = db["background_jobs"].delete_many({
+            "status": {"$in": ["completed", "failed", "expired"]},
+            "updated_at": {"$lt": cutoff}
+        })
+        logger.info(f"cleanup_old_jobs: removed {result.deleted_count} old job records")
+        return {"deleted_count": result.deleted_count}
+    except Exception as e:
+        logger.error(f"cleanup_old_jobs failed: {e}")
+        return {"error": str(e)}
+
+
+@celery_app.task(bind=True, queue="cleanup", name="tasks.cleanup_inactive_subscribers")
+def cleanup_inactive_subscribers(self, days_old: int = 365):
+    """Archive subscriber records that have been unsubscribed/bounced for over a year."""
+    try:
+        from database import get_sync_subscribers_collection
+        subscribers_collection = get_sync_subscribers_collection()
+        cutoff = datetime.utcnow() - timedelta(days=days_old)
+        result = subscribers_collection.update_many(
+            {
+                "status": {"$in": ["unsubscribed", "bounced", "complained"]},
+                "updated_at": {"$lt": cutoff},
+                "archived": {"$ne": True},
+            },
+            {"$set": {"archived": True, "archived_at": datetime.utcnow()}}
+        )
+        logger.info(f"cleanup_inactive_subscribers: archived {result.modified_count} subscribers")
+        return {"archived_count": result.modified_count}
+    except Exception as e:
+        logger.error(f"cleanup_inactive_subscribers failed: {e}")
+        return {"error": str(e)}
+
+
+@celery_app.task(bind=True, queue="automation", name="tasks.cleanup_automation_executions")
+def cleanup_automation_executions(self, days_old: int = 30):
+    """Remove old automation execution logs to keep the collection lean."""
+    try:
+        from database import get_sync_db
+        db = get_sync_db()
+        cutoff = datetime.utcnow() - timedelta(days=days_old)
+        result = db["automation_executions"].delete_many({
+            "status": {"$in": ["completed", "failed", "skipped"]},
+            "executed_at": {"$lt": cutoff}
+        })
+        logger.info(f"cleanup_automation_executions: removed {result.deleted_count} records")
+        return {"deleted_count": result.deleted_count}
+    except Exception as e:
+        logger.error(f"cleanup_automation_executions failed: {e}")
+        return {"error": str(e)}
+
