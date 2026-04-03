@@ -126,67 +126,69 @@ export default function CampaignAnalytics() {
         </div>
       </div>
 
-      {/* ── Progress ── */}
-      <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
-        <h2 className="text-sm font-semibold text-gray-700 mb-5">
-          Campaign Progress
-        </h2>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-          <ProgressCard
-            title="Target"
-            value={campaign?.target_list_count || 0}
-            subtitle="Total to send"
-            icon="🎯"
-            color="bg-blue-50   text-blue-700   border-blue-200"
-          />
-          <ProgressCard
-            title="Processed"
-            value={campaign?.processed_count || 0}
-            subtitle="Processed"
-            icon="⚙️"
-            color="bg-green-50  text-green-700  border-green-200"
-          />
-          <ProgressCard
-            title="Sent"
-            value={campaign?.sent_count || 0}
-            subtitle="Successfully"
-            icon="✅"
-            color="bg-purple-50 text-purple-700 border-purple-200"
-          />
-          <ProgressCard
-            title="Queued"
-            value={campaign?.queued_count || 0}
-            subtitle="Waiting"
-            icon="⏳"
-            color="bg-orange-50 text-orange-700 border-orange-200"
-          />
+      {/* ── Progress — only while actively sending or paused ── */}
+      {["sending", "paused"].includes(campaign?.status) && (
+        <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
+          <h2 className="text-sm font-semibold text-gray-700 mb-5">
+            Campaign Progress
+          </h2>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+            <ProgressCard
+              title="Target"
+              value={campaign?.target_list_count || 0}
+              subtitle="Total to send"
+              icon="🎯"
+              color="bg-blue-50   text-blue-700   border-blue-200"
+            />
+            <ProgressCard
+              title="Processed"
+              value={campaign?.processed_count || 0}
+              subtitle="Processed"
+              icon="⚙️"
+              color="bg-green-50  text-green-700  border-green-200"
+            />
+            <ProgressCard
+              title="Sent"
+              value={campaign?.sent_count || 0}
+              subtitle="Successfully"
+              icon="✅"
+              color="bg-purple-50 text-purple-700 border-purple-200"
+            />
+            <ProgressCard
+              title="Queued"
+              value={campaign?.queued_count || 0}
+              subtitle="Waiting"
+              icon="⏳"
+              color="bg-orange-50 text-orange-700 border-orange-200"
+            />
+          </div>
+          <div className="mb-1 flex justify-between text-xs text-gray-500">
+            <span>Progress</span>
+            <span>{progress}%</span>
+          </div>
+          <div className="bg-gray-100 rounded-full h-2 mb-5">
+            <div
+              className="bg-blue-600 h-2 rounded-full transition-all duration-500"
+              style={{ width: `${progress}%` }}
+            />
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-4 border-t border-gray-100">
+            <TimelineItem label="Started" value={fmtD(campaign?.started_at)} />
+            <TimelineItem
+              label="Last Batch"
+              value={fmtD(campaign?.last_batch_at)}
+            />
+            <TimelineItem
+              label="Completed"
+              value={
+                campaign?.completed_at
+                  ? fmtD(campaign.completed_at)
+                  : "In progress"
+              }
+            />
+          </div>
         </div>
-        <div className="mb-1 flex justify-between text-xs text-gray-500">
-          <span>Progress</span>
-          <span>{progress}%</span>
-        </div>
-        <div className="bg-gray-100 rounded-full h-2 mb-5">
-          <div
-            className="bg-blue-600 h-2 rounded-full transition-all duration-500"
-            style={{ width: `${progress}%` }}
-          />
-        </div>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-4 border-t border-gray-100">
-          <TimelineItem label="Started" value={fmtD(campaign?.started_at)} />
-          <TimelineItem
-            label="Last Batch"
-            value={fmtD(campaign?.last_batch_at)}
-          />
-          <TimelineItem
-            label="Completed"
-            value={
-              campaign?.completed_at
-                ? fmtD(campaign.completed_at)
-                : "In progress"
-            }
-          />
-        </div>
-      </div>
+      )}
 
       {/* ── Engagement metrics ── */}
       <div>
@@ -281,6 +283,9 @@ export default function CampaignAnalytics() {
         <TopClickedLinks links={top_links} />
         <RecentActivity events={recent_events} />
       </div>
+
+      {/* ── Email Content Preview ── */}
+      <EmailContentPreview campaign={campaign} />
 
       {/* ── Campaign details ── */}
       <CampaignDetails campaign={campaign} />
@@ -517,6 +522,49 @@ const CampaignStatusBadge = ({ status }) => {
     >
       {cfg.label}
     </span>
+  );
+};
+
+const EmailContentPreview = ({ campaign }) => {
+  const [expanded, setExpanded] = useState(false);
+  const html = campaign?.content_snapshot?.html_content;
+
+  if (!html) return null;
+
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+      <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
+        <h3 className="text-sm font-semibold text-gray-700">📩 Email Content</h3>
+        <button
+          onClick={() => setExpanded((v) => !v)}
+          className="text-xs px-3 py-1.5 border border-gray-200 rounded-lg hover:bg-gray-50 text-gray-600 font-medium"
+        >
+          {expanded ? "Collapse" : "Expand"}
+        </button>
+      </div>
+      <div
+        className="overflow-hidden transition-all duration-300"
+        style={{ maxHeight: expanded ? "none" : "480px" }}
+      >
+        <iframe
+          srcDoc={html}
+          title="Email Preview"
+          sandbox="allow-same-origin"
+          className="w-full border-0"
+          style={{ height: expanded ? "800px" : "480px" }}
+        />
+      </div>
+      {!expanded && (
+        <div className="px-5 py-3 border-t border-gray-100 text-center">
+          <button
+            onClick={() => setExpanded(true)}
+            className="text-xs text-blue-600 hover:text-blue-700 font-medium"
+          >
+            Show full email ↓
+          </button>
+        </div>
+      )}
+    </div>
   );
 };
 

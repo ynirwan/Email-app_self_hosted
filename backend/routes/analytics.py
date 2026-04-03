@@ -31,7 +31,8 @@ async def get_campaign_analytics(campaign_id: str):
                 "title": 1, "subject": 1, "sender_name": 1, "sender_email": 1,
                 "reply_to": 1, "status": 1, "target_lists": 1, "target_list_count": 1,
                 "sent_count": 1, "processed_count": 1, "queued_count": 1,
-                "created_at": 1, "started_at": 1, "completed_at": 1, "last_batch_at": 1
+                "created_at": 1, "started_at": 1, "completed_at": 1, "last_batch_at": 1,
+                "content_snapshot": 1
             }
         )
         if not campaign:
