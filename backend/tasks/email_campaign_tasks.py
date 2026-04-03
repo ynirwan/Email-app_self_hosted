@@ -20,6 +20,7 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Any, Optional
 from bson import ObjectId
 from celery_app import celery_app
+from celery import chord, group
 
 from tasks.task_config import task_settings
 from database import (
@@ -693,7 +694,10 @@ def send_campaign_batch(
             }
 
         if campaign_controller.is_campaign_paused(campaign_id):
-            return {"status": "paused", "campaign_id": campaign_id}
+            # Save cursor so resume picks up from exactly this position
+            cursor_key = f"campaign:cursor:{campaign_id}"
+            campaign_controller.redis_client.set(cursor_key, last_id or "", ex=86400)
+            return {"status": "paused", "campaign_id": campaign_id, "saved_cursor": last_id}
         if campaign_controller.is_campaign_stopped(campaign_id):
             return {"status": "stopped", "campaign_id": campaign_id}
 
@@ -743,32 +747,32 @@ def send_campaign_batch(
                 "next_task_id": next_task.id,
             }
 
-        queued_tasks = []
-        for subscriber in new_subscribers:
-            try:
-                task = send_single_campaign_email.delay(
-                    campaign_id, str(subscriber["_id"])
-                )
-                queued_tasks.append(task.id)
-            except Exception as e:
-                logger.error(f"Failed to queue email task: {e}")
+        # Build immutable signatures for each individual email (si = ignore previous result)
+        email_sigs = [
+            send_single_campaign_email.si(campaign_id, str(sub["_id"]))
+            for sub in new_subscribers
+        ]
 
         campaigns_collection.update_one(
             {"_id": ObjectId(campaign_id)},
             {
-                "$inc": {"queued_count": len(queued_tasks)},
+                "$inc": {"queued_count": len(new_subscribers)},
                 "$set": {"last_batch_at": datetime.utcnow()},
             },
         )
 
         next_task_id = None
         if len(subscribers) == batch_size:
+            # More subscribers remain — chain next batch ONLY after this batch completes
             last_subscriber = subscribers[-1]
-            next_task = send_campaign_batch.apply_async(
-                args=[campaign_id, batch_size, str(last_subscriber["_id"])],
-                countdown=30,
+            next_batch_sig = send_campaign_batch.si(
+                campaign_id, batch_size, str(last_subscriber["_id"])
             )
-            next_task_id = next_task.id
+            result = chord(email_sigs)(next_batch_sig)
+            next_task_id = result.id
+        else:
+            # Final batch — no next batch needed, dispatch individually
+            group(email_sigs).delay()
 
         execution_time = time.time() - start_time
         return {

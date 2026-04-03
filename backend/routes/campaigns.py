@@ -5,6 +5,9 @@ from datetime import datetime
 from bson import ObjectId
 import logging
 import smtplib
+import redis as redis_lib
+import json
+from core.config import settings, get_redis_key
 from tasks.campaign.snapshot_utils import build_snapshot
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -727,6 +730,14 @@ async def pause_campaign(campaign_id: str):
             {"$set": {"status": "paused", "paused_at": datetime.utcnow()}},
         )
 
+        # Set Redis pause flag so in-flight Celery batch tasks stop immediately
+        r = redis_lib.Redis.from_url(settings.REDIS_URL)
+        pause_key = get_redis_key("campaign_paused", campaign_id)
+        r.setex(pause_key, 3600, json.dumps({
+            "paused_at": datetime.utcnow().isoformat(),
+            "reason": "api_request"
+        }))
+
         logger.info(f"Campaign paused: {campaign_id}")
         return {"message": "Campaign paused successfully", "status": "paused"}
 
@@ -756,9 +767,20 @@ async def resume_campaign(campaign_id: str):
                 detail=f"Cannot resume campaign in '{campaign.get('status')}' status",
             )
 
-        # Re-trigger sending logic
+        # Clear the Redis pause flag and restore the saved cursor position
+        r = redis_lib.Redis.from_url(settings.REDIS_URL)
+        r.delete(get_redis_key("campaign_paused", campaign_id))
+
+        cursor_key = f"campaign:cursor:{campaign_id}"
+        saved_bytes = r.get(cursor_key)
+        last_id = saved_bytes.decode() if saved_bytes else None
+        if last_id == "":
+            last_id = None
+        r.delete(cursor_key)
+
+        # Resume from saved cursor — not from the beginning
         task = send_campaign_batch.delay(
-            campaign_id=campaign_id, batch_size=None, last_id=None
+            campaign_id=campaign_id, batch_size=None, last_id=last_id
         )
 
         await campaigns_collection.update_one(
