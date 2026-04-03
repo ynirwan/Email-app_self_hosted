@@ -706,7 +706,8 @@ def send_campaign_batch(
         if not subscribers:
             processed_count = campaign.get("processed_count", 0)
             target_count = campaign.get("target_list_count", 0)
-            if processed_count >= target_count or not target_count:
+            # Finalize if: cursor existed (scanned whole list), counts match, or no target set
+            if last_id or processed_count >= target_count or not target_count:
                 finalize_result = finalize_campaign(campaign_id)
                 return {
                     "status": "campaign_completed",
@@ -737,6 +738,15 @@ def send_campaign_batch(
         ]
 
         if not new_subscribers:
+            if len(subscribers) < batch_size:
+                # Last page of subscribers, all already sent — finalize instead of chaining
+                finalize_result = finalize_campaign(campaign_id)
+                return {
+                    "status": "campaign_completed",
+                    "processed_count": campaign.get("processed_count", 0),
+                    "target_count": campaign.get("target_list_count", 0),
+                    "finalize_result": finalize_result,
+                }
             last_subscriber = subscribers[-1]
             next_task = send_campaign_batch.delay(
                 campaign_id, batch_size, str(last_subscriber["_id"])

@@ -1,0 +1,23 @@
+[2026-04-03 08:56:44,291: INFO/MainProcess] Task tasks.check_scheduled_campaigns[d194e13a-09f1-4448-af31-9de0906905ec] received
+
+[2026-04-03 08:57:13,082: INFO/ForkPoolWorker-28] Task tasks.check_scheduled_campaigns[d194e13a-09f1-4448-af31-9de0906905ec] succeeded in 28.69462085199848s: {'status': 'completed', 'checked_at': '2026-04-03T08:56:44.396420', 'triggered_count': 0, 'triggered_campaigns': []}
+
+[2026-04-03 08:57:40,196: INFO/MainProcess] Task tasks.send_campaign_batch[07e3e097-cde6-40e0-ad61-b2c25195399b] received
+
+[2026-04-03 08:57:41,893: INFO/MainProcess] Task tasks.send_campaign_batch[f392783a-d33c-49ce-bbfd-a5a70f112d25] received
+
+[2026-04-03 08:57:41,931: INFO/ForkPoolWorker-28] Task tasks.send_campaign_batch[07e3e097-cde6-40e0-ad61-b2c25195399b] succeeded in 1.7094714779996139s: {'status': 'batch_already_processed', 'total_subscribers': 1000, 'next_task_id': 'f392783a-d33c-49ce-bbfd-a5a70f112d25'}
+
+[2026-04-03 08:57:44,191: INFO/MainProcess] Task tasks.check_scheduled_campaigns[f748666c-66fc-47dc-ada2-dc8810c79237] received
+
+[2026-04-03 08:57:44,283: INFO/ForkPoolWorker-28] Task tasks.check_scheduled_campaigns[f748666c-66fc-47dc-ada2-dc8810c79237] succeeded in 0.08505568399959884s: {'status': 'completed', 'checked_at': '2026-04-03T08:57:44.198387', 'triggered_count': 0, 'triggered_campaigns': []}
+
+[2026-04-03 08:58:05,549: INFO/MainProcess] Task tasks.send_campaign_batch[e3b828b9-0d8e-4a48-b048-74bd80cc3ea3] received
+
+[2026-04-03 08:58:05,558: INFO/ForkPoolWorker-28] Batch lock held by task f392783a-d33c-49ce-bbfd-a5a70f112d25 for campaign 69cf785ab7b120e5b74ff625 — skipping duplicate
+
+[2026-04-03 08:58:05,560: INFO/ForkPoolWorker-28] Task tasks.send_campaign_batch[e3b828b9-0d8e-4a48-b048-74bd80cc3ea3] succeeded in 0.007245888999023009s: {'status': 'skipped_duplicate_batch', 'campaign_id': '69cf785ab7b120e5b74ff625', 'lock_held_by': 'f392783a-d33c-49ce-bbfd-a5a70f112d25'}
+
+[2026-04-03 08:58:05,616: INFO/ForkPoolWorker-29] Task tasks.send_campaign_batch[f392783a-d33c-49ce-bbfd-a5a70f112d25] succeeded in 23.634228869999788s: {'status': 'batch_already_processed', 'total_subscribers': 1000, 'next_task_id': 'e3b828b9-0d8e-4a48-b048-74bd80cc3ea3'}
+
+[2026-04-03 08:58:44,192: INFO/MainProcess] Task tasks.check_scheduled_campaigns[9e69c24c-3d12-4a87-809a-2ae258e20bf9] received
