@@ -4,71 +4,7 @@ import API from "../api";
 import Papa from "papaparse";
 import { useNavigate } from "react-router-dom";
 
-// ─── All 14 backend standard fields ──────────────────────────
-const ALL_STANDARD_FIELDS = [
-  "first_name",
-  "last_name",
-  "phone",
-  "company",
-  "country",
-  "city",
-  "state",
-  "zip_code",
-  "language",
-  "timezone",
-  "gender",
-  "date_of_birth",
-  "website",
-  "job_title",
-];
-
-// ─── Field types matching backend FieldType enum ──────────────
-const FIELD_TYPES = [
-  { value: "string", label: "Text" },
-  { value: "number", label: "Number" },
-  { value: "boolean", label: "Boolean" },
-  { value: "date", label: "Date" },
-];
-
-// ─── Auto-detect field type from CSV column samples ───────────
-function detectFieldType(colName, csvHeaders, csvData) {
-  const colIdx = csvHeaders.indexOf(colName);
-  if (colIdx === -1) return "string";
-
-  const samples = csvData
-    .map((row) => (row[colIdx] !== undefined ? String(row[colIdx]).trim() : ""))
-    .filter((v) => v !== "")
-    .slice(0, 30);
-
-  if (samples.length === 0) return "string";
-
-  // Boolean: every value is a recognised bool token
-  const boolTokens = new Set(["true", "false", "yes", "no", "1", "0"]);
-  if (samples.every((v) => boolTokens.has(v.toLowerCase()))) return "boolean";
-
-  // Number: every value is a finite number (allow commas as thousands sep)
-  if (
-    samples.every((v) => {
-      const n = Number(v.replace(/,/g, ""));
-      return !isNaN(n) && isFinite(n);
-    })
-  )
-    return "number";
-
-  // Date: every value matches a common date pattern
-  const datePatterns = [
-    /^\d{4}-\d{2}-\d{2}$/, // YYYY-MM-DD
-    /^\d{2}\/\d{2}\/\d{4}$/, // MM/DD/YYYY or DD/MM/YYYY
-    /^\d{2}-\d{2}-\d{4}$/, // DD-MM-YYYY
-    /^\d{4}\/\d{2}\/\d{2}$/, // YYYY/MM/DD
-    /^\d{1,2} \w+ \d{4}$/, // 1 Jan 2025
-  ];
-  if (samples.every((v) => datePatterns.some((p) => p.test(v)))) return "date";
-
-  return "string";
-}
-
-// ─── debounce ─────────────────────────────────────────────────
+// ─── debounce extracted outside component (fixes hooks-in-component issue) ───
 function useDebounce(value, delay) {
   const [debouncedValue, setDebouncedValue] = useState(value);
   useEffect(() => {
@@ -78,7 +14,7 @@ function useDebounce(value, delay) {
   return debouncedValue;
 }
 
-// ─── helpers ──────────────────────────────────────────────────
+// ─── helpers ─────────────────────────────────────────────────
 const fmt = (n) => Number(n ?? 0).toLocaleString();
 const validateEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 
@@ -174,7 +110,13 @@ function ToastContainer({ notifications, onDismiss }) {
           key={n.id}
           onClick={() => onDismiss(n.id)}
           className={`pointer-events-auto flex items-center gap-2 px-4 py-3 rounded-lg shadow-lg text-sm font-medium cursor-pointer
-            ${n.type === "success" ? "bg-green-600 text-white" : n.type === "error" ? "bg-red-600 text-white" : "bg-gray-800 text-white"}`}
+            ${
+              n.type === "success"
+                ? "bg-green-600 text-white"
+                : n.type === "error"
+                  ? "bg-red-600 text-white"
+                  : "bg-gray-800 text-white"
+            }`}
         >
           {n.type === "success" ? "✓" : n.type === "error" ? "✕" : "ℹ"}{" "}
           {n.message}
@@ -347,7 +289,7 @@ function ProcessingBanner({
   );
 }
 
-// ─── AddSubscriberModal ───────────────────────────────────────
+// ─── AddSubscriberModal (extracted) ──────────────────────────
 function AddSubscriberModal({
   editingSubscriber,
   subscriberForm,
@@ -364,13 +306,11 @@ function AddSubscriberModal({
   onClose,
 }) {
   const isEditing = !!editingSubscriber;
-
   const stdFields = isEditing
     ? Object.keys(editingSubscriber?.standard_fields || {})
     : listFields.standard.length > 0
       ? listFields.standard
       : ["first_name", "last_name"];
-
   const custFields = isEditing
     ? Object.keys(editingSubscriber?.custom_fields || {})
     : listFields.custom;
@@ -468,34 +408,27 @@ function AddSubscriberModal({
             </select>
           </div>
 
-          {stdFields.length > 0 && (
-            <div className="border-t pt-3">
-              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">
-                Standard Fields
-              </p>
-              {stdFields.map((field) => (
-                <div key={field} className="mb-3">
-                  <label className="block text-sm font-medium mb-1 capitalize">
-                    {field.replace(/_/g, " ")}
-                  </label>
-                  <input
-                    type="text"
-                    value={subscriberForm.standard_fields?.[field] || ""}
-                    onChange={(e) =>
-                      setSubscriberForm((p) => ({
-                        ...p,
-                        standard_fields: {
-                          ...p.standard_fields,
-                          [field]: e.target.value,
-                        },
-                      }))
-                    }
-                    className="w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-              ))}
+          {stdFields.map((field) => (
+            <div key={field}>
+              <label className="block text-sm font-medium mb-1 capitalize">
+                {field.replace(/_/g, " ")}
+              </label>
+              <input
+                type="text"
+                value={subscriberForm.standard_fields?.[field] || ""}
+                onChange={(e) =>
+                  setSubscriberForm((p) => ({
+                    ...p,
+                    standard_fields: {
+                      ...p.standard_fields,
+                      [field]: e.target.value,
+                    },
+                  }))
+                }
+                className="w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
+              />
             </div>
-          )}
+          ))}
 
           {custFields.length > 0 && (
             <div className="border-t pt-3">
@@ -509,7 +442,7 @@ function AddSubscriberModal({
                   </label>
                   <input
                     type="text"
-                    value={String(subscriberForm.custom_fields?.[field] ?? "")}
+                    value={subscriberForm.custom_fields?.[field] || ""}
                     onChange={(e) =>
                       setSubscriberForm((p) => ({
                         ...p,
@@ -546,109 +479,11 @@ function AddSubscriberModal({
   );
 }
 
-// ─── CustomFieldRow (upload modal) ───────────────────────────
-// Auto-detects field type when a CSV column is selected.
-// The user can still override the detected type manually.
-function CustomFieldRow({ cf, idx, csvHeaders, csvData, onChange, onRemove }) {
-  const handleColumnChange = (colName) => {
-    if (!colName) {
-      onChange(idx, { ...cf, value: "", type: "string", autoDetected: false });
-      return;
-    }
-    const detected = detectFieldType(colName, csvHeaders, csvData);
-    onChange(idx, {
-      ...cf,
-      value: colName,
-      type: detected,
-      autoDetected: true,
-    });
-  };
-
-  const handleTypeChange = (newType) => {
-    onChange(idx, { ...cf, type: newType, autoDetected: false });
-  };
-
-  const typeLabel =
-    FIELD_TYPES.find((t) => t.value === cf.type)?.label ?? "Text";
-
-  return (
-    <div className="border border-gray-200 rounded-lg p-3 space-y-2 bg-gray-50">
-      {/* Row 1: field name + CSV column */}
-      <div className="flex gap-2">
-        <input
-          type="text"
-          placeholder="Field name (e.g. order_count)"
-          value={cf.label}
-          onChange={(e) => onChange(idx, { ...cf, label: e.target.value })}
-          className="flex-1 px-3 py-2 border rounded-lg text-sm bg-white min-w-0"
-        />
-        <select
-          value={cf.value}
-          onChange={(e) => handleColumnChange(e.target.value)}
-          className="flex-1 px-3 py-2 border rounded-lg text-sm bg-white min-w-0"
-        >
-          <option value="">CSV column…</option>
-          {csvHeaders.map((h, i) => (
-            <option key={i} value={h}>
-              {h}
-            </option>
-          ))}
-        </select>
-        <button
-          onClick={() => onRemove(idx)}
-          className="px-3 py-2 border border-red-200 text-red-600 rounded-lg hover:bg-red-50 text-sm shrink-0"
-        >
-          ✕
-        </button>
-      </div>
-
-      {/* Row 2: type selector with auto-detected badge */}
-      <div className="flex items-center gap-2">
-        <label className="text-xs text-gray-500 whitespace-nowrap w-10 shrink-0">
-          Type
-        </label>
-        <select
-          value={cf.type}
-          onChange={(e) => handleTypeChange(e.target.value)}
-          className="flex-1 px-2.5 py-1.5 border rounded-lg text-xs bg-white"
-        >
-          {FIELD_TYPES.map((t) => (
-            <option key={t.value} value={t.value}>
-              {t.label}
-            </option>
-          ))}
-        </select>
-        {cf.autoDetected && (
-          <span
-            title="Type was auto-detected from column values. You can change it."
-            className="inline-flex items-center gap-1 text-xs bg-violet-100 text-violet-700 px-2 py-0.5 rounded-full whitespace-nowrap shrink-0 cursor-default"
-          >
-            ✦ auto
-          </span>
-        )}
-      </div>
-
-      {/* Sample value preview */}
-      {cf.value && (
-        <p className="text-xs text-gray-400 truncate">
-          Sample:{" "}
-          {csvData
-            .map((row) => row[csvHeaders.indexOf(cf.value)])
-            .find((v) => v !== undefined && String(v).trim() !== "") ??
-            "—"}{" "}
-          → detected as{" "}
-          <span className="font-medium text-gray-600">{typeLabel}</span>
-          {cf.autoDetected ? "" : " (manually set)"}
-        </p>
-      )}
-    </div>
-  );
-}
-
 // ─── Main Component ───────────────────────────────────────────
 export default function Subscribers() {
   const navigate = useNavigate();
 
+  // ── state ──────────────────────────────────────────────────
   const [subscribers, setSubscribers] = useState([]);
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
@@ -658,24 +493,29 @@ export default function Subscribers() {
   const [searchStats, setSearchStats] = useState(null);
   const [searchWarning, setSearchWarning] = useState("");
   const [searchStrategy] = useState("smart");
+  const searchTimeoutRef = useRef(null);
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [csvHeaders, setCsvHeaders] = useState([]);
   const [csvData, setCsvData] = useState([]);
   const [listName, setListName] = useState("");
+  const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadStatus, setUploadStatus] = useState("");
+  const [uploadStats, setUploadStats] = useState({
+    total: 0,
+    processed: 0,
+    speed: 0,
+    method: "",
+  });
   const [subscriberPage, setSubscriberPage] = useState(1);
   const [subscriberTotalPages, setSubscriberTotalPages] = useState(1);
   const [subscriberTotal, setSubscriberTotal] = useState(0);
-  const [showAllStandard, setShowAllStandard] = useState(false);
-
-  const emptyFieldMap = {
-    email: "",
-    standard: Object.fromEntries(ALL_STANDARD_FIELDS.map((f) => [f, ""])),
-    custom: [],
-  };
-  const [fieldMap, setFieldMap] = useState(emptyFieldMap);
-
+  // fieldMap.rows: [{csvHeader, sampleValue, mappedTo, fieldType}]
+  // mappedTo: "email" | "standard.FIELD" | "custom.LABEL" | "skip"
+  const emptyFieldMap = { rows: [] };
+  const [fieldMap, setFieldMap] = useState({ rows: [] });
   const [lists, setLists] = useState([]);
+  const [selectedListName, setSelectedListName] = useState("");
+  const [selectedSubscribers, setSelectedSubscribers] = useState([]);
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingSubscriber, setEditingSubscriber] = useState(null);
   const [processingJobs, setProcessingJobs] = useState(new Map());
@@ -698,6 +538,7 @@ export default function Subscribers() {
 
   const debouncedSearchTerm = useDebounce(searchTerm, 300);
 
+  // ── toast ──────────────────────────────────────────────────
   const showToast = useCallback((message, type = "info") => {
     const id = uuidv4();
     setNotifications((prev) => [...prev, { id, message, type }]);
@@ -712,6 +553,7 @@ export default function Subscribers() {
     [],
   );
 
+  // ── job polling ────────────────────────────────────────────
   const stopPollingJobs = () => {
     if (pollingIntervalRef.current) {
       clearInterval(pollingIntervalRef.current);
@@ -769,12 +611,14 @@ export default function Subscribers() {
     return () => stopPollingJobs();
   }, [startPollingJobs]);
 
+  // ── auto-search on debounced term ──────────────────────────
   useEffect(() => {
     if (debouncedSearchTerm.length >= 2 || debouncedSearchTerm.length === 0) {
       fetchAllSubscribers(1, debouncedSearchTerm, statusFilter);
     }
   }, [debouncedSearchTerm, statusFilter]);
 
+  // ── data fetchers ──────────────────────────────────────────
   const fetchAllSubscribers = async (page = 1, search = "", status = "") => {
     try {
       setLoading(true);
@@ -817,112 +661,275 @@ export default function Subscribers() {
     fetchAllSubscribers(1, "", "");
   }, []);
 
+  // ── CSV upload ─────────────────────────────────────────────
+  // ── Auto-mapping helpers ───────────────────────────────────
+  const ALL_STANDARD_FIELDS = [
+    "first_name",
+    "last_name",
+    "phone",
+    "company",
+    "country",
+    "city",
+    "state",
+    "zip_code",
+    "language",
+    "timezone",
+    "gender",
+    "date_of_birth",
+    "website",
+    "job_title",
+  ];
+  const FIELD_TYPES = [
+    { value: "string", label: "Text" },
+    { value: "number", label: "Number" },
+    { value: "boolean", label: "Boolean" },
+    { value: "date", label: "Date" },
+  ];
+
+  // Fuzzy match: normalize a string to lowercase alphanum for comparison
+  const norm = (s) => (s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+
+  const autoMapHeaders = (headers, data) => {
+    const sample = data.slice(0, 5); // first 5 data rows for sample values
+
+    const rows = headers.map((header, colIdx) => {
+      const n = norm(header);
+      const sampleValue =
+        sample.map((r) => r[colIdx]).find((v) => v && v.trim()) || "";
+
+      // 1. Email detection
+      if (
+        n === "email" ||
+        n === "emailaddress" ||
+        n === "e_mail" ||
+        n === "mail"
+      ) {
+        return {
+          csvHeader: header,
+          sampleValue,
+          mappedTo: "email",
+          fieldType: "string",
+        };
+      }
+
+      // 2. Standard field match
+      for (const sf of ALL_STANDARD_FIELDS) {
+        if (norm(sf) === n || norm(sf.replace(/_/g, "")) === n) {
+          return {
+            csvHeader: header,
+            sampleValue,
+            mappedTo: `standard.${sf}`,
+            fieldType: "string",
+          };
+        }
+      }
+
+      // 3. Partial standard field match (e.g. "fname" → first_name)
+      const aliases = {
+        fname: "first_name",
+        firstname: "first_name",
+        forename: "first_name",
+        lname: "last_name",
+        lastname: "last_name",
+        surname: "last_name",
+        mob: "phone",
+        mobile: "phone",
+        cell: "phone",
+        telephone: "phone",
+        org: "company",
+        organisation: "company",
+        organization: "company",
+        zip: "zip_code",
+        postal: "zip_code",
+        postcode: "zip_code",
+        dob: "date_of_birth",
+        birthday: "date_of_birth",
+        birthdate: "date_of_birth",
+        lang: "language",
+        locale: "language",
+        jobtitle: "job_title",
+        title: "job_title",
+        role: "job_title",
+        position: "job_title",
+        web: "website",
+        url: "website",
+        site: "website",
+      };
+      if (aliases[n]) {
+        return {
+          csvHeader: header,
+          sampleValue,
+          mappedTo: `standard.${aliases[n]}`,
+          fieldType: "string",
+        };
+      }
+
+      // 4. Type inference from sample value
+      let guessedType = "string";
+      if (sampleValue) {
+        if (/^\d{4}-\d{2}-\d{2}|\d{2}[\/\-]\d{2}[\/\-]\d{4}/.test(sampleValue))
+          guessedType = "date";
+        else if (/^(true|false|yes|no|1|0)$/i.test(sampleValue.trim()))
+          guessedType = "boolean";
+        else if (/^-?\d+(\.\d+)?$/.test(sampleValue.trim()))
+          guessedType = "number";
+      }
+
+      // 5. Unmapped → custom field using CSV header as the field name
+      return {
+        csvHeader: header,
+        sampleValue,
+        mappedTo: `custom.${header.trim().toLowerCase().replace(/\s+/g, "_")}`,
+        fieldType: guessedType,
+      };
+    });
+
+    return rows;
+  };
+
   const handleFileUpload = (e) => {
     const file = e.target.files[0];
     if (!file) return;
     Papa.parse(file, {
       complete: (results) => {
         if (results.data?.length > 0) {
-          setCsvHeaders(results.data[0]);
-          setCsvData(results.data.slice(1));
+          const headers = results.data[0];
+          const data = results.data
+            .slice(1)
+            .filter((r) => r.some((c) => c?.trim()));
+          setCsvHeaders(headers);
+          setCsvData(data);
+          // Auto-map immediately
+          const rows = autoMapHeaders(headers, data);
+          setFieldMap({ rows });
           setUploadStatus("ready");
         } else {
-          alert("CSV file appears to be empty or invalid");
+          showToast("CSV file appears to be empty or invalid", "error");
           setUploadStatus("");
         }
       },
       error: () => {
-        alert("Failed to parse CSV file");
+        showToast("Failed to parse CSV file", "error");
         setUploadStatus("");
       },
     });
   };
 
   const handleUploadList = async () => {
-    if (!fieldMap.email || !listName.trim()) return;
+    const emailRow = fieldMap.rows.find((r) => r.mappedTo === "email");
+    if (!emailRow || !listName.trim()) return;
+
+    // Build field registry from rows
+    const standardFields = [];
+    const customFields = {};
+    fieldMap.rows.forEach((row) => {
+      if (row.mappedTo === "email" || row.mappedTo === "skip") return;
+      if (row.mappedTo.startsWith("standard.")) {
+        standardFields.push(row.mappedTo.replace("standard.", ""));
+      } else if (row.mappedTo.startsWith("custom.")) {
+        const fieldName = row.mappedTo.replace("custom.", "");
+        customFields[fieldName] = {
+          type: row.fieldType || "string",
+          columns: null,
+          keys: null,
+        };
+      }
+    });
+
+    // Build subscriber rows (CPU work, do before any state changes)
+    const emailColIdx = csvHeaders.indexOf(emailRow.csvHeader);
+    const subscribers = csvData
+      .map((row) => {
+        const email = row[emailColIdx]?.trim();
+        if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return null;
+        const fields = {};
+        fieldMap.rows.forEach((mapRow) => {
+          if (mapRow.mappedTo === "email" || mapRow.mappedTo === "skip") return;
+          const colIdx = csvHeaders.indexOf(mapRow.csvHeader);
+          const val = row[colIdx];
+          if (val !== undefined && val !== "") {
+            const fieldName = mapRow.mappedTo.startsWith("standard.")
+              ? mapRow.mappedTo.replace("standard.", "")
+              : mapRow.mappedTo.replace("custom.", "");
+            fields[fieldName] = val;
+          }
+        });
+        return { email, status: "active", fields };
+      })
+      .filter(Boolean);
+
+    if (subscribers.length === 0) {
+      showToast("No valid email addresses found in the CSV", "error");
+      return;
+    }
+
+    // ── Close modal immediately — don't wait for the POST ──────────────
+    // For large lists the POST can take 10-30s; the user should be able to
+    // navigate away while the upload runs. Progress is shown in the banner.
+    const uploadingFor = listName.trim();
+    const uploadingCount = subscribers.length;
+
+    setShowUploadModal(false);
+    resetUploadModal();
+
+    // Optimistically show the job in the processing banner right away
+    setProcessingJobs((prev) =>
+      new Map(prev).set(uploadingFor, {
+        list_name: uploadingFor,
+        status: "pending",
+        processed: 0,
+        total: uploadingCount,
+      }),
+    );
+    setShowProcessingBanner(true);
+
+    // POST in background — modal is already closed
     try {
-      setUploadStatus("processing");
-
-      const mappedStandardFields = ALL_STANDARD_FIELDS.filter(
-        (key) => fieldMap.standard[key],
-      );
-
-      const fieldRegistry = {
-        list_name: listName.trim(),
-        standard: mappedStandardFields,
-        custom: fieldMap.custom
-          .filter((cf) => cf.label && cf.value)
-          .reduce((acc, cf) => {
-            acc[cf.label] = { type: cf.type || "string" };
-            return acc;
-          }, {}),
-      };
-
-      const subscribers = csvData
-        .map((row) => {
-          const fields = {};
-          ALL_STANDARD_FIELDS.forEach((fieldName) => {
-            const csvCol = fieldMap.standard[fieldName];
-            if (csvCol) {
-              const val = row[csvHeaders.indexOf(csvCol)];
-              if (val !== undefined && String(val).trim() !== "")
-                fields[fieldName] = val;
-            }
-          });
-          fieldMap.custom.forEach((cf) => {
-            if (cf.label && cf.value) {
-              const val = row[csvHeaders.indexOf(cf.value)];
-              // Use ?? so that false / 0 are kept; only skip truly absent cells
-              if (
-                val !== undefined &&
-                val !== null &&
-                String(val).trim() !== ""
-              )
-                fields[cf.label] = val;
-            }
-          });
-          return {
-            email: row[csvHeaders.indexOf(fieldMap.email)],
-            status: "active",
-            fields,
-          };
-        })
-        .filter((s) => s.email && String(s.email).trim());
-
-      const uploadPayload = {
-        list_name: listName.trim(),
+      const response = await API.post("/subscribers/background-upload", {
+        list_name: uploadingFor,
         subscribers,
-        field_registry: fieldRegistry,
-      };
-
-      const response = await API.post(
-        "/subscribers/background-upload",
-        uploadPayload,
-      );
+        field_registry: {
+          list_name: uploadingFor,
+          standard: standardFields,
+          custom: customFields,
+        },
+      });
 
       if (response.data?.job_id) {
-        showToast(
-          `Upload started for "${listName}" — processing in background`,
-          "success",
-        );
-        setProcessingJobs((prev) =>
-          new Map(prev).set(listName, {
-            list_name: listName,
+        // Update the optimistic entry with the real job_id so retry/cancel works
+        setProcessingJobs((prev) => {
+          const next = new Map(prev);
+          next.set(uploadingFor, {
+            list_name: uploadingFor,
             status: "pending",
             job_id: response.data.job_id,
             processed: 0,
-            total: subscribers.length,
-          }),
+            total: uploadingCount,
+          });
+          return next;
+        });
+        startPollingJobs();
+        showToast(
+          `Upload started for "${uploadingFor}" — ${fmt(uploadingCount)} rows processing`,
+          "success",
         );
-        setShowProcessingBanner(true);
+      } else {
+        showToast(`Upload submitted for "${uploadingFor}"`, "success");
         startPollingJobs();
       }
-      setShowUploadModal(false);
-      resetUploadModal();
       fetchLists();
     } catch (err) {
-      showToast(err.response?.data?.detail || "Upload failed", "error");
-      setUploadStatus("ready");
+      // Upload POST itself failed — remove the optimistic banner entry
+      setProcessingJobs((prev) => {
+        const next = new Map(prev);
+        next.delete(uploadingFor);
+        return next;
+      });
+      if ((prev) => prev.size === 0) setShowProcessingBanner(false);
+      showToast(
+        err.response?.data?.detail || "Upload failed — please try again",
+        "error",
+      );
     }
   };
 
@@ -930,24 +937,12 @@ export default function Subscribers() {
     setCsvHeaders([]);
     setCsvData([]);
     setListName("");
+    setUploadProgress(0);
     setUploadStatus("");
-    setShowAllStandard(false);
-    setFieldMap(emptyFieldMap);
+    setFieldMap({ rows: [] });
   };
 
-  const handleCustomFieldChange = (idx, updated) => {
-    const next = [...fieldMap.custom];
-    next[idx] = updated;
-    setFieldMap((p) => ({ ...p, custom: next }));
-  };
-
-  const handleCustomFieldRemove = (idx) => {
-    setFieldMap((p) => ({
-      ...p,
-      custom: p.custom.filter((_, i) => i !== idx),
-    }));
-  };
-
+  // ── subscriber CRUD ────────────────────────────────────────
   const handleAddSubscriber = async () => {
     if (!subscriberForm.email || !validateEmail(subscriberForm.email)) {
       showToast("Valid email is required", "error");
@@ -958,13 +953,7 @@ export default function Subscribers() {
       return;
     }
     try {
-      await API.post("/subscribers/", {
-        email: subscriberForm.email.toLowerCase().trim(),
-        list: subscriberForm.list,
-        status: subscriberForm.status,
-        standard_fields: subscriberForm.standard_fields || {},
-        custom_fields: subscriberForm.custom_fields || {},
-      });
+      await API.post("/subscribers/", subscriberForm);
       showToast("Subscriber added", "success");
       setShowAddModal(false);
       setSubscriberForm(emptyForm);
@@ -980,13 +969,7 @@ export default function Subscribers() {
 
   const handleEditSubscriber = async () => {
     try {
-      await API.put(`/subscribers/${editingSubscriber._id}`, {
-        email: subscriberForm.email.toLowerCase().trim(),
-        list: subscriberForm.list,
-        status: subscriberForm.status,
-        standard_fields: subscriberForm.standard_fields || {},
-        custom_fields: subscriberForm.custom_fields || {},
-      });
+      await API.put(`/subscribers/${editingSubscriber._id}`, subscriberForm);
       showToast("Subscriber updated", "success");
       setShowAddModal(false);
       setEditingSubscriber(null);
@@ -1033,8 +1016,8 @@ export default function Subscribers() {
       try {
         const res = await API.get(`/subscribers/lists/${val}/fields`);
         setListFields({
-          standard: res.data.standard || [],
-          custom: res.data.custom || [],
+          standard: res.data.standard_fields || [],
+          custom: res.data.custom_fields || [],
         });
       } catch {
         setListFields({ standard: [], custom: [] });
@@ -1081,6 +1064,7 @@ export default function Subscribers() {
     }
   };
 
+  // ── banner handlers ────────────────────────────────────────
   const handleClearFailed = async () => {
     try {
       await API.delete("/subscribers/jobs/clear-all");
@@ -1104,15 +1088,14 @@ export default function Subscribers() {
     }
   };
 
+  // ── derived data ───────────────────────────────────────────
   const totalAcrossLists = lists.reduce(
     (s, l) => s + (l.total_count || l.count || 0),
     0,
   );
   const totalActive = lists.reduce((s, l) => s + (l.active_count || 0), 0);
-  const visibleStandardFields = showAllStandard
-    ? ALL_STANDARD_FIELDS
-    : ALL_STANDARD_FIELDS.slice(0, 4);
 
+  // ── render ─────────────────────────────────────────────────
   return (
     <div className="space-y-6">
       <ToastContainer notifications={notifications} onDismiss={dismissToast} />
@@ -1234,6 +1217,7 @@ export default function Subscribers() {
                 const isFailed = job && job.status === "failed";
                 const total = list.total_count || list.count || 0;
                 const active = list.active_count || 0;
+
                 return (
                   <tr
                     key={`${list._id}-${i}`}
@@ -1320,6 +1304,7 @@ export default function Subscribers() {
                 );
               })}
             </tbody>
+            {/* Summary row */}
             {lists.length > 1 && (
               <tfoot>
                 <tr className="bg-gray-50 border-t-2 border-gray-200">
@@ -1364,6 +1349,7 @@ export default function Subscribers() {
             )}
           </div>
           <div className="flex items-center gap-2">
+            {/* Status filter */}
             <select
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value)}
@@ -1375,6 +1361,7 @@ export default function Subscribers() {
               <option value="bounced">Bounced</option>
               <option value="unsubscribed">Unsubscribed</option>
             </select>
+            {/* Search */}
             <div className="relative">
               <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 text-xs">
                 🔍
@@ -1524,9 +1511,10 @@ export default function Subscribers() {
       {/* ── Upload Modal ── */}
       {showUploadModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-5xl max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between px-6 py-4 border-b">
-              <h2 className="text-base font-semibold">Upload CSV</h2>
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-3xl max-h-[92vh] flex flex-col">
+            {/* Header */}
+            <div className="flex items-center justify-between px-6 py-4 border-b shrink-0">
+              <h2 className="text-base font-semibold">Upload Subscribers</h2>
               <button
                 onClick={() => {
                   setShowUploadModal(false);
@@ -1538,21 +1526,8 @@ export default function Subscribers() {
               </button>
             </div>
 
-            <div className="px-6 py-5 space-y-5">
-              {uploadStatus === "processing" && (
-                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                  <div className="flex items-center gap-2 mb-2">
-                    <div className="animate-spin h-4 w-4 border-2 border-blue-500 border-t-transparent rounded-full" />
-                    <span className="text-sm font-medium text-blue-800">
-                      Starting upload…
-                    </span>
-                  </div>
-                  <div className="bg-blue-200 rounded-full h-2">
-                    <div className="bg-blue-600 h-2 rounded-full animate-pulse w-1/3" />
-                  </div>
-                </div>
-              )}
-
+            <div className="overflow-y-auto flex-1 px-6 py-5 space-y-5">
+              {/* Step 1: file pick */}
               {uploadStatus === "" && (
                 <div>
                   <label className="block text-sm font-medium mb-2">
@@ -1564,14 +1539,21 @@ export default function Subscribers() {
                     onChange={handleFileUpload}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
                   />
+                  <p className="text-xs text-gray-400 mt-1">
+                    First row must be column headers. All columns will be
+                    auto-mapped.
+                  </p>
                 </div>
               )}
 
+              {/* No in-modal spinner — modal closes immediately on Start Upload */}
+
+              {/* Step 2: review mapping */}
               {uploadStatus === "ready" && csvHeaders.length > 0 && (
                 <>
                   {/* List name */}
                   <div>
-                    <label className="block text-sm font-medium mb-1.5">
+                    <label className="block text-sm font-medium mb-1">
                       List Name *
                     </label>
                     <input
@@ -1584,135 +1566,175 @@ export default function Subscribers() {
                     />
                   </div>
 
-                  {/* Email column */}
+                  {/* Mapping table */}
                   <div>
-                    <p className="text-sm font-medium mb-3">Map CSV Fields</p>
-                    <div className="space-y-4">
-                      <div>
-                        <label className="block text-xs font-medium text-gray-600 mb-1">
-                          Email Column *
-                        </label>
-                        <select
-                          value={fieldMap.email}
-                          onChange={(e) =>
-                            setFieldMap((p) => ({
-                              ...p,
-                              email: e.target.value,
-                            }))
-                          }
-                          className="w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
-                        >
-                          <option value="">Select email column…</option>
-                          {csvHeaders.map((h, i) => (
-                            <option key={i} value={h}>
-                              {h}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-
-                      {/* Standard fields */}
-                      <div>
-                        <div className="flex items-center justify-between mb-2">
-                          <label className="text-xs font-medium text-gray-600 uppercase tracking-wider">
-                            Standard Fields
-                          </label>
-                          <button
-                            onClick={() => setShowAllStandard((v) => !v)}
-                            className="text-xs text-blue-600 hover:underline"
-                          >
-                            {showAllStandard
-                              ? "Show fewer"
-                              : `Show all ${ALL_STANDARD_FIELDS.length}`}
-                          </button>
-                        </div>
-                        <div className="grid grid-cols-2 gap-2">
-                          {visibleStandardFields.map((field) => (
-                            <div key={field}>
-                              <label className="block text-xs text-gray-500 mb-0.5 capitalize">
-                                {field.replace(/_/g, " ")}
-                              </label>
-                              <select
-                                value={fieldMap.standard[field] || ""}
-                                onChange={(e) =>
-                                  setFieldMap((p) => ({
-                                    ...p,
-                                    standard: {
-                                      ...p.standard,
-                                      [field]: e.target.value,
-                                    },
-                                  }))
-                                }
-                                className="w-full px-2.5 py-1.5 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
-                              >
-                                <option value="">Optional…</option>
-                                {csvHeaders.map((h, i) => (
-                                  <option key={i} value={h}>
-                                    {h}
-                                  </option>
-                                ))}
-                              </select>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-
-                      {/* Custom fields with auto-detection */}
-                      <div>
-                        <div className="flex items-center justify-between mb-2">
-                          <label className="text-xs font-medium text-gray-600 uppercase tracking-wider">
-                            Custom Fields
-                          </label>
-                          {fieldMap.custom.length > 0 && (
-                            <span className="text-xs text-violet-600">
-                              ✦ = type auto-detected from data
-                            </span>
-                          )}
-                        </div>
-                        {fieldMap.custom.length > 0 && (
-                          <div className="space-y-2 mb-2">
-                            {fieldMap.custom.map((cf, idx) => (
-                              <CustomFieldRow
-                                key={idx}
-                                cf={cf}
-                                idx={idx}
-                                csvHeaders={csvHeaders}
-                                csvData={csvData}
-                                onChange={handleCustomFieldChange}
-                                onRemove={handleCustomFieldRemove}
-                              />
-                            ))}
-                          </div>
-                        )}
-                        <button
-                          onClick={() =>
-                            setFieldMap((p) => ({
-                              ...p,
-                              custom: [
-                                ...p.custom,
-                                {
-                                  label: "",
-                                  value: "",
-                                  type: "string",
-                                  autoDetected: false,
-                                },
-                              ],
-                            }))
-                          }
-                          className="text-sm text-blue-600 hover:underline"
-                        >
-                          + Add custom field
-                        </button>
-                      </div>
+                    <div className="flex items-center justify-between mb-2">
+                      <p className="text-sm font-medium">
+                        Field Mapping
+                        <span className="ml-2 text-xs text-gray-400 font-normal">
+                          — auto-mapped, review and adjust if needed
+                        </span>
+                      </p>
+                      <span className="text-xs text-gray-400">
+                        {csvData.length.toLocaleString()} rows
+                      </span>
                     </div>
+
+                    <div className="border border-gray-200 rounded-lg overflow-hidden">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="bg-gray-50 border-b text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            <th className="px-3 py-2 text-left w-1/4">
+                              CSV Column
+                            </th>
+                            <th className="px-3 py-2 text-left w-1/4">
+                              Sample Value
+                            </th>
+                            <th className="px-3 py-2 text-left w-5/12">
+                              Maps To
+                            </th>
+                            <th className="px-3 py-2 text-left w-1/6">Type</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-100">
+                          {fieldMap.rows.map((row, idx) => {
+                            const isEmail = row.mappedTo === "email";
+                            const isSkip = row.mappedTo === "skip";
+                            return (
+                              <tr
+                                key={idx}
+                                className={
+                                  isSkip
+                                    ? "bg-gray-50 opacity-50"
+                                    : isEmail
+                                      ? "bg-blue-50"
+                                      : ""
+                                }
+                              >
+                                {/* CSV header */}
+                                <td className="px-3 py-2 font-medium text-gray-800 whitespace-nowrap">
+                                  {isEmail && (
+                                    <span className="mr-1 text-blue-500">
+                                      ✉
+                                    </span>
+                                  )}
+                                  {row.csvHeader}
+                                </td>
+                                {/* Sample */}
+                                <td
+                                  className="px-3 py-2 text-gray-400 text-xs truncate max-w-[120px]"
+                                  title={row.sampleValue}
+                                >
+                                  {row.sampleValue || (
+                                    <span className="italic">empty</span>
+                                  )}
+                                </td>
+                                {/* Maps-to select */}
+                                <td className="px-3 py-2">
+                                  <select
+                                    value={row.mappedTo}
+                                    onChange={(e) => {
+                                      const newRows = [...fieldMap.rows];
+                                      newRows[idx] = {
+                                        ...newRows[idx],
+                                        mappedTo: e.target.value,
+                                      };
+                                      setFieldMap({ rows: newRows });
+                                    }}
+                                    className="w-full px-2 py-1 border rounded text-xs focus:ring-2 focus:ring-blue-500 bg-white"
+                                  >
+                                    <option value="email">
+                                      ✉ email (required)
+                                    </option>
+                                    <optgroup label="Standard Fields">
+                                      {[
+                                        "first_name",
+                                        "last_name",
+                                        "phone",
+                                        "company",
+                                        "country",
+                                        "city",
+                                        "state",
+                                        "zip_code",
+                                        "language",
+                                        "timezone",
+                                        "gender",
+                                        "date_of_birth",
+                                        "website",
+                                        "job_title",
+                                      ].map((sf) => (
+                                        <option
+                                          key={sf}
+                                          value={`standard.${sf}`}
+                                        >
+                                          {sf.replace(/_/g, " ")}
+                                        </option>
+                                      ))}
+                                    </optgroup>
+                                    <optgroup label="Custom Field">
+                                      <option
+                                        value={`custom.${row.csvHeader.trim().toLowerCase().replace(/\s+/g, "_")}`}
+                                      >
+                                        custom:{" "}
+                                        {row.csvHeader
+                                          .trim()
+                                          .toLowerCase()
+                                          .replace(/\s+/g, "_")}
+                                      </option>
+                                    </optgroup>
+                                    <option value="skip">
+                                      — skip this column
+                                    </option>
+                                  </select>
+                                </td>
+                                {/* Type select — only for custom fields */}
+                                <td className="px-3 py-2">
+                                  {row.mappedTo.startsWith("custom.") ? (
+                                    <select
+                                      value={row.fieldType || "string"}
+                                      onChange={(e) => {
+                                        const newRows = [...fieldMap.rows];
+                                        newRows[idx] = {
+                                          ...newRows[idx],
+                                          fieldType: e.target.value,
+                                        };
+                                        setFieldMap({ rows: newRows });
+                                      }}
+                                      className="w-full px-2 py-1 border rounded text-xs focus:ring-2 focus:ring-blue-500 bg-white"
+                                    >
+                                      <option value="string">Text</option>
+                                      <option value="number">Number</option>
+                                      <option value="boolean">Boolean</option>
+                                      <option value="date">Date</option>
+                                    </select>
+                                  ) : (
+                                    <span className="text-xs text-gray-300">
+                                      —
+                                    </span>
+                                  )}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    {/* Validation hint */}
+                    {!fieldMap.rows.some((r) => r.mappedTo === "email") && (
+                      <p className="text-xs text-red-500 mt-1.5">
+                        ⚠ No column is mapped to email — please set one column
+                        to "email (required)"
+                      </p>
+                    )}
                   </div>
 
                   {/* Preview */}
                   <div className="border border-gray-200 rounded-lg overflow-hidden">
                     <div className="px-3 py-2 bg-gray-50 border-b text-xs font-medium text-gray-600">
-                      Preview — first 3 rows ({csvData.length} total rows)
+                      Raw preview — first 3 rows
                     </div>
-                    <div className="overflow-x-auto max-h-32">
+                    <div className="overflow-x-auto max-h-28">
                       <table className="w-full text-xs">
                         <thead>
                           <tr>
@@ -1747,11 +1769,15 @@ export default function Subscribers() {
               )}
             </div>
 
+            {/* Footer */}
             {uploadStatus === "ready" && (
-              <div className="flex gap-3 px-6 py-4 border-t bg-gray-50 rounded-b-xl">
+              <div className="flex gap-3 px-6 py-4 border-t bg-gray-50 rounded-b-xl shrink-0">
                 <button
                   onClick={handleUploadList}
-                  disabled={!fieldMap.email || !listName.trim()}
+                  disabled={
+                    !fieldMap.rows.some((r) => r.mappedTo === "email") ||
+                    !listName.trim()
+                  }
                   className="flex-1 py-2.5 bg-blue-600 text-white text-sm font-semibold rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   🚀 Start Upload ({fmt(csvData.length)} rows)

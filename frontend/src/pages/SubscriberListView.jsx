@@ -13,6 +13,13 @@ const fmtD = (iso) =>
           })
         : "—";
 
+// Safely convert any stored field value (bool, number, string) to a
+// displayable string.  Returns null when the value is genuinely absent.
+function fieldDisplay(value) {
+    if (value === undefined || value === null || value === "") return null;
+    return String(value);
+}
+
 const STATUS_STYLE = {
     active: "bg-green-100 text-green-700",
     inactive: "bg-gray-100  text-gray-600",
@@ -426,21 +433,24 @@ export default function SubscriberListView() {
                                                 {sub.status}
                                             </span>
                                         </td>
-                                        {visibleCustomKeys.map((k) => (
-                                            <td
-                                                key={k}
-                                                className="px-4 py-3 text-gray-500 max-w-[120px] truncate"
-                                                title={
-                                                    sub.custom_fields?.[k] || ""
-                                                }
-                                            >
-                                                {sub.custom_fields?.[k] || (
-                                                    <span className="text-gray-300">
-                                                        —
-                                                    </span>
-                                                )}
-                                            </td>
-                                        ))}
+                                        {visibleCustomKeys.map((k) => {
+                                            const display = fieldDisplay(
+                                                sub.custom_fields?.[k],
+                                            );
+                                            return (
+                                                <td
+                                                    key={k}
+                                                    className="px-4 py-3 text-gray-500 max-w-[120px] truncate"
+                                                    title={display ?? ""}
+                                                >
+                                                    {display ?? (
+                                                        <span className="text-gray-300">
+                                                            —
+                                                        </span>
+                                                    )}
+                                                </td>
+                                            );
+                                        })}
                                         <td className="px-4 py-3 text-xs text-gray-400 text-right whitespace-nowrap">
                                             {fmtD(sub.created_at)}
                                         </td>
@@ -593,11 +603,11 @@ export default function SubscriberListView() {
                                             </label>
                                             <input
                                                 type="text"
-                                                value={
+                                                value={String(
                                                     editSubscriber
-                                                        .custom_fields[field] ||
-                                                    ""
-                                                }
+                                                        .custom_fields[field] ??
+                                                        "",
+                                                )}
                                                 onChange={(e) =>
                                                     setEditSubscriber((p) => ({
                                                         ...p,

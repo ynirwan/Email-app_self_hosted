@@ -114,6 +114,53 @@ export default function CreateCampaign() {
       .catch(() => setDynamicFields([]));
   }, [selectedTemplate]);
 
+  // ── Auto-map: when BOTH dynamicFields and availableFields are ready ──────
+  // Runs whenever either changes (template swap or audience change).
+  // Only fills slots that are currently empty — preserves manual overrides.
+  useEffect(() => {
+    if (!dynamicFields.length) return;
+
+    const allAvailable = [
+      ...availableFields.universal,
+      ...availableFields.standard.map(f => `standard.${f}`),
+      ...availableFields.custom.map(f => `custom.${f}`),
+    ];
+    if (!allAvailable.length) return;
+
+    const norm = (s) => (s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+
+    // Build a lookup: normalised name → full value string
+    const lookup = {};
+    availableFields.universal.forEach(f => { lookup[norm(f)] = f; });
+    availableFields.standard.forEach(f => {
+      lookup[norm(f)] = `standard.${f}`;
+      // also match without "standard." prefix
+    });
+    availableFields.custom.forEach(f => {
+      lookup[norm(f)] = `custom.${f}`;
+    });
+
+    setFieldMap(prev => {
+      const next = { ...prev };
+      dynamicFields.forEach(field => {
+        if (next[field] && next[field].trim() !== "") return; // already mapped
+        const n = norm(field);
+        if (lookup[n]) {
+          next[field] = lookup[n];
+        } else {
+          // Partial match — find first available field whose normalised name
+          // contains the template field name or vice versa
+          const match = allAvailable.find(av => {
+            const an = norm(av.replace(/^(standard|custom)\./, ""));
+            return an.includes(n) || n.includes(an);
+          });
+          if (match) next[field] = match;
+        }
+      });
+      return next;
+    });
+  }, [dynamicFields, availableFields]);
+
   // Extract HTML from different template types
   const extractHtmlFromTemplate = (template) => {
     if (!template) return "";
@@ -656,29 +703,47 @@ export default function CreateCampaign() {
             {/* Field mapping section */}
             {dynamicFields.length > 0 && (
               <div className="mb-4">
-                <h4 className="font-semibold mb-2">
-                  Map Template Dynamic Fields
-                </h4>
-                <p className="text-sm text-gray-600 mb-3">
-                  Map each template field to subscriber data fields.
+                <div className="flex items-center justify-between mb-2">
+                  <h4 className="font-semibold">Map Template Fields</h4>
+                  <span className="text-xs text-gray-400">
+                    {Object.values(fieldMap).filter(v => v && v.trim()).length}/{dynamicFields.length} mapped
+                    {Object.values(fieldMap).filter(v => v && v.trim()).length === dynamicFields.length && (
+                      <span className="ml-1 text-green-600 font-medium">✓ all set</span>
+                    )}
+                  </span>
+                </div>
+                <p className="text-xs text-gray-500 mb-3">
+                  Auto-mapped from your subscriber data. Review and adjust if needed.
                 </p>
-                {dynamicFields.map((field) => (
+                {dynamicFields.map((field) => {
+                  const mapped = fieldMap[field];
+                  const isAutoMapped = !!mapped && mapped !== "__EMPTY__" && mapped !== "__DEFAULT__";
+                  const isUnmapped = !mapped;
+                  return (
                   <div
                     key={field}
-                    className="mb-4 p-4 border rounded bg-gray-50"
+                    className={`mb-3 p-3 border rounded-lg ${isUnmapped ? "border-red-300 bg-red-50" : isAutoMapped ? "border-green-200 bg-green-50" : "border-gray-200 bg-gray-50"}`}
                   >
-                    <label className="block mb-2 font-medium">
-                      {field} <span className="text-red-600">*</span>
-                    </label>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label className="font-medium text-sm">
+                        {"{{"}{field}{"}}"}
+                      </label>
+                      {isAutoMapped && (
+                        <span className="text-xs text-green-600 bg-green-100 px-2 py-0.5 rounded-full">auto-mapped</span>
+                      )}
+                      {isUnmapped && (
+                        <span className="text-xs text-red-600 bg-red-100 px-2 py-0.5 rounded-full">needs mapping</span>
+                      )}
+                    </div>
                     <select
-                      className={`w-full px-3 py-2 border rounded mb-2 ${
-                        !fieldMap[field] ? "border-red-500" : "border-gray-300"
+                      className={`w-full px-3 py-2 border rounded text-sm ${
+                        isUnmapped ? "border-red-400" : "border-gray-300"
                       }`}
                       value={fieldMap[field] || ""}
                       onChange={(e) => handleFieldChange(field, e.target.value)}
                     >
                       <option value="" disabled>
-                        Select field mapping...
+                        Select mapping…
                       </option>
                       {/* Universal Fields */}
                       {availableFields.universal.length > 0 && (
@@ -727,23 +792,7 @@ export default function CreateCampaign() {
                         <option value="__DEFAULT__">Use Default Value</option>
                       </optgroup>
                     </select>
-                    {/* Show available fields info */}
-                    <div className="text-xs text-gray-500 mb-2">
-                      <strong>Available fields:</strong>
-                      <br />
-                      🌍 Universal:{" "}
-                      {availableFields.universal.join(", ") || "None"}
-                      <br />⭐ Standard:{" "}
-                      {availableFields.standard.join(", ") || "None"}
-                      <br />
-                      🔧 Custom: {availableFields.custom.join(", ") || "None"}
-                    </div>
-                    {/* Show selected mapping info */}
-                    {fieldMap[field] && (
-                      <div className="text-xs text-blue-600 mb-2">
-                        Selected: <strong>{fieldMap[field]}</strong>
-                      </div>
-                    )}
+
                     {/* Fallback value input — shown for __DEFAULT__ OR any real field mapping
                         so the fallback is used when the subscriber's value is empty */}
                     {fieldMap[field] && fieldMap[field] !== "__EMPTY__" && (
@@ -772,7 +821,8 @@ export default function CreateCampaign() {
                       </div>
                     )}
                   </div>
-                ))}
+                  );
+                })}
               </div>
             )}
 

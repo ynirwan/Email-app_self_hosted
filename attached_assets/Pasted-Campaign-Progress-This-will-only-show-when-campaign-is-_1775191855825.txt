@@ -1,0 +1,558 @@
+Campaign Progress
+
+
+This will only show when campaign is sending only or other status on draft and completed the progress dont need to show.
+
+
+need to show a content here on this page...the content will generate in campaign collection once it start sending 
+
+content snapshot 
+{
+  "_id": {
+    "$oid": "69c8c7c4420c301efd8dd3c4"
+  },
+  "title": "xcsx",
+  "subject": "zczxc",
+  "sender_name": "zcx",
+  "sender_email": "yogeshnirwan567@gmail.com",
+  "reply_to": "yogeshnirwan567@gmail.com",
+  "target_lists": [
+    "New"
+  ],
+  "target_segments": [],
+  "template_id": "69bfe108842eb8d30ee4a384",
+  "field_map": {
+    "current_date": "__EMPTY__",
+    "date_of_birth": "custom.dob",
+    "address.city": "standard.first_name",
+    "recipient.first_name": "custom.at_risk_since",
+    "reward_points": "custom.at_risk",
+    "days_since_last_order": "standard.last_name",
+    "o.name": "custom.orders",
+    "item.name": "custom.items",
+    "current_year": "custom.at_risk_since",
+    "promo.code": "custom.promo",
+    "order_count": "custom.address",
+    "loop.index": "standard.phone",
+    "recipient.language": "custom.items",
+    "address.state": "custom.days last order",
+    "last_purchase_date": "custom.at_risk_since",
+    "city": "standard.first_name",
+    "subscriber_id": "standard.phone",
+    "language": "custom.dob",
+    "signup_date": "custom.at_risk",
+    "item.original_price": "custom.dob",
+    "sent_at": "custom.dob",
+    "first_name": "custom.address",
+    "recipient.city": "custom.at_risk_since",
+    "recipient.country": "standard.country",
+    "email": "standard.country",
+    "o.description": "custom.days last order",
+    "tier": "custom.tier",
+    "total_spent": "custom.items",
+    "item.description": "custom.items",
+    "support_email": "custom.verfiredemail",
+    "zip_code": "custom.zip",
+    "unsubscribe_url": "__DEFAULT__",
+    "item.price": "custom.items",
+    "recipient.tier": "custom.reawrds",
+    "o.price": "custom.orders",
+    "address.zip": "custom.address",
+    "promo.expires_at": "custom.promo",
+    "last_name": "standard.last_name",
+    "address.country": "custom.address",
+    "country": "standard.country",
+    "phone": "standard.phone",
+    "promo.description": "custom.promo"
+  },
+  "field_types": {
+    "first_name": "string",
+    "last_name": "string",
+    "status": "string",
+    "country": "string",
+    "lan": "string",
+    "zip": "string",
+    "city": "string",
+    "dob": "string",
+    "ordercount": "string",
+    "totalspen": "string",
+    "days last order": "string",
+    "reawrds": "string",
+    "vip": "string",
+    "verfiredemail": "string",
+    "sms": "string",
+    "signup": "string",
+    "last purchase": "string",
+    "tier": "string",
+    "phone": "string",
+    "support": "string",
+    "promo": "string",
+    "address": "string",
+    "items": "string",
+    "orders": "string"
+  },
+  "field_mapping_strategy": {
+    "current_date": {
+      "type": "fallback",
+      "action": "__EMPTY__"
+    },
+    "date_of_birth": {
+      "type": "tiered_field",
+      "tier": "custom",
+      "field_name": "dob",
+      "average_availability": 0,
+      "per_list_availability": {
+        "New": 0
+      }
+    },
+    "address.city": {
+      "type": "tiered_field",
+      "tier": "standard",
+      "field_name": "first_name",
+      "average_availability": 0.8,
+      "per_list_availability": {
+        "New": 0.8
+      }
+    },
+    "recipient.first_name": {
+      "type": "tiered_field",
+      "tier": "custom",
+      "field_name": "at_risk_since",
+      "average_availability": 0,
+      "per_list_availability": {
+        "New": 0
+      }
+    },
+    "reward_points": {
+      "type": "tiered_field",
+      "tier": "custom",
+      "field_name": "at_risk",
+      "average_availability": 0,
+      "per_list_availability": {
+        "New": 0
+      }
+    },
+    "days_since_last_order": {
+      "type": "tiered_field",
+      "tier": "standard",
+      "field_name": "last_name",
+      "average_availability": 0.8,
+      "per_list_availability": {
+        "New": 0.8
+      }
+    },
+    "o.name": {
+      "type": "tiered_field",
+      "tier": "custom",
+      "field_name": "orders",
+      "average_availability": 0,
+      "per_list_availability": {
+        "New": 0
+      }
+    },
+    "item.name": {
+      "type": "tiered_field",
+      "tier": "custom",
+      "field_name": "items",
+      "average_availability": 0,
+      "per_list_availability": {
+        "New": 0
+      }
+    },
+    "current_year": {
+      "type": "tiered_field",
+      "tier": "custom",
+      "field_name": "at_risk_since",
+      "average_availability": 0,
+      "per_list_availability": {
+        "New": 0
+      }
+    },
+    "promo.code": {
+      "type": "tiered_field",
+      "tier": "custom",
+      "field_name": "promo",
+      "average_availability": 0,
+      "per_list_availability": {
+        "New": 0
+      }
+    },
+    "order_count": {
+      "type": "tiered_field",
+      "tier": "custom",
+      "field_name": "address",
+      "average_availability": 0,
+      "per_list_availability": {
+        "New": 0
+      }
+    },
+    "loop.index": {
+      "type": "tiered_field",
+      "tier": "standard",
+      "field_name": "phone",
+      "average_availability": 0.6,
+      "per_list_availability": {
+        "New": 0.6
+      }
+    },
+    "recipient.language": {
+      "type": "tiered_field",
+      "tier": "custom",
+      "field_name": "items",
+      "average_availability": 0,
+      "per_list_availability": {
+        "New": 0
+      }
+    },
+    "address.state": {
+      "type": "tiered_field",
+      "tier": "custom",
+      "field_name": "days last order",
+      "average_availability": 0,
+      "per_list_availability": {
+        "New": 0
+      }
+    },
+    "last_purchase_date": {
+      "type": "tiered_field",
+      "tier": "custom",
+      "field_name": "at_risk_since",
+      "average_availability": 0,
+      "per_list_availability": {
+        "New": 0
+      }
+    },
+    "city": {
+      "type": "tiered_field",
+      "tier": "standard",
+      "field_name": "first_name",
+      "average_availability": 0.8,
+      "per_list_availability": {
+        "New": 0.8
+      }
+    },
+    "subscriber_id": {
+      "type": "tiered_field",
+      "tier": "standard",
+      "field_name": "phone",
+      "average_availability": 0.6,
+      "per_list_availability": {
+        "New": 0.6
+      }
+    },
+    "language": {
+      "type": "tiered_field",
+      "tier": "custom",
+      "field_name": "dob",
+      "average_availability": 0,
+      "per_list_availability": {
+        "New": 0
+      }
+    },
+    "signup_date": {
+      "type": "tiered_field",
+      "tier": "custom",
+      "field_name": "at_risk",
+      "average_availability": 0,
+      "per_list_availability": {
+        "New": 0
+      }
+    },
+    "item.original_price": {
+      "type": "tiered_field",
+      "tier": "custom",
+      "field_name": "dob",
+      "average_availability": 0,
+      "per_list_availability": {
+        "New": 0
+      }
+    },
+    "sent_at": {
+      "type": "tiered_field",
+      "tier": "custom",
+      "field_name": "dob",
+      "average_availability": 0,
+      "per_list_availability": {
+        "New": 0
+      }
+    },
+    "first_name": {
+      "type": "tiered_field",
+      "tier": "custom",
+      "field_name": "address",
+      "average_availability": 0,
+      "per_list_availability": {
+        "New": 0
+      }
+    },
+    "recipient.city": {
+      "type": "tiered_field",
+      "tier": "custom",
+      "field_name": "at_risk_since",
+      "average_availability": 0,
+      "per_list_availability": {
+        "New": 0
+      }
+    },
+    "recipient.country": {
+      "type": "tiered_field",
+      "tier": "standard",
+      "field_name": "country",
+      "average_availability": 0.5,
+      "per_list_availability": {
+        "New": 0.5
+      }
+    },
+    "email": {
+      "type": "tiered_field",
+      "tier": "standard",
+      "field_name": "country",
+      "average_availability": 0.5,
+      "per_list_availability": {
+        "New": 0.5
+      }
+    },
+    "o.description": {
+      "type": "tiered_field",
+      "tier": "custom",
+      "field_name": "days last order",
+      "average_availability": 0,
+      "per_list_availability": {
+        "New": 0
+      }
+    },
+    "tier": {
+      "type": "tiered_field",
+      "tier": "custom",
+      "field_name": "tier",
+      "average_availability": 0,
+      "per_list_availability": {
+        "New": 0
+      }
+    },
+    "total_spent": {
+      "type": "tiered_field",
+      "tier": "custom",
+      "field_name": "items",
+      "average_availability": 0,
+      "per_list_availability": {
+        "New": 0
+      }
+    },
+    "item.description": {
+      "type": "tiered_field",
+      "tier": "custom",
+      "field_name": "items",
+      "average_availability": 0,
+      "per_list_availability": {
+        "New": 0
+      }
+    },
+    "support_email": {
+      "type": "tiered_field",
+      "tier": "custom",
+      "field_name": "verfiredemail",
+      "average_availability": 0,
+      "per_list_availability": {
+        "New": 0
+      }
+    },
+    "zip_code": {
+      "type": "tiered_field",
+      "tier": "custom",
+      "field_name": "zip",
+      "average_availability": 0,
+      "per_list_availability": {
+        "New": 0
+      }
+    },
+    "unsubscribe_url": {
+      "type": "fallback",
+      "action": "__DEFAULT__"
+    },
+    "item.price": {
+      "type": "tiered_field",
+      "tier": "custom",
+      "field_name": "items",
+      "average_availability": 0,
+      "per_list_availability": {
+        "New": 0
+      }
+    },
+    "recipient.tier": {
+      "type": "tiered_field",
+      "tier": "custom",
+      "field_name": "reawrds",
+      "average_availability": 0,
+      "per_list_availability": {
+        "New": 0
+      }
+    },
+    "o.price": {
+      "type": "tiered_field",
+      "tier": "custom",
+      "field_name": "orders",
+      "average_availability": 0,
+      "per_list_availability": {
+        "New": 0
+      }
+    },
+    "address.zip": {
+      "type": "tiered_field",
+      "tier": "custom",
+      "field_name": "address",
+      "average_availability": 0,
+      "per_list_availability": {
+        "New": 0
+      }
+    },
+    "promo.expires_at": {
+      "type": "tiered_field",
+      "tier": "custom",
+      "field_name": "promo",
+      "average_availability": 0,
+      "per_list_availability": {
+        "New": 0
+      }
+    },
+    "last_name": {
+      "type": "tiered_field",
+      "tier": "standard",
+      "field_name": "last_name",
+      "average_availability": 0.8,
+      "per_list_availability": {
+        "New": 0.8
+      }
+    },
+    "address.country": {
+      "type": "tiered_field",
+      "tier": "custom",
+      "field_name": "address",
+      "average_availability": 0,
+      "per_list_availability": {
+        "New": 0
+      }
+    },
+    "country": {
+      "type": "tiered_field",
+      "tier": "standard",
+      "field_name": "country",
+      "average_availability": 0.5,
+      "per_list_availability": {
+        "New": 0.5
+      }
+    },
+    "phone": {
+      "type": "tiered_field",
+      "tier": "standard",
+      "field_name": "phone",
+      "average_availability": 0.6,
+      "per_list_availability": {
+        "New": 0.6
+      }
+    },
+    "promo.description": {
+      "type": "tiered_field",
+      "tier": "custom",
+      "field_name": "promo",
+      "average_availability": 0,
+      "per_list_availability": {
+        "New": 0
+      }
+    }
+  },
+  "fallback_values": {},
+  "status": "failed",
+  "target_list_count": 5,
+  "created_at": {
+    "$date": "2026-03-29T06:33:39.999Z"
+  },
+  "updated_at": {
+    "$date": "2026-03-29T06:33:39.999Z"
+  },
+  "content_snapshot": {
+    "html_content": "<!doctype html>\n<html lang=\"en\">\n<head>\n  <meta charset=\"utf-8\"/>\n  <meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"/>\n  <title>{{ first_name }} — Field Type Test</title>\n  <style>\n    body{font-family:system-ui,-apple-system,Arial,sans-serif;background:#f0f2f5;margin:0;padding:0;color:#1a1a2e}\n    .wrap{max-width:620px;margin:0 auto;background:#fff}\n    /* header */\n    .hdr{background:linear-gradient(135deg,#1a73e8 0%,#6f42c1 100%);color:#fff;padding:32px 24px;text-align:center}\n    .hdr h1{margin:0 0 6px;font-size:26px;font-weight:800}\n    .hdr p{margin:0;font-size:13px;opacity:.85}\n    /* sections */\n    .sec{padding:20px 24px;border-bottom:1px solid #eef0f3}\n    .sec-title{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#1a73e8;margin:0 0 14px}\n    /* key-value rows */\n    .kv{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;font-size:14px}\n    .kv .k{color:#666;flex:1}\n    .kv .v{font-weight:600;color:#111;text-align:right}\n    /* badges */\n    .badge{display:inline-block;padding:2px 10px;border-radius:20px;font-size:11px;font-weight:700}\n    .b-gold{background:#fff3cd;color:#856404}\n    .b-platinum{background:#e9ecef;color:#343a40}\n    .b-silver{background:#d1ecf1;color:#0c5460}\n    .b-bronze{background:#ffe5b4;color:#7b4800}\n    .b-vip{background:#d4edda;color:#155724}\n    .b-no{background:#f8d7da;color:#721c24}\n    .b-sale{background:#dc3545;color:#fff}\n    .b-new{background:#17a2b8;color:#fff}\n    /* boxes */\n    .box-info{background:#e8f4fd;border-left:4px solid #1a73e8;border-radius:0 6px 6px 0;padding:12px 14px;margin:10px 0;font-size:14px}\n    .box-warn{background:#fff3cd;border-left:4px solid #ffc107;border-radius:0 6px 6px 0;padding:12px 14px;margin:10px 0;font-size:14px}\n    .box-success{background:#d4edda;border-left:4px solid #28a745;border-radius:0 6px 6px 0;padding:12px 14px;margin:10px 0;font-size:14px}\n    /* stat grid */\n    .stat-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin:12px 0}\n    .stat{background:#f8f9ff;border:1px solid #dee2e6;border-radius:8px;padding:14px;text-align:center}\n    .stat-val{font-size:24px;font-weight:800;color:#1a73e8}\n    .stat-lbl{font-size:11px;color:#888;margin-top:4px}\n    /* product list */\n    .product{display:flex;justify-content:space-between;align-items:center;border:1px solid #e8e8e8;border-radius:8px;padding:12px 14px;margin-bottom:8px;background:#fafbff}\n    .pname{font-weight:700;font-size:14px}\n    .pdesc{font-size:12px;color:#888;margin-top:3px}\n    .pprice{font-weight:800;color:#1a73e8;font-size:15px}\n    .porig{font-size:12px;color:#bbb;text-decoration:line-through;margin-right:6px}\n    /* promo box */\n    .promo-wrap{background:#fffde7;border:1px dashed #ffc107;border-radius:8px;padding:16px;margin:12px 0;text-align:center}\n    .promo-code{font-size:22px;font-weight:900;letter-spacing:.12em;background:#fff;display:inline-block;padding:6px 18px;border-radius:6px;border:1px solid #ffc107;color:#856404}\n    /* table */\n    table{width:100%;border-collapse:collapse;font-size:13px;margin-top:8px}\n    th{background:#f0f4ff;color:#1a73e8;font-weight:700;padding:8px 10px;border:1px solid #e0e0e0;text-align:left}\n    td{padding:7px 10px;border:1px solid #e0e0e0}\n    /* greeting */\n    .greeting{font-size:20px;font-weight:700;color:#1a1a2e;margin-bottom:6px}\n    /* cta */\n    .cta{display:inline-block;background:#1a73e8;color:#fff;padding:11px 26px;border-radius:8px;text-decoration:none;font-weight:700;font-size:14px;margin:6px 4px}\n    .cta-grey{background:#6c757d}\n    /* footer */\n    .footer{background:#1a1a2e;color:#aaa;text-align:center;padding:20px 24px;font-size:12px}\n    .footer a{color:#7aadff;text-decoration:none}\n    @media(max-width:600px){.stat-grid{grid-template-columns:1fr}}\n  </style>\n</head>\n<body>\n<div class=\"wrap\">\n\n<!-- ═══════════════════════════════════════════════════════════ HEADER -->\n<div class=\"hdr\">\n  <h1>Hello, {{ first_name }}! 👋</h1>\n  <p>{{ email }} · {{ city }}, {{ country }} · {{ current_date }}</p>\n</div>\n\n<!-- ═══════════════════════════════════════════════════ STRING FIELDS -->\n<div class=\"sec\">\n  <div class=\"sec-title\">① Profile — String Fields</div>\n\n  <div class=\"kv\">\n    <span class=\"k\">Full name</span>\n    <span class=\"v\">{{ first_name }} {{ last_name }}</span>\n  </div>\n  <div class=\"kv\">\n    <span class=\"k\">Email</span>\n    <span class=\"v\">{{ email }}</span>\n  </div>\n  <div class=\"kv\">\n    <span class=\"k\">City / Country</span>\n    <span class=\"v\">{{ city }}, {{ country }}</span>\n  </div>\n  <div class=\"kv\">\n    <span class=\"k\">Zip / Postal code <small>(must keep leading zeros &amp; spaces)</small></span>\n    <span class=\"v\">{{ zip_code }}</span>\n  </div>\n  <div class=\"kv\">\n    <span class=\"k\">Language</span>\n    <span class=\"v\">{{ language }}</span>\n  </div>\n  <div class=\"kv\">\n    <span class=\"k\">Phone</span>\n    <span class=\"v\">{{ phone }}</span>\n  </div>\n  <div class=\"kv\">\n    <span class=\"k\">Tier</span>\n    <span class=\"v\">\n      {% if tier == \"Gold\" %}<span class=\"badge b-gold\">⭐ Gold</span>\n      {% elif tier == \"Platinum\" %}<span class=\"badge b-platinum\">💎 Platinum</span>\n      {% elif tier == \"Silver\" %}<span class=\"badge b-silver\">🥈 Silver</span>\n      {% else %}<span class=\"badge b-bronze\">🥉 {{ tier }}</span>\n      {% endif %}\n    </span>\n  </div>\n\n  <!-- recipient. sub-dict test -->\n  <div class=\"box-info\" style=\"margin-top:12px\">\n    <strong>recipient. sub-dict:</strong>\n    {{ recipient.first_name }} from {{ recipient.city }}, {{ recipient.country }}\n    (tier: {{ recipient.tier }}, language: {{ recipient.language }})\n  </div>\n</div>\n\n<!-- ═══════════════════════════════════════════════ NUMBER FIELDS -->\n<div class=\"sec\">\n  <div class=\"sec-title\">② Numbers &amp; Comparisons</div>\n\n  <div class=\"stat-grid\">\n    <div class=\"stat\">\n      <div class=\"stat-val\">{{ order_count }}</div>\n      <div class=\"stat-lbl\">Orders</div>\n    </div>\n    <div class=\"stat\">\n      <div class=\"stat-val\">${{ total_spent }}</div>\n      <div class=\"stat-lbl\">Total Spent</div>\n    </div>\n    <div class=\"stat\">\n      <div class=\"stat-val\">{{ reward_points }}</div>\n      <div class=\"stat-lbl\">Reward Points</div>\n    </div>\n    <div class=\"stat\">\n      <div class=\"stat-val\">{{ days_since_last_order }}</div>\n      <div class=\"stat-lbl\">Days Since Order</div>\n    </div>\n  </div>\n\n  <!-- Comparison branches -->\n  {% if order_count > 0 %}\n  <div class=\"box-success\">✅ <strong>order_count &gt; 0</strong> — you have {{ order_count }} orders.</div>\n  {% else %}\n  <div class=\"box-info\">👋 First time here! Use <strong>FIRST20</strong> for 20% off.</div>\n  {% endif %}\n\n  {% if total_spent > 500 %}\n  <div class=\"box-success\">✅ <strong>total_spent &gt; $500</strong> — you've spent ${{ total_spent }}. Elite status!</div>\n  {% endif %}\n\n  {% if days_since_last_order > 30 %}\n  <div class=\"box-warn\">😢 It's been <strong>{{ days_since_last_order }} days</strong> since your last order.\n    Come back with code <strong>COMEBACK15</strong> for 15% off!</div>\n  {% endif %}\n\n  <!-- Elite combined condition -->\n  {% if (recipient.tier == \"Gold\" and order_count > 5) or total_spent > 500 %}\n  <div class=\"box-success\">🏆 <strong>Elite Customer</strong> — (Gold + orders &gt; 5) OR spent &gt; $500.</div>\n  {% endif %}\n</div>\n\n<!-- ═══════════════════════════════════════════════ BOOLEAN FIELDS -->\n<div class=\"sec\">\n  <div class=\"sec-title\">③ Boolean Fields</div>\n\n  <div class=\"kv\">\n    <span class=\"k\">is_vip</span>\n    <span class=\"v\">\n      {% if is_vip %}<span class=\"badge b-vip\">✅ VIP</span>\n      {% else %}<span class=\"badge b-no\">❌ Not VIP</span>{% endif %}\n    </span>\n  </div>\n  <div class=\"kv\">\n    <span class=\"k\">email_verified</span>\n    <span class=\"v\">\n      {% if email_verified %}<span class=\"badge b-vip\">✅ Verified</span>\n      {% else %}<span class=\"badge b-no\">❌ Unverified</span>{% endif %}\n    </span>\n  </div>\n  <div class=\"kv\">\n    <span class=\"k\">opted_in_sms</span>\n    <span class=\"v\">\n      {% if opted_in_sms %}<span class=\"badge b-vip\">✅ SMS On</span>\n      {% else %}<span class=\"badge b-no\">❌ SMS Off</span>{% endif %}\n    </span>\n  </div>\n\n  {% if is_vip and email_verified %}\n  <div class=\"box-success\">✅ Combined: is_vip=True AND email_verified=True</div>\n  {% endif %}\n</div>\n\n<!-- ═══════════════════════════════════════════════════ DATE FIELDS -->\n<div class=\"sec\">\n  <div class=\"sec-title\">④ Date Fields (all must render as YYYY-MM-DD)</div>\n\n  <div class=\"kv\">\n    <span class=\"k\">date_of_birth</span>\n    <span class=\"v\">{{ date_of_birth }}</span>\n  </div>\n  <div class=\"kv\">\n    <span class=\"k\">signup_date <small>(input may be DD/MM/YYYY)</small></span>\n    <span class=\"v\">{{ signup_date }}</span>\n  </div>\n  <div class=\"kv\">\n    <span class=\"k\">last_purchase_date</span>\n    <span class=\"v\">{{ last_purchase_date }}</span>\n  </div>\n  <div class=\"kv\">\n    <span class=\"k\">System: sent_at</span>\n    <span class=\"v\">{{ sent_at }}</span>\n  </div>\n</div>\n\n<!-- ═══════════════════════════════════════════════ OBJECT FIELDS -->\n<div class=\"sec\">\n  <div class=\"sec-title\">⑤ Object Fields (pipe-separated → dict)</div>\n\n  {% if promo and promo.code %}\n  <div class=\"promo-wrap\">\n    <p style=\"margin:0 0 8px;font-weight:700;font-size:15px\">🎁 Your Exclusive Promo</p>\n    <div class=\"promo-code\">{{ promo.code }}</div>\n    <p style=\"margin:8px 0 4px;font-size:14px\">{{ promo.description }}</p>\n    <p style=\"margin:0;font-size:12px;color:#856404\">Valid until: <strong>{{ promo.expires_at }}</strong></p>\n    <a href=\"#\" class=\"cta\" style=\"margin-top:10px\">🛒 Shop Now &amp; Save</a>\n  </div>\n  {% else %}\n  <div class=\"box-info\">No promo code for this subscriber (empty promo field).</div>\n  {% endif %}\n\n  {% if address and address.city %}\n  <div class=\"kv\" style=\"margin-top:12px\">\n    <span class=\"k\">address.city</span><span class=\"v\">{{ address.city }}</span>\n  </div>\n  <div class=\"kv\">\n    <span class=\"k\">address.state</span><span class=\"v\">{{ address.state }}</span>\n  </div>\n  <div class=\"kv\">\n    <span class=\"k\">address.zip</span><span class=\"v\">{{ address.zip }}</span>\n  </div>\n  <div class=\"kv\">\n    <span class=\"k\">address.country</span><span class=\"v\">{{ address.country }}</span>\n  </div>\n  {% endif %}\n</div>\n\n<!-- ════════════════════════════════════════════════ LIST FIELDS -->\n<div class=\"sec\">\n  <div class=\"sec-title\">⑥ List Fields — Products (pipe+semicolon → list of dicts)</div>\n\n  {% for item in items %}\n  <div class=\"product\">\n    <div style=\"flex:1\">\n      <div class=\"pname\">\n        {{ item.name }}\n        {% if item.on_sale %}<span class=\"badge b-sale\" style=\"margin-left:6px\">SALE</span>{% endif %}\n        {% if item.new %}<span class=\"badge b-new\" style=\"margin-left:4px\">NEW</span>{% endif %}\n      </div>\n      {% if item.description %}<div class=\"pdesc\">{{ item.description }}</div>{% endif %}\n    </div>\n    <div style=\"text-align:right;white-space:nowrap\">\n      {% if item.on_sale and item.original_price %}\n      <span class=\"porig\">${{ item.original_price }}</span>\n      {% endif %}\n      <span class=\"pprice\">${{ item.price }}</span>\n    </div>\n  </div>\n  {% else %}\n  <div class=\"box-info\">No products in this subscriber's items list (empty field).</div>\n  {% endfor %}\n</div>\n\n<!-- Orders list as table -->\n<div class=\"sec\">\n  <div class=\"sec-title\">⑥b Order History List</div>\n  {% if orders %}\n  <table>\n    <tr><th>#</th><th>Order ID</th><th>Amount</th><th>Status</th></tr>\n    {% for o in orders %}\n    <tr>\n      <td>{{ loop.index }}</td>\n      <td>{{ o.name }}</td>\n      <td>${{ o.price }}</td>\n      <td>{{ o.description }}</td>\n    </tr>\n    {% endfor %}\n  </table>\n  {% else %}\n  <div class=\"box-info\">No order history (empty orders field).</div>\n  {% endif %}\n</div>\n\n<!-- ═══════════════════════════════════════ COUNTRY + LANGUAGE ROUTING -->\n<div class=\"sec\">\n  <div class=\"sec-title\">⑦ Conditional Routing — Country &amp; Language</div>\n\n  {% if recipient.country == \"US\" %}\n  <div class=\"box-info\">🇺🇸 US: Free shipping, 2-3 days from California.</div>\n  {% elif recipient.country == \"UK\" %}\n  <div class=\"box-info\">🇬🇧 UK: Free shipping, next-day from London.</div>\n  {% elif recipient.country == \"IN\" %}\n  <div class=\"box-info\">🇮🇳 India: Express delivery, 5-7 days.</div>\n  {% elif recipient.country == \"AU\" %}\n  <div class=\"box-info\">🇦🇺 Australia: Free shipping from Sydney.</div>\n  {% elif recipient.country == \"CA\" %}\n  <div class=\"box-info\">🇨🇦 Canada: Free shipping across Canada.</div>\n  {% else %}\n  <div class=\"box-info\">🌍 International shipping to {{ recipient.country }} · 7-14 days.</div>\n  {% endif %}\n\n  {% if recipient.language == \"fr\" %}\n  <div class=\"box-info\" style=\"margin-top:8px\">🗣️ Bonjour ! Notre équipe parle français.</div>\n  {% elif recipient.language == \"hi\" %}\n  <div class=\"box-info\" style=\"margin-top:8px\">🗣️ नमस्ते! हमारी टीम हिंदी में मदद करती है।</div>\n  {% else %}\n  <div class=\"box-info\" style=\"margin-top:8px\">🗣️ Our support team speaks your language!</div>\n  {% endif %}\n</div>\n\n<!-- ════════════════════════════════════════════ SYSTEM FIELDS -->\n<div class=\"sec\">\n  <div class=\"sec-title\">⑧ System Fields</div>\n  <div class=\"kv\"><span class=\"k\">email</span><span class=\"v\">{{ email }}</span></div>\n  <div class=\"kv\"><span class=\"k\">subscriber_id</span><span class=\"v\">{{ subscriber_id }}</span></div>\n  <div class=\"kv\"><span class=\"k\">current_date</span><span class=\"v\">{{ current_date }}</span></div>\n  <div class=\"kv\"><span class=\"k\">current_year</span><span class=\"v\">{{ current_year }}</span></div>\n  <div class=\"kv\"><span class=\"k\">sent_at</span><span class=\"v\">{{ sent_at }}</span></div>\n  <div class=\"kv\"><span class=\"k\">unsubscribe_url</span>\n    <span class=\"v\"><a href=\"{{ unsubscribe_url }}\">link</a></span></div>\n</div>\n\n<!-- CTA -->\n<div style=\"text-align:center;padding:24px 24px 16px\">\n  <a href=\"https://yourstore.com/shop\" class=\"cta\">🛍️ Shop Now</a>\n  <a href=\"{{ unsubscribe_url }}\" class=\"cta cta-grey\">Unsubscribe</a>\n</div>\n\n<!-- FOOTER -->\n<div class=\"footer\">\n  <p><strong>Field Type Test — All Types Template</strong></p>\n  <p>Sent {{ sent_at }} · {{ current_year }} Your Company · All rights reserved</p>\n  <p>\n    <a href=\"{{ unsubscribe_url }}\">Unsubscribe</a> ·\n    <a href=\"#\">Privacy Policy</a> ·\n    <a href=\"{{ support_email }}\">Contact Support</a>\n  </p>\n</div>\n\n</div><!-- /wrap -->\n</body>\n</html>",
+    "text_content": "",
+    "subject": "zczxc",
+    "field_map": {
+      "current_date": "__EMPTY__",
+      "date_of_birth": "custom.dob",
+      "address.city": "standard.first_name",
+      "recipient.first_name": "custom.at_risk_since",
+      "reward_points": "custom.at_risk",
+      "days_since_last_order": "standard.last_name",
+      "o.name": "custom.orders",
+      "item.name": "custom.items",
+      "current_year": "custom.at_risk_since",
+      "promo.code": "custom.promo",
+      "order_count": "custom.address",
+      "loop.index": "standard.phone",
+      "recipient.language": "custom.items",
+      "address.state": "custom.days last order",
+      "last_purchase_date": "custom.at_risk_since",
+      "city": "standard.first_name",
+      "subscriber_id": "standard.phone",
+      "language": "custom.dob",
+      "signup_date": "custom.at_risk",
+      "item.original_price": "custom.dob",
+      "sent_at": "custom.dob",
+      "first_name": "custom.address",
+      "recipient.city": "custom.at_risk_since",
+      "recipient.country": "standard.country",
+      "email": "standard.country",
+      "o.description": "custom.days last order",
+      "tier": "custom.tier",
+      "total_spent": "custom.items",
+      "item.description": "custom.items",
+      "support_email": "custom.verfiredemail",
+      "zip_code": "custom.zip",
+      "unsubscribe_url": "__DEFAULT__",
+      "item.price": "custom.items",
+      "recipient.tier": "custom.reawrds",
+      "o.price": "custom.orders",
+      "address.zip": "custom.address",
+      "promo.expires_at": "custom.promo",
+      "last_name": "standard.last_name",
+      "address.country": "custom.address",
+      "country": "standard.country",
+      "phone": "standard.phone",
+      "promo.description": "custom.promo"
+    },
+    "fallback_values": {},
+    "template_id": "69bfe108842eb8d30ee4a384",
+    "template_name": "New test",
+    "taken_at": {
+      "$date": "2026-03-29T06:33:45.677Z"
+    }
+  },
+  "snapshot_taken_at": {
+    "$date": "2026-03-29T06:33:45.677Z"
+  },
+  "started_at": {
+    "$date": "2026-03-29T06:33:45.678Z"
+  },
+  "resumed_at": {
+    "$date": "2026-03-29T13:48:03.899Z"
+  },
+  "last_batch_at": {
+    "$date": "2026-03-29T13:48:10.187Z"
+  },
+  "queued_count": 0,
+  "dlq_count": 68,
+  "failed_count": 68,
+  "processed_count": 70,
+  "sent_count": 2,
+  "delivered_count": 0,
+  "last_processed_subscriber": "69c78206519b1f951a9a5235",
+  "recovered_at": {
+    "$date": "2026-03-29T13:48:10.187Z"
+  },
+  "recovery_action": "marked_failed_on_startup_recovery",
+  "recovery_count": 1,
+  "recovery_type": "system_reboot",
+  "smtp_errors_cleared": true,
+  "failed_at": {
+    "$date": "2026-03-29T13:48:10.291Z"
+  },
+  "failure_reason": "startup_recovery_failed: No module named 'tasks.template_cache'"
+}

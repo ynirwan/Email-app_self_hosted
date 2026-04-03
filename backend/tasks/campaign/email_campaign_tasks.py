@@ -13,6 +13,17 @@
 #     template_cache removed — snapshot used instead, direct Mongo fetch as fallback.
 #   - finalize_campaign: evicts both caches on completion.
 #   - Everything else unchanged.
+#
+# BUG FIXES (requeue / counter accuracy):
+#   - Step 4  (already_sent):  removed stray `$inc processed_count +1` that
+#     caused double-counting when a successfully-sent email was re-queued.
+#   - Step 4c (new):           detect requeue — subscriber has an existing
+#     "failed" log entry from a prior attempt.
+#   - Success / failure paths: requeue-aware counter updates so processed_count
+#     and failed_count are never incremented a second time for the same email.
+#     On a successful requeue the previous failed_count is reversed (-1).
+#   - All queued_count decrements now route through _decrement_queued() which
+#     guards against going below zero (MongoDB $gt: 0 condition).
 
 import logging
 import time
@@ -242,6 +253,9 @@ def _decrement_queued(campaign_id: str):
     """
     Decrement queued_count by 1, floored at 0.
     Uses findAndModify-style update to avoid negative values.
+    All code paths that finish processing a queued task MUST use this
+    function instead of raw '$inc queued_count: -1' to prevent the
+    counter from going negative when tasks are requeued from DLQ.
     """
     try:
         col = get_sync_campaigns_collection()
@@ -335,11 +349,10 @@ def send_single_campaign_email(self, campaign_id: str, subscriber_id: str):
             {"_id": 1},
         )
         if existing_sent:
+            # FIX: do NOT increment processed_count here — it was already
+            # counted when the email was first sent successfully.  Incrementing
+            # it again on a requeue caused the counter to exceed the list size.
             _decrement_queued(campaign_id)
-            campaigns_collection.update_one(
-                {"_id": ObjectId(campaign_id)},
-                {"$inc": {"processed_count": 1}}
-            )
             return {"status": "skipped", "reason": "already_sent"}
 
         # ── STEP 4b: SUPPRESSION CHECK ───────────────────────────────────────
@@ -351,6 +364,33 @@ def send_single_campaign_email(self, campaign_id: str, subscriber_id: str):
                 {"$inc": {"processed_count": 1}}
             )
             return {"status": "skipped", "reason": "suppressed", "email": recipient_email}
+
+        # ── STEP 4c: REQUEUE DETECTION ───────────────────────────────────────
+        # If a "failed" log already exists for this subscriber in this campaign,
+        # this task is a requeue (from DLQ or manual retry).
+        #
+        # Requeue implications:
+        #   • processed_count was already incremented when it first failed —
+        #     do NOT increment again regardless of outcome.
+        #   • failed_count was already incremented — on success reverse it (-1);
+        #     on another failure leave it unchanged (already counted).
+        #   • queued_count was NOT incremented when the task was requeued
+        #     (DLQ bypasses send_campaign_batch) — still call _decrement_queued()
+        #     which is floor-guarded and will not go negative.
+        existing_failed = email_logs_collection.find_one(
+            {
+                "campaign_id": ObjectId(campaign_id),
+                "subscriber_id": subscriber_id,
+                "latest_status": "failed",
+            },
+            {"_id": 1},
+        )
+        is_requeue = existing_failed is not None
+        if is_requeue:
+            logger.info(
+                f"Requeue detected for subscriber {subscriber_id} "
+                f"in campaign {campaign_id} — counters will not be re-incremented"
+            )
 
         # ── STEP 5: RATE LIMITING ────────────────────────────────────────────
         provider_type = EmailProvider.DEFAULT
@@ -538,17 +578,34 @@ def send_single_campaign_email(self, campaign_id: str, subscriber_id: str):
                     cost,
                 )
 
-                campaigns_collection.update_one(
-                    {"_id": ObjectId(campaign_id)},
-                    {
-                        "$inc": {
-                            "sent_count": 1,
-                            "processed_count": 1,
-                            "queued_count": -1,
+                # FIX: separate queued_count decrement so the floor guard is
+                # always applied.  Counter logic differs for requeued tasks:
+                #   • Fresh send:   sent_count +1, processed_count +1
+                #   • Requeue win:  sent_count +1, failed_count -1
+                #                   (processed_count already counted on 1st fail)
+                if is_requeue:
+                    campaigns_collection.update_one(
+                        {"_id": ObjectId(campaign_id)},
+                        {
+                            "$inc": {
+                                "sent_count": 1,
+                                "failed_count": -1,
+                            },
+                            "$set": {"last_batch_at": datetime.utcnow()},
                         },
-                        "$set": {"last_batch_at": datetime.utcnow()},
-                    },
-                )
+                    )
+                else:
+                    campaigns_collection.update_one(
+                        {"_id": ObjectId(campaign_id)},
+                        {
+                            "$inc": {
+                                "sent_count": 1,
+                                "processed_count": 1,
+                            },
+                            "$set": {"last_batch_at": datetime.utcnow()},
+                        },
+                    )
+                _decrement_queued(campaign_id)
 
                 if task_settings.ENABLE_RATE_LIMITING:
                     rate_limiter.record_email_result(
@@ -593,17 +650,29 @@ def send_single_campaign_email(self, campaign_id: str, subscriber_id: str):
                         error_reason,
                         attempted_providers[0] if attempted_providers else "unknown",
                     )
-                    campaigns_collection.update_one(
-                        {"_id": ObjectId(campaign_id)},
-                        {
-                            "$inc": {
-                                "failed_count": 1,
-                                "processed_count": 1,
-                                "queued_count": -1,
+
+                    # FIX: requeue — counters were already incremented on the
+                    # first failure; do not double-count.
+                    # Fresh failure: failed_count +1, processed_count +1
+                    # Requeue failure: no counter change (already accounted for)
+                    if not is_requeue:
+                        campaigns_collection.update_one(
+                            {"_id": ObjectId(campaign_id)},
+                            {
+                                "$inc": {
+                                    "failed_count": 1,
+                                    "processed_count": 1,
+                                },
+                                "$set": {"last_batch_at": datetime.utcnow()},
                             },
-                            "$set": {"last_batch_at": datetime.utcnow()},
-                        },
-                    )
+                        )
+                    else:
+                        campaigns_collection.update_one(
+                            {"_id": ObjectId(campaign_id)},
+                            {"$set": {"last_batch_at": datetime.utcnow()}},
+                        )
+                    _decrement_queued(campaign_id)
+
                     if task_settings.ENABLE_RATE_LIMITING:
                         rate_limiter.record_email_result(
                             False, provider_type, error_reason, campaign_id
@@ -651,17 +720,26 @@ def send_single_campaign_email(self, campaign_id: str, subscriber_id: str):
                     error_msg,
                     "unknown",
                 )
-                campaigns_collection.update_one(
-                    {"_id": ObjectId(campaign_id)},
-                    {
-                        "$inc": {
-                            "failed_count": 1,
-                            "processed_count": 1,
-                            "queued_count": -1,
+                # FIX: requeue — do not re-increment counters already recorded
+                # on the first attempt's failure.
+                if not is_requeue:
+                    campaigns_collection.update_one(
+                        {"_id": ObjectId(campaign_id)},
+                        {
+                            "$inc": {
+                                "failed_count": 1,
+                                "processed_count": 1,
+                            },
+                            "$set": {"last_batch_at": datetime.utcnow()},
                         },
-                        "$set": {"last_batch_at": datetime.utcnow()},
-                    },
-                )
+                    )
+                else:
+                    campaigns_collection.update_one(
+                        {"_id": ObjectId(campaign_id)},
+                        {"$set": {"last_batch_at": datetime.utcnow()}},
+                    )
+                _decrement_queued(campaign_id)
+
                 return {
                     "status": "failed",
                     "reason": "send_exception",
@@ -1122,4 +1200,3 @@ def check_scheduled_campaigns(self):
 
     except Exception as e:
         logger.error(f"check_scheduled_campaigns failed: {e}")
-        return {"error": str(e)}

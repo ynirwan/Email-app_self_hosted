@@ -20,30 +20,38 @@ from starlette.middleware.base import BaseHTTPMiddleware
 # ============================================
 
 PRODUCTION_FEATURES = {
-    'config': True,
-    'health_monitor': True,
-    'metrics_collector': True,
-    'resource_manager': True,
-    'campaign_controller': True,
-    'dlq_manager': True,
-    'database': True,
+    "config": True,
+    "health_monitor": True,
+    "metrics_collector": True,
+    "resource_manager": True,
+    "campaign_controller": True,
+    "dlq_manager": True,
+    "database": True,
 }
 
 from core.config import settings, is_production_ready
-PRODUCTION_FEATURES['config'] = True
+
+PRODUCTION_FEATURES["config"] = True
 logger = logging.getLogger(__name__)
 
 try:
     from tasks.task_config import task_settings
+
     _metrics_enabled = task_settings.ENABLE_METRICS_COLLECTION
 except ImportError:
     _metrics_enabled = False
 
 # Import database
 try:
-    from database import (initialize_async_client, close_async_client,
-                          ensure_indexes, ping_database, get_database_info)
-    PRODUCTION_FEATURES['database'] = True
+    from database import (
+        initialize_async_client,
+        close_async_client,
+        ensure_indexes,
+        ping_database,
+        get_database_info,
+    )
+
+    PRODUCTION_FEATURES["database"] = True
 except ImportError:
     logger.warning("Database module not available")
     initialize_async_client = None
@@ -55,52 +63,78 @@ except ImportError:
 # Import production monitoring
 try:
     from tasks.health_monitor import health_monitor
-    PRODUCTION_FEATURES['health_monitor'] = True
+
+    PRODUCTION_FEATURES["health_monitor"] = True
 except ImportError:
     health_monitor = None
 
 try:
     from tasks.metrics_collector import metrics_collector
-    PRODUCTION_FEATURES['metrics_collector'] = True
+
+    PRODUCTION_FEATURES["metrics_collector"] = True
 except ImportError:
     metrics_collector = None
 
 try:
     from tasks.resource_manager import resource_manager
-    PRODUCTION_FEATURES['resource_manager'] = True
+
+    PRODUCTION_FEATURES["resource_manager"] = True
 except ImportError:
     resource_manager = None
 
 try:
     from tasks.campaign_control import campaign_controller
-    PRODUCTION_FEATURES['campaign_controller'] = True
+
+    PRODUCTION_FEATURES["campaign_controller"] = True
 except ImportError:
     campaign_controller = None
 
 try:
     from tasks.dlq_manager import dlq_manager
-    PRODUCTION_FEATURES['dlq_manager'] = True
+
+    PRODUCTION_FEATURES["dlq_manager"] = True
 except ImportError:
     dlq_manager = None
 
 # Import your existing routes
-from routes import (auth, subscribers, campaigns, stats, templates, setting,
-                    domains, analytics, email_settings, webhooks, suppressions,
-                    segments, ab_testing, automation, events,
-                    automation_analytics, audit, unsubscribe)
+from core.auth import get_current_user
+from fastapi import Depends
+from routes import (
+    auth,
+    subscribers,
+    campaigns,
+    stats,
+    templates,
+    setting,
+    domains,
+    analytics,
+    email_settings,
+    webhooks,
+    suppressions,
+    segments,
+    ab_testing,
+    automation,
+    events,
+    automation_analytics,
+    audit,
+    unsubscribe,
+)
 
 # ============================================
 # LOGGING CONFIGURATION
 # ============================================
 
-LOG_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "var", "log")
+LOG_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "var", "log"
+)
 os.makedirs(LOG_DIR, exist_ok=True)
 
 from logging.handlers import RotatingFileHandler
 
-log_format = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-access_log_format = '%(asctime)s - %(message)s'
+log_format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+access_log_format = "%(asctime)s - %(message)s"
 log_level = getattr(logging, settings.LOG_LEVEL, logging.INFO)
+
 
 def _setup_file_logging():
     root_logger = logging.getLogger()
@@ -116,19 +150,22 @@ def _setup_file_logging():
     root_logger.addHandler(console_handler)
 
     app_handler = RotatingFileHandler(
-        os.path.join(LOG_DIR, "app.log"), maxBytes=10*1024*1024, backupCount=5)
+        os.path.join(LOG_DIR, "app.log"), maxBytes=10 * 1024 * 1024, backupCount=5
+    )
     app_handler.setLevel(log_level)
     app_handler.setFormatter(formatter)
     root_logger.addHandler(app_handler)
 
     error_handler = RotatingFileHandler(
-        os.path.join(LOG_DIR, "error.log"), maxBytes=10*1024*1024, backupCount=5)
+        os.path.join(LOG_DIR, "error.log"), maxBytes=10 * 1024 * 1024, backupCount=5
+    )
     error_handler.setLevel(logging.ERROR)
     error_handler.setFormatter(formatter)
     root_logger.addHandler(error_handler)
 
     access_handler = RotatingFileHandler(
-        os.path.join(LOG_DIR, "access.log"), maxBytes=10*1024*1024, backupCount=5)
+        os.path.join(LOG_DIR, "access.log"), maxBytes=10 * 1024 * 1024, backupCount=5
+    )
     access_handler.setLevel(logging.INFO)
     access_handler.setFormatter(logging.Formatter(access_log_format))
 
@@ -138,9 +175,20 @@ def _setup_file_logging():
         uvi_logger.propagate = True
     logging.getLogger("uvicorn.access").addHandler(access_handler)
 
-    for mod_name in ("routes", "tasks", "database", "core", "celery",
-                      "motor", "pymongo", "fastapi", "httpx", "aiohttp"):
+    for mod_name in (
+        "routes",
+        "tasks",
+        "database",
+        "core",
+        "celery",
+        "motor",
+        "pymongo",
+        "fastapi",
+        "httpx",
+        "aiohttp",
+    ):
         logging.getLogger(mod_name).setLevel(log_level)
+
 
 _setup_file_logging()
 logger.info(f"Logging configured at {settings.LOG_LEVEL} level")
@@ -183,6 +231,7 @@ async def lifespan(app: FastAPI):
     if startup_recovery_enabled:
         try:
             from tasks.startup_recovery import startup_recovery_only
+
             startup_recovery_only.apply_async(countdown=60)
             logger.info("✅ Startup recovery scheduled")
         except Exception as e:
@@ -198,7 +247,7 @@ async def lifespan(app: FastAPI):
         logger.info(f"   • {feature}: {status_icon}")
 
     # Check production readiness
-    if PRODUCTION_FEATURES.get('config'):
+    if PRODUCTION_FEATURES.get("config"):
         try:
             ready, checks = is_production_ready()
             logger.info(
@@ -233,8 +282,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title=settings.APP_NAME,
-    description=
-    "Production-ready email marketing platform with campaigns, automation, analytics, and more",
+    description="Production-ready email marketing platform with campaigns, automation, analytics, and more",
     version=settings.APP_VERSION,
     docs_url="/docs" if settings.DEBUG_MODE else None,
     redoc_url="/redoc" if settings.DEBUG_MODE else None,
@@ -300,8 +348,9 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["X-XSS-Protection"] = "1; mode=block"
-        response.headers[
-            "Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        response.headers["Strict-Transport-Security"] = (
+            "max-age=31536000; includeSubDomains"
+        )
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
 
         return response
@@ -340,7 +389,9 @@ async def performance_monitoring_middleware(request: Request, call_next):
                     method=request.method,
                     path=request.url.path,
                     status_code=response.status_code,
-                    duration=process_time))
+                    duration=process_time,
+                )
+            )
         except Exception as e:
             logger.debug(f"Failed to record metrics: {e}")
 
@@ -359,18 +410,17 @@ async def error_handling_middleware(request: Request, call_next):
     except Exception as e:
         logger.error(f"Unhandled error: {str(e)}", exc_info=True)
 
-        return JSONResponse(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                            content={
-                                "error":
-                                "Internal server error",
-                                "message":
-                                str(e) if settings.DEBUG_MODE else
-                                "An unexpected error occurred",
-                                "request_id":
-                                getattr(request.state, 'request_id', None),
-                                "timestamp":
-                                datetime.utcnow().isoformat()
-                            })
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={
+                "error": "Internal server error",
+                "message": str(e)
+                if settings.DEBUG_MODE
+                else "An unexpected error occurred",
+                "request_id": getattr(request.state, "request_id", None),
+                "timestamp": datetime.utcnow().isoformat(),
+            },
+        )
 
 
 logger.info("✅ Error handling middleware configured")
@@ -381,37 +431,31 @@ logger.info("✅ Error handling middleware configured")
 
 
 @app.exception_handler(StarletteHTTPException)
-async def http_exception_handler(request: Request,
-                                 exc: StarletteHTTPException):
+async def http_exception_handler(request: Request, exc: StarletteHTTPException):
     """Handle HTTP exceptions"""
-    return JSONResponse(status_code=exc.status_code,
-                        content={
-                            "error":
-                            exc.detail,
-                            "status_code":
-                            exc.status_code,
-                            "request_id":
-                            getattr(request.state, 'request_id', None),
-                            "timestamp":
-                            datetime.utcnow().isoformat()
-                        })
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "error": exc.detail,
+            "status_code": exc.status_code,
+            "request_id": getattr(request.state, "request_id", None),
+            "timestamp": datetime.utcnow().isoformat(),
+        },
+    )
 
 
 @app.exception_handler(RequestValidationError)
-async def validation_exception_handler(request: Request,
-                                       exc: RequestValidationError):
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
     """Handle request validation errors"""
-    return JSONResponse(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                        content={
-                            "error":
-                            "Validation error",
-                            "details":
-                            exc.errors(),
-                            "request_id":
-                            getattr(request.state, 'request_id', None),
-                            "timestamp":
-                            datetime.utcnow().isoformat()
-                        })
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        content={
+            "error": "Validation error",
+            "details": exc.errors(),
+            "request_id": getattr(request.state, "request_id", None),
+            "timestamp": datetime.utcnow().isoformat(),
+        },
+    )
 
 
 @app.exception_handler(Exception)
@@ -419,34 +463,31 @@ async def general_exception_handler(request: Request, exc: Exception):
     """Handle all other exceptions"""
     logger.error(f"Unhandled exception: {str(exc)}", exc_info=True)
 
-    return JSONResponse(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                        content={
-                            "error":
-                            "Internal server error",
-                            "message":
-                            str(exc) if settings.DEBUG_MODE else
-                            "An unexpected error occurred",
-                            "request_id":
-                            getattr(request.state, 'request_id', None),
-                            "timestamp":
-                            datetime.utcnow().isoformat()
-                        })
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content={
+            "error": "Internal server error",
+            "message": str(exc)
+            if settings.DEBUG_MODE
+            else "An unexpected error occurred",
+            "request_id": getattr(request.state, "request_id", None),
+            "timestamp": datetime.utcnow().isoformat(),
+        },
+    )
 
 
 @app.exception_handler(404)
 async def not_found_handler(request: Request, exc):
     """Custom 404 handler"""
-    return JSONResponse(status_code=404,
-                        content={
-                            "error":
-                            "Not found",
-                            "message":
-                            f"The endpoint {request.url.path} does not exist",
-                            "request_id":
-                            getattr(request.state, 'request_id', None),
-                            "timestamp":
-                            datetime.utcnow().isoformat()
-                        })
+    return JSONResponse(
+        status_code=404,
+        content={
+            "error": "Not found",
+            "message": f"The endpoint {request.url.path} does not exist",
+            "request_id": getattr(request.state, "request_id", None),
+            "timestamp": datetime.utcnow().isoformat(),
+        },
+    )
 
 
 logger.info("✅ Exception handlers configured")
@@ -463,7 +504,7 @@ async def health_check():
         "status": "healthy",
         "timestamp": datetime.utcnow().isoformat(),
         "version": settings.APP_VERSION,
-        "environment": settings.ENVIRONMENT
+        "environment": settings.ENVIRONMENT,
     }
 
 
@@ -488,12 +529,14 @@ async def readiness_check():
 
     all_healthy = all(checks.values())
 
-    return JSONResponse(status_code=200 if all_healthy else 503,
-                        content={
-                            "status": "ready" if all_healthy else "not_ready",
-                            "checks": checks,
-                            "timestamp": datetime.utcnow().isoformat()
-                        })
+    return JSONResponse(
+        status_code=200 if all_healthy else 503,
+        content={
+            "status": "ready" if all_healthy else "not_ready",
+            "checks": checks,
+            "timestamp": datetime.utcnow().isoformat(),
+        },
+    )
 
 
 @app.get("/health/live", tags=["Health"])
@@ -508,7 +551,7 @@ async def startup_check():
     return {
         "status": "started",
         "timestamp": datetime.utcnow().isoformat(),
-        "features": PRODUCTION_FEATURES
+        "features": PRODUCTION_FEATURES,
     }
 
 
@@ -521,7 +564,7 @@ async def detailed_health_check():
         "version": settings.APP_VERSION,
         "environment": settings.ENVIRONMENT,
         "production_features": PRODUCTION_FEATURES,
-        "checks": {}
+        "checks": {},
     }
 
     # Database check
@@ -530,7 +573,7 @@ async def detailed_health_check():
             db_healthy = await ping_database()
             health_info["checks"]["database"] = {
                 "status": "healthy" if db_healthy else "unhealthy",
-                "connected": db_healthy
+                "connected": db_healthy,
             }
 
             if get_database_info:
@@ -540,10 +583,7 @@ async def detailed_health_check():
                 except Exception as e:
                     health_info["checks"]["database"]["info_error"] = str(e)
         except Exception as e:
-            health_info["checks"]["database"] = {
-                "status": "unhealthy",
-                "error": str(e)
-            }
+            health_info["checks"]["database"] = {"status": "unhealthy", "error": str(e)}
 
     # Health monitor check
     if health_monitor:
@@ -578,34 +618,23 @@ async def get_metrics():
 async def system_info():
     """System information and capabilities"""
     return {
-        "name":
-        settings.APP_NAME,
-        "version":
-        settings.APP_VERSION,
-        "environment":
-        settings.ENVIRONMENT,
-        "timestamp":
-        datetime.utcnow().isoformat(),
-        "production_features":
-        PRODUCTION_FEATURES,
+        "name": settings.APP_NAME,
+        "version": settings.APP_VERSION,
+        "environment": settings.ENVIRONMENT,
+        "timestamp": datetime.utcnow().isoformat(),
+        "production_features": PRODUCTION_FEATURES,
         "enabled_features": [k for k, v in PRODUCTION_FEATURES.items() if v],
         "capabilities": {
-            "health_monitoring":
-            PRODUCTION_FEATURES.get('health_monitor', False),
-            "metrics_collection":
-            PRODUCTION_FEATURES.get('metrics_collector', False),
-            "resource_management":
-            PRODUCTION_FEATURES.get('resource_manager', False),
-            "campaign_control":
-            PRODUCTION_FEATURES.get('campaign_controller', False),
-            "dlq_processing":
-            PRODUCTION_FEATURES.get('dlq_manager', False),
+            "health_monitoring": PRODUCTION_FEATURES.get("health_monitor", False),
+            "metrics_collection": PRODUCTION_FEATURES.get("metrics_collector", False),
+            "resource_management": PRODUCTION_FEATURES.get("resource_manager", False),
+            "campaign_control": PRODUCTION_FEATURES.get("campaign_controller", False),
+            "dlq_processing": PRODUCTION_FEATURES.get("dlq_manager", False),
         },
-        "routes_registered":
-        len(app.routes),
-        "status":
-        "production_ready"
-        if settings.ENVIRONMENT == "production" else "development"
+        "routes_registered": len(app.routes),
+        "status": "production_ready"
+        if settings.ENVIRONMENT == "production"
+        else "development",
     }
 
 
@@ -614,6 +643,7 @@ async def worker_status():
     """Get Celery worker status"""
     try:
         from celery_app import get_celery_status
+
         status = get_celery_status()
         return status
     except Exception as e:
@@ -625,12 +655,13 @@ async def queue_status():
     """Get queue status information"""
     try:
         from celery_app import celery_app
+
         inspect = celery_app.control.inspect()
 
         return {
             "active_queues": inspect.active_queues() or {},
             "reserved_tasks": inspect.reserved() or {},
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": datetime.utcnow().isoformat(),
         }
     except Exception as e:
         return {"error": str(e), "message": "Queue status not available"}
@@ -650,8 +681,9 @@ async def root():
         "version": settings.APP_VERSION,
         "environment": settings.ENVIRONMENT,
         "status": "operational",
-        "documentation": "/docs" if getattr(settings, 'DEBUG_MODE', True) else
-        "Contact support for API documentation",
+        "documentation": "/docs"
+        if getattr(settings, "DEBUG_MODE", True)
+        else "Contact support for API documentation",
         "health_check": "/health",
         "endpoints": {
             "authentication": "/api/auth",
@@ -660,80 +692,107 @@ async def root():
             "templates": "/api/templates",
             "analytics": "/api/analytics",
             "automation": "/api/automation",
-            "settings": "/api/settings"
+            "settings": "/api/settings",
         },
-        "timestamp": datetime.utcnow().isoformat()
+        "timestamp": datetime.utcnow().isoformat(),
     }
 
 
 # ============================================
 # REGISTER APPLICATION ROUTES
 # ============================================
+# Public routes: /api/auth (login/register), /api/webhooks, /api/unsubscribe
+# All other routes require a valid JWT via Depends(get_current_user)
 
-# Templates
-app.include_router(templates.router,
-                   prefix="/api/templates",
-                   tags=["Templates"])
+_auth_dep = [Depends(get_current_user)]
 
-# Authentication
+# Authentication — public (login, register, me)
 app.include_router(auth.router, prefix="/api/auth", tags=["Authentication"])
 
-# Subscribers
-app.include_router(subscribers.router,
-                   prefix="/api/subscribers",
-                   tags=["Subscribers"])
-
-# Dashboard Stats
-app.include_router(stats.router, prefix="/api/stats", tags=["Statistics"])
-
-# Settings
-app.include_router(setting.router, prefix="/api/settings", tags=["Settings"])
-
-# Domains
-app.include_router(domains.router, prefix="/api/domains", tags=["Domains"])
-
-# Analytics
-app.include_router(analytics.router,
-                   prefix="/api/analytics",
-                   tags=["Analytics"])
-
-# Email Settings
-app.include_router(email_settings.router,
-                   prefix="/api/email",
-                   tags=["Email Settings"])
-
-# Suppressions
-app.include_router(suppressions.router,
-                   prefix="/api/suppressions",
-                   tags=["Suppressions"])
-
-# Segments
-app.include_router(segments.router, prefix="/api/segments", tags=["Segments"])
-
-# Campaigns
-app.include_router(campaigns.router, prefix="/api", tags=["Campaigns"])
-
-# Webhooks
+# Webhooks — public (called by SES/external services, no user session)
 app.include_router(webhooks.router, prefix="/api", tags=["Webhooks"])
 
-# A/B Testing
-app.include_router(ab_testing.router, prefix="/api", tags=["A/B Testing"])
-
-# Automation
-app.include_router(automation.router, prefix="/api", tags=["Automation"])
-
-# Automation Events
-app.include_router(events.router, prefix="/api", tags=["Events"])
-
-# Automation Analytics
-app.include_router(automation_analytics.router,
-                   prefix="/api",
-                   tags=["Automation Analytics"])
-
-#Audit
-app.include_router(audit.router, prefix="/api/audit", tags=["audit"])
-
+# Unsubscribe — public (clicked from email, no user session)
 app.include_router(unsubscribe.router, prefix="/api", tags=["Unsubscribe"])
+
+# ── Protected routes ──────────────────────────────────────────────────────
+app.include_router(
+    templates.router,
+    prefix="/api/templates",
+    tags=["Templates"],
+    dependencies=_auth_dep,
+)
+
+app.include_router(
+    subscribers.router,
+    prefix="/api/subscribers",
+    tags=["Subscribers"],
+    dependencies=_auth_dep,
+)
+
+app.include_router(
+    stats.router, prefix="/api/stats", tags=["Statistics"], dependencies=_auth_dep
+)
+
+app.include_router(
+    setting.router, prefix="/api/settings", tags=["Settings"], dependencies=_auth_dep
+)
+
+app.include_router(
+    domains.router, prefix="/api/domains", tags=["Domains"], dependencies=_auth_dep
+)
+
+app.include_router(
+    analytics.router,
+    prefix="/api/analytics",
+    tags=["Analytics"],
+    dependencies=_auth_dep,
+)
+
+app.include_router(
+    email_settings.router,
+    prefix="/api/email",
+    tags=["Email Settings"],
+    dependencies=_auth_dep,
+)
+
+app.include_router(
+    suppressions.router,
+    prefix="/api/suppressions",
+    tags=["Suppressions"],
+    dependencies=_auth_dep,
+)
+
+app.include_router(
+    segments.router, prefix="/api/segments", tags=["Segments"], dependencies=_auth_dep
+)
+
+app.include_router(
+    campaigns.router, prefix="/api", tags=["Campaigns"], dependencies=_auth_dep
+)
+
+app.include_router(
+    ab_testing.router, prefix="/api", tags=["A/B Testing"], dependencies=_auth_dep
+)
+
+app.include_router(
+    automation.router, prefix="/api", tags=["Automation"], dependencies=_auth_dep
+)
+
+app.include_router(
+    events.router, prefix="/api", tags=["Events"], dependencies=_auth_dep
+)
+
+app.include_router(
+    automation_analytics.router,
+    prefix="/api",
+    tags=["Automation Analytics"],
+    dependencies=_auth_dep,
+)
+
+app.include_router(
+    audit.router, prefix="/api/audit", tags=["audit"], dependencies=_auth_dep
+)
 
 logger.info(f"✅ {len(app.routes)} routes registered")
 
@@ -748,16 +807,18 @@ if settings.DEBUG_MODE:
         """List all registered routes (debug only)"""
         routes = []
         for route in app.routes:
-            if hasattr(route, 'path') and hasattr(route, 'methods'):
-                routes.append({
-                    "path": route.path,
-                    "methods": list(route.methods),
-                    "name": route.name
-                })
+            if hasattr(route, "path") and hasattr(route, "methods"):
+                routes.append(
+                    {
+                        "path": route.path,
+                        "methods": list(route.methods),
+                        "name": route.name,
+                    }
+                )
 
         return {
             "total_routes": len(routes),
-            "routes": sorted(routes, key=lambda x: x['path'])
+            "routes": sorted(routes, key=lambda x: x["path"]),
         }
 
 
@@ -774,8 +835,10 @@ if __name__ == "__main__":
     logger.info(f"Debug Mode: {settings.DEBUG_MODE}")
     logger.info("=" * 60)
 
-    uvicorn.run("main:app",
-                host="0.0.0.0",
-                port=8000,
-                reload=settings.DEBUG_MODE,
-                log_level=settings.LOG_LEVEL.lower())
+    uvicorn.run(
+        "main:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=settings.DEBUG_MODE,
+        log_level=settings.LOG_LEVEL.lower(),
+    )

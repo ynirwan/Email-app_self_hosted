@@ -18,8 +18,8 @@ class Settings:
     # ===== JWT AUTHENTICATION =====
     JWT_SECRET: str = os.getenv("JWT_SECRET", "your-secret-key-change-in-production")
     JWT_ALGORITHM: str = "HS256"
-    JWT_EXP: int = int(os.getenv("JWT_EXP", "3600"))
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+    JWT_EXP: int = int(os.getenv("JWT_EXP", "28800"))  # 8 hours default
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 480  # kept for reference, auth.py uses JWT_EXP
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
 
     # ===== DATABASE CONFIGURATION =====
