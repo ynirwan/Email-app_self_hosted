@@ -15,7 +15,7 @@ from database import (
     get_subscribers_collection,
     get_audit_collection
 )
-from tasks.automation_tasks import process_automation_trigger
+from tasks.automation.automation_tasks import process_automation_trigger
 
 router = APIRouter(prefix="/events", tags=["events"])
 logger = logging.getLogger(__name__)

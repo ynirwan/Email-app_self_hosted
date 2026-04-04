@@ -15,7 +15,7 @@ from database import (
     get_sync_ab_test_results_collection,
     get_campaigns_collection,
 )
-from tasks.ab_testing import send_ab_test_batch
+from tasks.ab.ab_testing import send_ab_test_batch
 
 logger = logging.getLogger(__name__)
 router = APIRouter()

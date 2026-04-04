@@ -48,7 +48,7 @@ celery_app = Celery(
     include=[
         # Core email campaign tasks (always included)
         "tasks.campaign.email_campaign_tasks",
-        "tasks.ab_testing",
+        "tasks.ab.ab_testing",
         #    "tasks.startup_recovery",
     ],
 )
@@ -62,7 +62,7 @@ logger.info("✅ Celery app created")
 
 # Try to include production tasks if available
 production_tasks = [
-    "tasks.automation_tasks",
+    "tasks.automation.automation_tasks",
     "tasks.ses_webhook_tasks",
     "tasks.analytics_tasks",
     "tasks.cleanup_tasks",
