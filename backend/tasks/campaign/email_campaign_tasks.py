@@ -35,7 +35,6 @@ from celery_app import celery_app
 from celery import chord, group
 
 from tasks.task_config import task_settings
-from core.config import settings
 from database import (
     get_sync_campaigns_collection,
     get_sync_email_logs_collection,
@@ -136,7 +135,9 @@ def _get_snapshot(campaign_id: str) -> Optional[Dict[str, Any]]:
     templates_collection = get_sync_templates_collection()
     template = templates_collection.find_one({"_id": ObjectId(template_id)})
     if not template:
-        logger.error(f"Campaign {campaign_id}: fallback template {template_id} not found")
+        logger.error(
+            f"Campaign {campaign_id}: fallback template {template_id} not found"
+        )
         return None
 
     html_content = template.get("html_content", "")
@@ -144,6 +145,7 @@ def _get_snapshot(campaign_id: str) -> Optional[Dict[str, Any]]:
         content_json = template.get("content_json", {})
         if content_json:
             from tasks.campaign.snapshot_utils import _extract_html_from_content_json
+
             html_content = _extract_html_from_content_json(content_json)
 
     if not html_content:
@@ -151,12 +153,12 @@ def _get_snapshot(campaign_id: str) -> Optional[Dict[str, Any]]:
         return None
 
     result = {
-        "html_content":    html_content,
-        "text_content":    template.get("text_content", ""),
-        "subject":         template.get("subject", ""),
-        "field_map":       doc.get("field_map", {}),
+        "html_content": html_content,
+        "text_content": template.get("text_content", ""),
+        "subject": template.get("subject", ""),
+        "field_map": doc.get("field_map", {}),
         "fallback_values": doc.get("fallback_values", {}),
-        "from_snapshot":   False,
+        "from_snapshot": False,
     }
     _snapshot_cache[campaign_id] = result
     return result
@@ -264,8 +266,7 @@ def _decrement_queued(campaign_id: str):
         oid = ObjectId(campaign_id)
         # Decrement only if current value > 0
         col.update_one(
-            {"_id": oid, "queued_count": {"$gt": 0}},
-            {"$inc": {"queued_count": -1}}
+            {"_id": oid, "queued_count": {"$gt": 0}}, {"$inc": {"queued_count": -1}}
         )
     except Exception:
         pass  # best-effort
@@ -359,13 +360,19 @@ def send_single_campaign_email(self, campaign_id: str, subscriber_id: str):
 
         # ── STEP 4b: SUPPRESSION CHECK ───────────────────────────────────────
         from database import get_sync_suppressions_collection
-        if get_sync_suppressions_collection().find_one({"email": recipient_email}, {"_id": 1}):
+
+        if get_sync_suppressions_collection().find_one(
+            {"email": recipient_email}, {"_id": 1}
+        ):
             _decrement_queued(campaign_id)
             campaigns_collection.update_one(
-                {"_id": ObjectId(campaign_id)},
-                {"$inc": {"processed_count": 1}}
+                {"_id": ObjectId(campaign_id)}, {"$inc": {"processed_count": 1}}
             )
-            return {"status": "skipped", "reason": "suppressed", "email": recipient_email}
+            return {
+                "status": "skipped",
+                "reason": "suppressed",
+                "email": recipient_email,
+            }
 
         # ── STEP 4c: REQUEUE DETECTION ───────────────────────────────────────
         # If a "failed" log already exists for this subscriber in this campaign,
@@ -509,8 +516,12 @@ def send_single_campaign_email(self, campaign_id: str, subscriber_id: str):
         try:
             from routes.tracking import generate_tracking_token, build_open_pixel_url
 
-            open_token = generate_tracking_token(campaign_id, subscriber_id, recipient_email)
-            personalization_context["open_tracking_url"] = build_open_pixel_url(open_token)
+            open_token = generate_tracking_token(
+                campaign_id, subscriber_id, recipient_email
+            )
+            personalization_context["open_tracking_url"] = build_open_pixel_url(
+                open_token
+            )
         except Exception as ot_err:
             logger.warning(f"Failed to generate open tracking URL: {ot_err}")
             personalization_context["open_tracking_url"] = ""
@@ -793,7 +804,9 @@ def send_campaign_batch(
     """
     # ── Redis lock — one batch per campaign at a time ─────────────────────────
     try:
-        _redis = _redis_module.Redis.from_url(task_settings.REDIS_URL, decode_responses=True)
+        _redis = _redis_module.Redis.from_url(
+            task_settings.REDIS_URL, decode_responses=True
+        )
         lock_key = f"campaign_batch_lock:{campaign_id}"
         # TTL = soft_time_limit + buffer so lock auto-expires if worker crashes
         acquired = _redis.set(lock_key, self.request.id, nx=True, ex=360)
@@ -802,7 +815,11 @@ def send_campaign_batch(
             logger.info(
                 f"Batch lock held by task {running_task} for campaign {campaign_id} — skipping duplicate"
             )
-            return {"status": "skipped_duplicate_batch", "campaign_id": campaign_id, "lock_held_by": running_task}
+            return {
+                "status": "skipped_duplicate_batch",
+                "campaign_id": campaign_id,
+                "lock_held_by": running_task,
+            }
     except Exception as lock_err:
         # Redis unavailable — continue without lock (degraded mode)
         logger.warning(f"Could not acquire batch lock for {campaign_id}: {lock_err}")
@@ -842,10 +859,17 @@ def send_campaign_batch(
 
         # Hard stop if paused — do not queue any new emails.
         # Save cursor so resume_campaign picks up from exactly this position.
-        if campaign.get("status") == "paused" or campaign_controller.is_campaign_paused(campaign_id):
+        if campaign.get("status") == "paused" or campaign_controller.is_campaign_paused(
+            campaign_id
+        ):
             cursor_key = f"campaign:cursor:{campaign_id}"
             campaign_controller.redis_client.set(cursor_key, last_id or "", ex=86400)
-            return {"status": "paused", "reason": "campaign_paused", "campaign_id": campaign_id, "saved_cursor": last_id}
+            return {
+                "status": "paused",
+                "reason": "campaign_paused",
+                "campaign_id": campaign_id,
+                "saved_cursor": last_id,
+            }
 
         if campaign_controller.is_campaign_stopped(campaign_id):
             return {"status": "stopped", "campaign_id": campaign_id}
@@ -977,8 +1001,9 @@ def get_subscribers_for_campaign(
     """
     try:
         from database import get_sync_suppressions_collection
-        campaigns_collection    = get_sync_campaigns_collection()
-        subscribers_collection  = get_sync_subscribers_collection()
+
+        campaigns_collection = get_sync_campaigns_collection()
+        subscribers_collection = get_sync_subscribers_collection()
         suppressions_collection = get_sync_suppressions_collection()
 
         campaign = campaigns_collection.find_one(
@@ -990,8 +1015,8 @@ def get_subscribers_for_campaign(
         # Build suppressed email set for this batch window
         # Fetch all suppressed emails upfront (cached in memory for this batch)
         suppressed_emails = set(
-            doc["email"] for doc in
-            suppressions_collection.find({}, {"email": 1, "_id": 0})
+            doc["email"]
+            for doc in suppressions_collection.find({}, {"email": 1, "_id": 0})
             if doc.get("email")
         )
 
@@ -1004,7 +1029,11 @@ def get_subscribers_for_campaign(
         # Exclude suppressed emails at DB level when the set is small enough
         # (MongoDB $nin has a practical limit; for large sets we filter in Python)
         if suppressed_emails and len(suppressed_emails) <= 5000:
-            query["email"] = {"$nin": list(suppressed_emails), "$exists": True, "$ne": ""}
+            query["email"] = {
+                "$nin": list(suppressed_emails),
+                "$exists": True,
+                "$ne": "",
+            }
 
         if target_lists:
             query["$or"] = [
@@ -1015,14 +1044,24 @@ def get_subscribers_for_campaign(
         if last_id:
             query["_id"] = {"$gt": ObjectId(last_id)}
 
-        projection = {"_id": 1, "email": 1, "status": 1, "standard_fields": 1, "custom_fields": 1}
+        projection = {
+            "_id": 1,
+            "email": 1,
+            "status": 1,
+            "standard_fields": 1,
+            "custom_fields": 1,
+        }
         subscribers = list(
-            subscribers_collection.find(query, projection).sort("_id", 1).limit(batch_size)
+            subscribers_collection.find(query, projection)
+            .sort("_id", 1)
+            .limit(batch_size)
         )
 
         # Python-side filter for large suppression sets
         if suppressed_emails and len(suppressed_emails) > 5000:
-            subscribers = [s for s in subscribers if s.get("email") not in suppressed_emails]
+            subscribers = [
+                s for s in subscribers if s.get("email") not in suppressed_emails
+            ]
 
         return subscribers
 
@@ -1048,7 +1087,11 @@ def finalize_campaign(campaign_id: str) -> Dict[str, Any]:
             logger.warning(
                 f"finalize_campaign called for {campaign_id} but queued_count={queued_count} — deferring"
             )
-            return {"status": "deferred", "reason": "tasks_still_queued", "queued_count": queued_count}
+            return {
+                "status": "deferred",
+                "reason": "tasks_still_queued",
+                "queued_count": queued_count,
+            }
 
         if campaign and campaign.get("stop_type") == "graceful":
             campaigns_collection.update_one(
