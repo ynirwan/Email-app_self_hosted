@@ -12,8 +12,7 @@ from enum import Enum
 from abc import ABC, abstractmethod
 from celery_app import celery_app
 from database import get_sync_settings_collection
-from core.config import settings, get_redis_key
-from tasks.task_config import task_settings
+from tasks.task_config import task_settings, get_redis_key
 from tasks.rate_limiter import EmailProvider
 from tasks.audit_logger import log_system_event, AuditEventType, AuditSeverity
 import redis
@@ -429,7 +428,7 @@ class EmailProviderManager:
     """Email provider manager with failover and load balancing"""
     
     def __init__(self):
-        self.redis_client = redis.Redis.from_url(settings.REDIS_URL)
+        self.redis_client = redis.Redis.from_url(task_settings.REDIS_URL)
         self.providers = {}
         self.provider_configs = {}
         self.load_provider_configurations()
@@ -456,7 +455,7 @@ class EmailProviderManager:
                     self._setup_smtp_provider(email_config)
             
             # Always setup mock provider for testing
-            if settings.MOCK_EMAIL_SENDING:
+            if task_settings.MOCK_EMAIL_SENDING:
                 self._setup_mock_provider()
             
             logger.info(f"Loaded {len(self.providers)} email providers")
@@ -520,13 +519,13 @@ class EmailProviderManager:
                 return None
             
             # If mock mode is enabled, always use mock provider
-            if settings.MOCK_EMAIL_SENDING and "mock" in self.providers:
+            if task_settings.MOCK_EMAIL_SENDING and "mock" in self.providers:
                 return "mock", self.providers["mock"]
             
             # Get provider health status
             provider_health = {}
             for name, provider in self.providers.items():
-                if name == "mock" and not settings.MOCK_EMAIL_SENDING:
+                if name == "mock" and not task_settings.MOCK_EMAIL_SENDING:
                     continue  # Skip mock provider unless in mock mode
                 
                 try:
@@ -757,7 +756,7 @@ def check_provider_health(self):
         
         # Store health report
         health_key = get_redis_key("provider_health", "latest")
-        redis_client = redis.Redis.from_url(settings.REDIS_URL)
+        redis_client = redis.Redis.from_url(task_settings.REDIS_URL)
         redis_client.setex(health_key, 300, json.dumps(health_report, default=str))  # 5 minutes
         
         # Log critical provider failures

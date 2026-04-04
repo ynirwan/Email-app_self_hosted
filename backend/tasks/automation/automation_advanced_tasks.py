@@ -190,7 +190,7 @@ def execute_conditional_step(
         
         # Schedule next steps
         for next_step_id in next_step_ids:
-            from tasks.automation_tasks import execute_automation_step
+            from tasks.automation.automation_tasks import execute_automation_step
             execute_automation_step.delay(
                 automation_rule_id,
                 next_step_id,
@@ -405,7 +405,7 @@ def wait_for_event_step(
             })
             
             if next_step:
-                from tasks.automation_tasks import execute_automation_step
+                from tasks.automation.automation_tasks import execute_automation_step
                 execute_automation_step.delay(
                     automation_rule_id,
                     str(next_step["_id"]),
@@ -438,7 +438,7 @@ def wait_for_event_step(
                 })
                 
                 if next_step:
-                    from tasks.automation_tasks import execute_automation_step
+                    from tasks.automation.automation_tasks import execute_automation_step
                     execute_automation_step.delay(
                         automation_rule_id,
                         str(next_step["_id"]),
@@ -450,7 +450,7 @@ def wait_for_event_step(
                 # Execute alternate steps
                 alternate_step_ids = wait_config.get("alternate_step_ids", [])
                 for alt_step_id in alternate_step_ids:
-                    from tasks.automation_tasks import execute_automation_step
+                    from tasks.automation.automation_tasks import execute_automation_step
                     execute_automation_step.delay(
                         automation_rule_id,
                         alt_step_id,
@@ -557,7 +557,7 @@ def check_goal_achievement(
             
             if rule and rule.get("exit_on_goal_achieved"):
                 # Cancel remaining scheduled steps
-                from tasks.automation_tasks import cancel_automation_workflow
+                from tasks.automation.automation_tasks import cancel_automation_workflow
                 cancel_automation_workflow.delay(automation_rule_id, subscriber_id)
             
             logger.info(f"Goal achieved for automation {automation_rule_id}, subscriber {subscriber_id}")
@@ -601,7 +601,7 @@ def optimize_send_time(
         
         if not smart_send_config.get("enabled"):
             # Smart send not enabled, use default delay
-            from tasks.automation_tasks import execute_automation_step
+            from tasks.automation.automation_tasks import execute_automation_step
             execute_automation_step.delay(
                 automation_rule_id,
                 step_id,
@@ -656,7 +656,7 @@ def optimize_send_time(
         delay_seconds = int((target_time - now).total_seconds())
         
         # Schedule execution at optimal time
-        from tasks.automation_tasks import execute_automation_step
+        from tasks.automation.automation_tasks import execute_automation_step
         execute_automation_step.apply_async(
             args=[automation_rule_id, step_id, subscriber_id, trigger_data or {}],
             countdown=delay_seconds

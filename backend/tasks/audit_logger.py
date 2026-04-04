@@ -12,8 +12,7 @@ from enum import Enum
 from bson import ObjectId
 from celery_app import celery_app
 from database import get_sync_audit_collection, get_sync_campaigns_collection
-from core.config import settings, get_redis_key
-from tasks.task_config import task_settings
+from tasks.task_config import task_settings, get_redis_key
 import redis
 
 logger = logging.getLogger(__name__)
@@ -69,7 +68,7 @@ class AuditLogger:
     """Comprehensive audit logging system"""
     
     def __init__(self):
-        self.redis_client = redis.Redis.from_url(settings.REDIS_URL)
+        self.redis_client = redis.Redis.from_url(task_settings.REDIS_URL)
         self.batch_buffer = []
         self.batch_size = 100
         
@@ -102,7 +101,7 @@ class AuditLogger:
                 "metadata": {
                     "source": "audit_logger",
                     "version": "1.0",
-                    "environment": settings.LOG_LEVEL,
+                    "environment": task_settings.LOG_LEVEL,
                     "node_id": self._get_node_id()
                 }
             }
@@ -483,7 +482,7 @@ class AuditLogger:
         """Clean up old audit logs based on retention policy"""
         try:
             if retention_days is None:
-                retention_days = settings.AUDIT_LOG_RETENTION_DAYS
+                retention_days = task_settings.AUDIT_LOG_RETENTION_DAYS
             
             audit_collection = get_sync_audit_collection()
             cutoff_date = datetime.utcnow() - timedelta(days=retention_days)
@@ -577,7 +576,7 @@ def generate_daily_compliance_report(self):
         
         # Store report in Redis for quick access
         report_key = get_redis_key("compliance_report", end_date.strftime("%Y-%m-%d"))
-        redis_client = redis.Redis.from_url(settings.REDIS_URL)
+        redis_client = redis.Redis.from_url(task_settings.REDIS_URL)
         redis_client.setex(report_key, 86400 * 7, json.dumps(report, default=str))  # Keep for 7 days
         
         return report

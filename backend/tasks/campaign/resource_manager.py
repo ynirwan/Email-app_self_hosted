@@ -8,7 +8,7 @@ import logging
 import time
 from datetime import datetime, timedelta
 from typing import Tuple, Dict, Any
-from core.config import settings, get_redis_key
+from tasks.task_config import task_settings, get_redis_key
 import redis
 import json
 
@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 class ResourceManager:
     def __init__(self):
-        self.redis_client = redis.Redis.from_url(settings.REDIS_URL)
+        self.redis_client = redis.Redis.from_url(task_settings.REDIS_URL)
         self.last_health_check = 0
         self.health_check_cache = {}
     
@@ -31,15 +31,15 @@ class ResourceManager:
                 "free_percent": 100 - memory.percent
             }
             
-            is_healthy = memory.percent <= settings.MAX_MEMORY_USAGE_PERCENT
+            is_healthy = memory.percent <= task_settings.MAX_MEMORY_USAGE_PERCENT
             
             if not is_healthy:
-                logger.warning(f"High memory usage: {memory.percent}% (limit: {settings.MAX_MEMORY_USAGE_PERCENT}%)")
+                logger.warning(f"High memory usage: {memory.percent}% (limit: {task_settings.MAX_MEMORY_USAGE_PERCENT}%)")
             
             # Store metrics
-            if settings.ENABLE_METRICS_COLLECTION:
+            if task_settings.ENABLE_METRICS_COLLECTION:
                 metrics_key = get_redis_key("memory_metrics", str(int(time.time())))
-                self.redis_client.setex(metrics_key, settings.METRICS_RETENTION_HOURS * 3600, json.dumps(memory_info))
+                self.redis_client.setex(metrics_key, task_settings.METRICS_RETENTION_HOURS * 3600, json.dumps(memory_info))
             
             return is_healthy, memory_info
             
@@ -139,7 +139,7 @@ class ResourceManager:
         current_time = time.time()
         
         # Use cached health check if recent
-        if (current_time - self.last_health_check) < settings.HEALTH_CHECK_INTERVAL_SECONDS:
+        if (current_time - self.last_health_check) < task_settings.HEALTH_CHECK_INTERVAL_SECONDS:
             return self.health_check_cache
         
         health_status = {
@@ -178,9 +178,9 @@ class ResourceManager:
         self.health_check_cache = health_status
         
         # Store health metrics
-        if settings.ENABLE_METRICS_COLLECTION:
+        if task_settings.ENABLE_METRICS_COLLECTION:
             health_key = get_redis_key("health_metrics", str(int(current_time)))
-            self.redis_client.setex(health_key, settings.METRICS_RETENTION_HOURS * 3600, json.dumps(health_status))
+            self.redis_client.setex(health_key, task_settings.METRICS_RETENTION_HOURS * 3600, json.dumps(health_status))
         
         return health_status
     
@@ -227,7 +227,7 @@ class ResourceManager:
         """Comprehensive check if system can handle batch processing"""
         
         # CHECK IF HEALTH CHECKS ARE BYPASSED
-        if hasattr(settings, 'SKIP_HEALTH_CHECKS_FOR_TESTING') and settings.SKIP_HEALTH_CHECKS_FOR_TESTING:
+        if hasattr(task_settings, 'SKIP_HEALTH_CHECKS_FOR_TESTING') and task_settings.SKIP_HEALTH_CHECKS_FOR_TESTING:
             logger.info("✅ Health checks bypassed (SKIP_HEALTH_CHECKS_FOR_TESTING=true)")
             return True, "health_checks_bypassed", {"bypassed": True}
         
@@ -235,7 +235,7 @@ class ResourceManager:
         health = self.get_system_health()
         
         # If strict mode is disabled, only fail on critical systems
-        if hasattr(settings, 'HEALTH_CHECK_STRICT_MODE') and not settings.HEALTH_CHECK_STRICT_MODE:
+        if hasattr(settings, 'HEALTH_CHECK_STRICT_MODE') and not task_settings.HEALTH_CHECK_STRICT_MODE:
             # Only check database connectivity in non-strict mode
             if not health["checks"].get("database", {}).get("healthy", True):
                 return False, "database_unhealthy", health
@@ -254,7 +254,7 @@ class ResourceManager:
         
         # Check active task count
         celery_metrics = self.get_celery_queue_metrics()
-        if celery_metrics.get("total_active", 0) > settings.MAX_CONCURRENT_TASKS:
+        if celery_metrics.get("total_active", 0) > task_settings.MAX_CONCURRENT_TASKS:
             return False, "queue_overloaded", celery_metrics
         
         # Campaign-specific checks
@@ -270,7 +270,7 @@ class ResourceManager:
         """Get optimal batch size based on current system resources"""
         
         # If health checks are bypassed, return requested size
-        if hasattr(settings, 'SKIP_HEALTH_CHECKS_FOR_TESTING') and settings.SKIP_HEALTH_CHECKS_FOR_TESTING:
+        if hasattr(task_settings, 'SKIP_HEALTH_CHECKS_FOR_TESTING') and task_settings.SKIP_HEALTH_CHECKS_FOR_TESTING:
             return requested_size
         
         can_process, reason, metrics = self.can_process_batch(requested_size, campaign_id)
@@ -293,11 +293,11 @@ class ResourceManager:
         try:
             # Clean memory metrics
             pattern = get_redis_key("memory_metrics", "*")
-            self._cleanup_keys_by_pattern(pattern, settings.METRICS_RETENTION_HOURS * 3600)
+            self._cleanup_keys_by_pattern(pattern, task_settings.METRICS_RETENTION_HOURS * 3600)
             
             # Clean health metrics
             pattern = get_redis_key("health_metrics", "*")
-            self._cleanup_keys_by_pattern(pattern, settings.METRICS_RETENTION_HOURS * 3600)
+            self._cleanup_keys_by_pattern(pattern, task_settings.METRICS_RETENTION_HOURS * 3600)
             
             logger.info("Old metrics cleaned up successfully")
             

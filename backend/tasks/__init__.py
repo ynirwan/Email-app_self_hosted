@@ -19,7 +19,7 @@ except ImportError as e:
 
 # ✅ NEW: Import automation tasks
 try:
-    from . import automation_tasks
+    from .automation import automation_tasks
     print("✅ Loaded automation_tasks")
     AUTOMATION_AVAILABLE = True
 except ImportError as e:
@@ -88,7 +88,7 @@ print(f"📊 Registered tasks: {', '.join(__all__) if __all__ else 'None'}")
 # ✅ NEW: Verify automation tasks are callable
 if AUTOMATION_AVAILABLE:
     try:
-        from .automation_tasks import (
+        from .automation.automation_tasks import (
             check_welcome_automations,
             check_daily_birthdays,
             process_scheduled_automations
@@ -98,4 +98,4 @@ if AUTOMATION_AVAILABLE:
         print(f"⚠️ Warning: Some automation tasks not available: {e}")
 
 
-from .automation_email_tasks import *        
+from .automation.automation_email_tasks import *        

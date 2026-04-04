@@ -137,8 +137,6 @@ class TaskSettings:
     ENABLE_REAL_TIME_ANALYTICS: bool = True
     ANALYTICS_AGGREGATION_INTERVAL_MINUTES: int = 5
     ANALYTICS_RETENTION_DAYS: int = 90
-    TRACK_LINK_CLICKS: bool = True
-    TRACK_EMAIL_OPENS: bool = True
 
     # ===== WEBHOOK =====
     WEBHOOK_RETRY_ATTEMPTS: int = 3
@@ -174,4 +172,22 @@ class TaskSettings:
     PROVIDER_HEALTH_CHECK_INTERVAL_SECONDS: int = 300
 
 
+    # ===== EXTRA SETTINGS NEEDED BY TASKS =====
+    REDIS_URL: str = os.getenv("REDIS_URL", "redis://redis:6379/0")
+    REDIS_KEY_PREFIX: str = os.getenv("REDIS_KEY_PREFIX", "email_marketing")
+    LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
+    MASTER_ENCRYPTION_KEY: str = os.getenv("MASTER_ENCRYPTION_KEY", "")
+    MOCK_EMAIL_SENDING: bool = os.getenv("MOCK_EMAIL_SENDING", "false").lower() == "true"
+    DLQ_RETENTION_DAYS: int = int(os.getenv("DLQ_RETENTION_DAYS", "30"))
+    APP_BASE_URL: str = os.getenv("APP_BASE_URL", "http://localhost:8000")
+    UNSUBSCRIBE_DOMAIN: str = os.getenv("UNSUBSCRIBE_DOMAIN", "localhost:8000")
+    TRACK_LINK_CLICKS: bool = os.getenv("TRACK_LINK_CLICKS", "true").lower() == "true"
+    TRACK_EMAIL_OPENS: bool = os.getenv("TRACK_EMAIL_OPENS", "true").lower() == "true"
+
 task_settings = TaskSettings()
+
+
+def get_redis_key(key_type, identifier=''):
+    '''Build a namespaced Redis key from task_settings.REDIS_KEY_PREFIX.'''
+    base = task_settings.REDIS_KEY_PREFIX + ':' + key_type
+    return base + ':' + identifier if identifier else base

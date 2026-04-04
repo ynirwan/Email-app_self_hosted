@@ -10,9 +10,10 @@ from database import (
 )
 from celery_app import celery_app
 from core.config import settings
+from tasks.task_config import task_settings, get_redis_key
 
 logger = logging.getLogger(__name__)
-redis_client = redis.Redis.from_url(settings.REDIS_URL)
+redis_client = redis.Redis.from_url(task_settings.REDIS_URL)
 
 @celery_app.task(bind=True, queue="cleanup", name="tasks.startup_recovery_only")
 def startup_recovery_only(self):

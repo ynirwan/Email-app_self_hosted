@@ -15,7 +15,7 @@ from database import (
     get_sync_campaigns_collection, get_sync_email_logs_collection,
     get_sync_subscribers_collection, get_sync_analytics_collection, initialize_sync_client, get_sync_database
 )
-from core.config import settings, get_redis_key
+from tasks.task_config import task_settings, get_redis_key
 import redis
 
 logger = logging.getLogger(__name__)
@@ -24,7 +24,7 @@ class MetricsCollector:
     """Comprehensive metrics collection system"""
     
     def __init__(self):
-        self.redis_client = redis.Redis.from_url(settings.REDIS_URL)
+        self.redis_client = redis.Redis.from_url(task_settings.REDIS_URL)
     
     def collect_system_metrics(self) -> Dict[str, Any]:
         """Collect system-level metrics"""
@@ -404,7 +404,7 @@ class MetricsCollector:
             # Store with TTL based on retention setting
             self.redis_client.setex(
                 metric_key,
-                settings.METRICS_RETENTION_HOURS * 3600,
+                task_settings.METRICS_RETENTION_HOURS * 3600,
                 json.dumps(metrics, default=str)
             )
             
@@ -499,12 +499,12 @@ def collect_all_metrics(self):
 def cleanup_old_metrics(self):
     """Clean up old metrics from Redis"""
     try:
-        redis_client = redis.Redis.from_url(settings.REDIS_URL)
+        redis_client = redis.Redis.from_url(task_settings.REDIS_URL)
         collector = MetricsCollector()
         
         # Clean up metrics older than retention period
         current_time = time.time()
-        cutoff_time = current_time - (settings.METRICS_RETENTION_HOURS * 3600)
+        cutoff_time = current_time - (task_settings.METRICS_RETENTION_HOURS * 3600)
         
         cleaned_count = 0
         metric_types = ["system", "celery", "email", "database", "redis"]
@@ -532,7 +532,7 @@ def cleanup_old_metrics(self):
         
         return {
             "cleaned_metrics": cleaned_count,
-            "retention_hours": settings.METRICS_RETENTION_HOURS
+            "retention_hours": task_settings.METRICS_RETENTION_HOURS
         }
         
     except Exception as e:

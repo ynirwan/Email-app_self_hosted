@@ -15,7 +15,7 @@ from core.config import settings
 from tasks.task_config import task_settings
 
 logger = logging.getLogger(__name__)
-redis_client = redis.Redis.from_url(settings.REDIS_URL, decode_responses=True)
+redis_client = redis.Redis.from_url(task_settings.REDIS_URL, decode_responses=True)
 
 BATCH_SIZE = task_settings.SES_BATCH_SIZE
 CRITICAL_BATCH_SIZE = task_settings.SES_CRITICAL_BATCH_SIZE

@@ -9,7 +9,7 @@ import json
 import logging
 from datetime import datetime, timedelta
 from typing import Dict, Tuple, Optional, List
-from core.config import settings, get_redis_key
+from tasks.task_config import task_settings, get_redis_key
 from enum import Enum
 
 logger = logging.getLogger(__name__)
@@ -33,7 +33,7 @@ class DynamicRateLimiter:
     """Dynamic rate limiter with provider-specific rules"""
     
     def __init__(self):
-        self.redis_client = redis.Redis.from_url(settings.REDIS_URL)
+        self.redis_client = redis.Redis.from_url(task_settings.REDIS_URL)
         
         # Provider-specific rate limits (emails per minute)
         self.provider_limits = {
@@ -81,10 +81,10 @@ class DynamicRateLimiter:
             min_rate = self.provider_limits[provider]["min"]
             
             # Adjust rate based on success rate
-            if success_rate >= settings.RATE_LIMIT_SUCCESS_THRESHOLD:
+            if success_rate >= task_settings.RATE_LIMIT_SUCCESS_THRESHOLD:
                 # High success rate - increase rate by 20%
                 new_rate = min(max_rate, int(base_rate * 1.2))
-            elif success_rate <= settings.RATE_LIMIT_FAILURE_THRESHOLD:
+            elif success_rate <= task_settings.RATE_LIMIT_FAILURE_THRESHOLD:
                 # Low success rate - decrease rate by 50%
                 new_rate = max(min_rate, int(base_rate * 0.5))
             else:
@@ -144,13 +144,13 @@ class DynamicRateLimiter:
             rate_limit = self.get_current_rate_limit(provider)
             
             # Check current window usage
-            current_minute = int(time.time() // settings.RATE_LIMIT_WINDOW_SECONDS)
+            current_minute = int(time.time() // task_settings.RATE_LIMIT_WINDOW_SECONDS)
             window_key = get_redis_key(f"rate_window_{provider.value}", str(current_minute))
             
             # Atomic increment and check
             pipe = self.redis_client.pipeline()
             pipe.incr(window_key)
-            pipe.expire(window_key, settings.RATE_LIMIT_WINDOW_SECONDS)
+            pipe.expire(window_key, task_settings.RATE_LIMIT_WINDOW_SECONDS)
             results = pipe.execute()
             
             current_count = results[0]
@@ -268,7 +268,7 @@ class DynamicRateLimiter:
                     self.redis_client.expire(throttling_key, 300)  # 5 minutes
             
             # Store detailed metrics if enabled
-            if settings.ENABLE_METRICS_COLLECTION:
+            if task_settings.ENABLE_METRICS_COLLECTION:
                 self._store_detailed_metrics(success, provider, error_type, campaign_id)
                 
         except Exception as e:
@@ -293,17 +293,17 @@ class DynamicRateLimiter:
         try:
             error_count_key = get_redis_key(f"circuit_breaker_errors_{provider.value}", "count")
             current_errors = self.redis_client.incr(error_count_key)
-            self.redis_client.expire(error_count_key, settings.SMTP_ERROR_WINDOW_SECONDS)
+            self.redis_client.expire(error_count_key, task_settings.SMTP_ERROR_WINDOW_SECONDS)
             
-            if current_errors >= settings.SMTP_ERROR_THRESHOLD:
+            if current_errors >= task_settings.SMTP_ERROR_THRESHOLD:
                 # Open circuit breaker
                 cb_key = get_redis_key(f"circuit_breaker_{provider.value}", "status")
                 cb_timeout_key = get_redis_key(f"circuit_breaker_{provider.value}", "timeout")
                 
-                timeout_timestamp = time.time() + settings.SMTP_CIRCUIT_BREAKER_TIMEOUT_SECONDS
+                timeout_timestamp = time.time() + task_settings.SMTP_CIRCUIT_BREAKER_TIMEOUT_SECONDS
                 
-                self.redis_client.setex(cb_key, settings.SMTP_CIRCUIT_BREAKER_TIMEOUT_SECONDS, "open")
-                self.redis_client.setex(cb_timeout_key, settings.SMTP_CIRCUIT_BREAKER_TIMEOUT_SECONDS, 
+                self.redis_client.setex(cb_key, task_settings.SMTP_CIRCUIT_BREAKER_TIMEOUT_SECONDS, "open")
+                self.redis_client.setex(cb_timeout_key, task_settings.SMTP_CIRCUIT_BREAKER_TIMEOUT_SECONDS, 
                                        str(timeout_timestamp))
                 
                 logger.warning(f"Circuit breaker OPENED for {provider.value} after {current_errors} errors")
@@ -324,7 +324,7 @@ class DynamicRateLimiter:
             }
             
             metrics_key = get_redis_key("email_metrics", str(int(time.time())))
-            self.redis_client.setex(metrics_key, settings.METRICS_RETENTION_HOURS * 3600, 
+            self.redis_client.setex(metrics_key, task_settings.METRICS_RETENTION_HOURS * 3600, 
                                    json.dumps(metrics))
             
         except Exception as e:
@@ -349,7 +349,7 @@ class DynamicRateLimiter:
                 }
                 
                 # Get current window usage
-                current_minute = int(time.time() // settings.RATE_LIMIT_WINDOW_SECONDS)
+                current_minute = int(time.time() // task_settings.RATE_LIMIT_WINDOW_SECONDS)
                 window_key = get_redis_key(f"rate_window_{prov.value}", str(current_minute))
                 current_usage = int(self.redis_client.get(window_key) or 0)
                 
@@ -391,10 +391,10 @@ class DynamicRateLimiter:
         try:
             # Clean up email metrics
             pattern = get_redis_key("email_metrics", "*")
-            self._cleanup_old_keys(pattern, settings.METRICS_RETENTION_HOURS * 3600)
+            self._cleanup_old_keys(pattern, task_settings.METRICS_RETENTION_HOURS * 3600)
             
             # Clean up rate windows older than 24 hours
-            current_minute = int(time.time() // settings.RATE_LIMIT_WINDOW_SECONDS)
+            current_minute = int(time.time() // task_settings.RATE_LIMIT_WINDOW_SECONDS)
             minutes_in_day = 24 * 60
             
             for provider in EmailProvider:

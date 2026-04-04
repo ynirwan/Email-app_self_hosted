@@ -10,8 +10,7 @@ from typing import Dict, List, Optional, Any
 from bson import ObjectId
 from celery_app import celery_app
 from database import get_sync_campaigns_collection, get_sync_dlq_collection, get_sync_email_logs_collection
-from core.config import settings, get_redis_key
-from tasks.task_config import task_settings
+from tasks.task_config import task_settings, get_redis_key
 import redis
 
 logger = logging.getLogger(__name__)
@@ -20,7 +19,7 @@ class DLQManager:
     """Dead Letter Queue manager for failed email tasks"""
     
     def __init__(self):
-        self.redis_client = redis.Redis.from_url(settings.REDIS_URL)
+        self.redis_client = redis.Redis.from_url(task_settings.REDIS_URL)
     
     def send_to_dlq(self, campaign_id: str, subscriber_id: str, email: str, 
                     error_info: Dict, retry_count: int = 0) -> Dict[str, Any]:
@@ -264,7 +263,7 @@ def cleanup_old_dlq_entries(self):
         dlq_collection = get_sync_dlq_collection()
         
         # Remove entries older than retention period
-        cutoff_date = datetime.utcnow() - timedelta(days=settings.DLQ_RETENTION_DAYS)
+        cutoff_date = datetime.utcnow() - timedelta(days=task_settings.DLQ_RETENTION_DAYS)
         
         # Clean up completed/failed entries first
         result = dlq_collection.delete_many({
@@ -378,7 +377,7 @@ def generate_dlq_analytics(self):
         
         # Store analytics in Redis
         analytics_key = get_redis_key("dlq_analytics", "latest")
-        redis_client = redis.Redis.from_url(settings.REDIS_URL)
+        redis_client = redis.Redis.from_url(task_settings.REDIS_URL)
         redis_client.setex(analytics_key, 3600, json.dumps(analytics, default=str))
         
         logger.info(f"DLQ analytics generated: {total_dlq} entries analyzed")

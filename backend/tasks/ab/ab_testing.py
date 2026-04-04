@@ -21,7 +21,8 @@ from database import (
     get_sync_ab_test_results_collection,
     get_sync_settings_collection,
 )
-from routes.smtp_services.email_service_factory import get_email_service_sync
+from tasks.campaign.provider_manager import email_provider_manager as _pm
+get_email_service_sync = lambda name=None: _pm
 from celery_app import celery_app
 from tasks.campaign.template_renderer import template_renderer
 
@@ -392,3 +393,4 @@ def auto_complete_ab_test(self, test_id: str):
     except Exception as e:
         logger.error(f"auto_complete_ab_test failed for {test_id}: {e}")
         return {"error": str(e)}
+

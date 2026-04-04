@@ -14,10 +14,11 @@ import logging
 from pymongo import UpdateOne
 import redis
 from core.config import settings
+from tasks.task_config import task_settings, get_redis_key
 
 logger = logging.getLogger(__name__)
 
-redis_client = redis.from_url(settings.REDIS_URL)
+redis_client = redis.from_url(task_settings.REDIS_URL)
 
 # Cache configuration
 SUPPRESSION_CACHE_KEY = "email_suppressions"

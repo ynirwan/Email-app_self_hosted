@@ -12,7 +12,7 @@ from typing import Dict, List, Any, Optional, Tuple
 from enum import Enum
 from celery_app import celery_app
 from database import ping_sync_database, initialize_sync_client, ping_sync_database
-from core.config import settings, get_redis_key
+from tasks.task_config import task_settings, get_redis_key
 from .resource_manager import resource_manager
 from .metrics_collector import metrics_collector
 import redis
@@ -37,7 +37,7 @@ class HealthMonitor:
     """Comprehensive system health monitoring"""
     
     def __init__(self):
-        self.redis_client = redis.Redis.from_url(settings.REDIS_URL)
+        self.redis_client = redis.Redis.from_url(task_settings.REDIS_URL)
         self.health_checks = {}
         self.alert_history = []
         self._register_health_checks()
@@ -333,7 +333,7 @@ class HealthMonitor:
                 "total_backlog": total_backlog,
                 "queued_tasks": total_queued,
                 "active_tasks": total_active,
-                "queue_utilization_percent": min(100, (total_backlog / settings.MAX_CONCURRENT_TASKS) * 100)
+                "queue_utilization_percent": min(100, (total_backlog / task_settings.MAX_CONCURRENT_TASKS) * 100)
             }
             
         except Exception as e:
@@ -510,7 +510,7 @@ class HealthMonitor:
             # Store timestamped health report
             timestamp = int(time.time())
             timestamped_key = get_redis_key("health_report", str(timestamp))
-            self.redis_client.setex(timestamped_key, settings.METRICS_RETENTION_HOURS * 3600, 
+            self.redis_client.setex(timestamped_key, task_settings.METRICS_RETENTION_HOURS * 3600, 
                                    json.dumps(health_report, default=str))
             
         except Exception as e:
@@ -562,11 +562,11 @@ def run_health_checks(self):
 def cleanup_health_reports(self):
     """Clean up old health reports"""
     try:
-        redis_client = redis.Redis.from_url(settings.REDIS_URL)
+        redis_client = redis.Redis.from_url(task_settings.REDIS_URL)
         
         # Clean up health reports older than retention period
         current_time = time.time()
-        cutoff_time = current_time - (settings.METRICS_RETENTION_HOURS * 3600)
+        cutoff_time = current_time - (task_settings.METRICS_RETENTION_HOURS * 3600)
         
         cleaned_count = 0
         pattern = get_redis_key("health_report", "*")

@@ -13,8 +13,7 @@ from database import (
     get_sync_campaigns_collection, get_sync_email_logs_collection, 
     get_sync_subscribers_collection
 )
-from core.config import settings, get_redis_key
-from tasks.task_config import task_settings
+from tasks.task_config import task_settings, get_redis_key
 import json
 
 logger = logging.getLogger(__name__)
@@ -34,7 +33,7 @@ class CampaignController:
     """Campaign lifecycle management"""
     
     def __init__(self):
-        self.redis_client = redis.Redis.from_url(settings.REDIS_URL)
+        self.redis_client = redis.Redis.from_url(task_settings.REDIS_URL)
     
     def pause_campaign(self, campaign_id: str, reason: str = "manual_pause", 
                       user_id: str = None) -> Dict[str, Any]:
@@ -68,7 +67,7 @@ class CampaignController:
                 "user_id": user_id,
                 "previous_status": current_status
             }
-            self.redis_client.setex(pause_key, settings.CAMPAIGN_PAUSE_TIMEOUT_SECONDS, 
+            self.redis_client.setex(pause_key, task_settings.CAMPAIGN_PAUSE_TIMEOUT_SECONDS, 
                                    json.dumps(pause_data))
             
             # Update campaign status in database
@@ -565,7 +564,7 @@ def cancel_campaign_task(self, campaign_id: str, reason: str = "api_request", us
 def cleanup_campaign_flags(self):
     """Clean up expired campaign control flags"""
     try:
-        redis_client = redis.Redis.from_url(settings.REDIS_URL)
+        redis_client = redis.Redis.from_url(task_settings.REDIS_URL)
         
         # Clean up expired pause flags
         pause_pattern = get_redis_key("campaign_paused", "*")

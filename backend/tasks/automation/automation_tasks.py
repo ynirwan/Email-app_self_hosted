@@ -550,7 +550,7 @@ def execute_automation_step(
         }
         
         # Send email via automation email task
-        from tasks.automation_email_tasks import send_automation_email
+        from tasks.automation.automation_email_tasks import send_automation_email
         
         result = send_automation_email.delay(
             subscriber_id=subscriber_id,
