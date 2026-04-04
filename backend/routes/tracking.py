@@ -69,13 +69,31 @@ def generate_tracking_token(campaign_id: str, subscriber_id: str, email: str) ->
     return secrets.token_urlsafe(24)
 
 
+def _get_tracking_domain(key: str, fallback_env: str = "APP_BASE_URL") -> str:
+    """
+    Read a tracking domain from MongoDB settings collection (sync).
+    Falls back to env var, then to http://localhost:8000.
+    Called at send time from Celery tasks — must be synchronous.
+    """
+    try:
+        from database import get_sync_database
+        doc = get_sync_database().settings.find_one({"type": "tracking"}) or {}
+        val = doc.get(key, "").strip()
+        if val:
+            # Ensure scheme
+            return val if val.startswith("http") else f"https://{val}"
+    except Exception:
+        pass
+    return os.environ.get(fallback_env, os.environ.get("APP_BASE_URL", "http://localhost:8000"))
+
+
 def build_open_pixel_url(token: str, base_url: str = None) -> str:
-    domain = base_url or os.environ.get("APP_BASE_URL", "http://localhost:8000")
+    domain = base_url or _get_tracking_domain("open_tracking_domain")
     return f"{domain}/t/o/{token}.gif"
 
 
 def build_click_redirect_url(token: str, target_url: str, base_url: str = None) -> str:
-    domain = base_url or os.environ.get("APP_BASE_URL", "http://localhost:8000")
+    domain = base_url or _get_tracking_domain("click_tracking_domain")
     encoded = urllib.parse.quote(target_url, safe="")
     return f"{domain}/t/c/{token}?u={encoded}"
 
@@ -654,7 +672,6 @@ def _clean_domain(domain: str) -> str:
 async def get_tracking_settings():
     """Return the merged tracking settings (toggle flags + domains)."""
     from database import get_settings_collection
-    from core.config import settings as app_settings
     col = get_settings_collection()
     doc = await col.find_one({"type": "tracking"}) or {}
     return {
@@ -662,18 +679,25 @@ async def get_tracking_settings():
         "click_tracking_enabled":       doc.get("click_tracking_enabled",       _TOGGLE_DEFAULTS["click_tracking_enabled"]),
         "unsubscribe_tracking_enabled": doc.get("unsubscribe_tracking_enabled", _TOGGLE_DEFAULTS["unsubscribe_tracking_enabled"]),
         "track_unique_only":            doc.get("track_unique_only",            _TOGGLE_DEFAULTS["track_unique_only"]),
-        "unsubscribe_domain":           doc.get("unsubscribe_domain",           app_settings.UNSUBSCRIBE_DOMAIN),
-        "open_tracking_domain":         doc.get("open_tracking_domain",         app_settings.OPEN_TRACKING_DOMAIN),
-        "click_tracking_domain":        doc.get("click_tracking_domain",        app_settings.CLICK_TRACKING_DOMAIN),
+        # Domains: return empty string if not set in DB so the frontend shows blank (not env var)
+        "unsubscribe_domain":    doc.get("unsubscribe_domain",    ""),
+        "open_tracking_domain":  doc.get("open_tracking_domain",  ""),
+        "click_tracking_domain": doc.get("click_tracking_domain", ""),
     }
 
 
 @settings_router.put("/tracking")
 async def update_tracking_settings(payload: _TrackingSettingsUpdate):
-    """Save tracking settings (toggles and/or domains) to MongoDB."""
+    """
+    Save tracking settings (toggles and/or domains) to MongoDB.
+    Uses $set so only fields present in the payload are updated — existing
+    fields in the document are preserved (no accidental clobber on partial saves).
+    """
     from database import get_settings_collection
     col = get_settings_collection()
-    fields: dict = {"type": "tracking", "updated_at": datetime.utcnow()}
+
+    # Only include fields that were explicitly sent (not None)
+    fields: dict = {"updated_at": datetime.utcnow()}
 
     if payload.open_tracking_enabled is not None:
         fields["open_tracking_enabled"] = payload.open_tracking_enabled
@@ -683,6 +707,8 @@ async def update_tracking_settings(payload: _TrackingSettingsUpdate):
         fields["unsubscribe_tracking_enabled"] = payload.unsubscribe_tracking_enabled
     if payload.track_unique_only is not None:
         fields["track_unique_only"] = payload.track_unique_only
+
+    # Domains: empty string means "clear the override" (fall back to server default)
     if payload.unsubscribe_domain is not None:
         fields["unsubscribe_domain"] = _clean_domain(payload.unsubscribe_domain)
     if payload.open_tracking_domain is not None:
@@ -690,6 +716,23 @@ async def update_tracking_settings(payload: _TrackingSettingsUpdate):
     if payload.click_tracking_domain is not None:
         fields["click_tracking_domain"] = _clean_domain(payload.click_tracking_domain)
 
-    await col.update_one({"type": "tracking"}, {"$set": fields}, upsert=True)
+    # $set only touches the listed fields; upsert creates the doc if missing
+    await col.update_one(
+        {"type": "tracking"},
+        {"$set": fields, "$setOnInsert": {"type": "tracking"}},
+        upsert=True,
+    )
     logger.info(f"Tracking settings updated: {list(fields.keys())}")
-    return {"status": "saved"}
+
+    # Return the full merged document so the frontend can re-sync state
+    doc = await col.find_one({"type": "tracking"}) or {}
+    return {
+        "status": "saved",
+        "open_tracking_enabled":        doc.get("open_tracking_enabled",        _TOGGLE_DEFAULTS["open_tracking_enabled"]),
+        "click_tracking_enabled":       doc.get("click_tracking_enabled",       _TOGGLE_DEFAULTS["click_tracking_enabled"]),
+        "unsubscribe_tracking_enabled": doc.get("unsubscribe_tracking_enabled", _TOGGLE_DEFAULTS["unsubscribe_tracking_enabled"]),
+        "track_unique_only":            doc.get("track_unique_only",            _TOGGLE_DEFAULTS["track_unique_only"]),
+        "unsubscribe_domain":    doc.get("unsubscribe_domain",    ""),
+        "open_tracking_domain":  doc.get("open_tracking_domain",  ""),
+        "click_tracking_domain": doc.get("click_tracking_domain", ""),
+    }

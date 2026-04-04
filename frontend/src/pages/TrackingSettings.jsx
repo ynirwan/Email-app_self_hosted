@@ -144,7 +144,12 @@ export default function TrackingSettings() {
   const save = async () => {
     setSaving_(true);
     try {
-      await API.put('/settings/tracking', settings);
+      const res = await API.put('/settings/tracking', settings);
+      // Sync state from the server response so refresh shows the same values
+      if (res.data && res.data.status === 'saved') {
+        const { status, ...serverSettings } = res.data;
+        setSettings(prev => ({ ...prev, ...serverSettings }));
+      }
       show('Tracking settings saved.', 'success');
       setDirty(false);
     } catch (e) {

@@ -512,18 +512,31 @@ def send_single_campaign_email(self, campaign_id: str, subscriber_id: str):
             logger.warning(f"Failed to generate unsubscribe token: {unsub_err}")
             personalization_context["unsubscribe_url"] = "#"
 
-        # Inject open-tracking pixel URL (used as {{open_tracking_url}} in templates)
+        # ── Open & click tracking ─────────────────────────────────────────────
+        _open_token = None
+        _open_enabled = True
+        _click_enabled = True
         try:
-            from routes.tracking import generate_tracking_token, build_open_pixel_url
-
-            open_token = generate_tracking_token(
-                campaign_id, subscriber_id, recipient_email
+            from routes.tracking import (
+                generate_tracking_token,
+                build_open_pixel_url,
+                get_tracking_flags_sync,
             )
-            personalization_context["open_tracking_url"] = build_open_pixel_url(
-                open_token
+            _flags = get_tracking_flags_sync()
+            _open_enabled  = _flags.get("open_tracking_enabled",  True)
+            _click_enabled = _flags.get("click_tracking_enabled", True)
+
+            if _open_enabled or _click_enabled:
+                _open_token = generate_tracking_token(
+                    campaign_id, subscriber_id, recipient_email
+                )
+            # Expose raw URL in template context for templates that embed
+            # their own <img> tag via {{open_tracking_url}}
+            personalization_context["open_tracking_url"] = (
+                build_open_pixel_url(_open_token) if _open_enabled and _open_token else ""
             )
         except Exception as ot_err:
-            logger.warning(f"Failed to generate open tracking URL: {ot_err}")
+            logger.warning(f"Failed to generate tracking token: {ot_err}")
             personalization_context["open_tracking_url"] = ""
 
         personalization_context.update(
@@ -569,12 +582,48 @@ def send_single_campaign_email(self, campaign_id: str, subscriber_id: str):
             "ses_configuration_set"
         )
 
+        # ── Inject pixel + rewrite links in final HTML ───────────────────────
+        _html_to_send = personalized["html_content"]
+        if _open_token and _html_to_send:
+            try:
+                from routes.tracking import rewrite_links_for_tracking, create_tracking_record
+                import asyncio as _asyncio
+
+                # Click tracking: rewrite <a href> links
+                if _click_enabled:
+                    _html_to_send = rewrite_links_for_tracking(_html_to_send, _open_token)
+
+                # Open tracking: inject pixel before </body>
+                if _open_enabled:
+                    from routes.tracking import build_open_pixel_url as _bop
+                    _pixel = (
+                        f'<img src="{_bop(_open_token)}" width="1" height="1" '
+                        f'alt="" style="display:none;border:0;" />'
+                    )
+                    if "</body>" in _html_to_send:
+                        _html_to_send = _html_to_send.replace("</body>", _pixel + "</body>", 1)
+                    else:
+                        _html_to_send += _pixel
+
+                # Write tracking record (async call from sync Celery task)
+                try:
+                    _loop = _asyncio.new_event_loop()
+                    _loop.run_until_complete(
+                        create_tracking_record(campaign_id, subscriber_id, recipient_email, _open_token)
+                    )
+                    _loop.close()
+                except Exception as _te:
+                    logger.warning(f"create_tracking_record failed: {_te}")
+
+            except Exception as _lre:
+                logger.warning(f"Tracking inject/rewrite failed: {_lre}")
+
         try:
             send_result = email_provider_manager.send_email_with_failover(
                 sender_email=from_email,
                 recipient_email=recipient_email,
                 subject=personalized["subject"],
-                html_content=personalized["html_content"],
+                html_content=_html_to_send,
                 text_content=personalized.get("text_content"),
                 campaign_id=campaign_id,
                 reply_to=reply_to,
@@ -962,7 +1011,7 @@ def send_campaign_batch(
             "status": "batch_processed",
             "campaign_id": campaign_id,
             "batch_size": len(new_subscribers),
-            "queued_tasks": len(queued_tasks),
+            "queued_tasks": len(new_subscribers),
             "already_sent": len(already_sent_ids),
             "next_task_id": next_task_id,
             "execution_time": execution_time,
