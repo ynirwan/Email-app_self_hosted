@@ -87,6 +87,23 @@ function StatusPill({ enabled }) {
   );
 }
 
+// ── Domain input row ──────────────────────────────────────────────────────────
+function DomainRow({ label, description, value, onChange, placeholder }) {
+  return (
+    <div className="py-5">
+      <label className="block text-sm font-semibold text-gray-800 mb-1">{label}</label>
+      <p className="text-xs text-gray-500 mb-2 leading-relaxed">{description}</p>
+      <input
+        type="text"
+        value={value || ''}
+        onChange={e => onChange(e.target.value)}
+        placeholder={placeholder}
+        className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-transparent font-mono placeholder-gray-400"
+      />
+    </div>
+  );
+}
+
 // ── Main component ─────────────────────────────────────────────────────────────
 export default function TrackingSettings() {
   const { msg, show } = useToast();
@@ -96,6 +113,9 @@ export default function TrackingSettings() {
     click_tracking_enabled:        true,
     unsubscribe_tracking_enabled:  true,
     track_unique_only:             true,
+    open_tracking_domain:          '',
+    click_tracking_domain:         '',
+    unsubscribe_domain:            '',
   });
   const [loading, setSaving_] = useState(false);
   const [fetching, setFetching] = useState(true);
@@ -236,6 +256,39 @@ export default function TrackingSettings() {
             }
             checked={settings.track_unique_only}
             onChange={val => update('track_unique_only', val)}
+          />
+        </div>
+      </div>
+
+      {/* ── Tracking Domains ── */}
+      <div>
+        <h3 className="text-sm font-bold text-gray-800 mb-1">Tracking Domains</h3>
+        <p className="text-xs text-gray-500 mb-4 leading-relaxed">
+          The domain used when building open-pixel and click-redirect URLs inside outgoing emails.
+          Leave blank to use the server default. Only change this after you have set up the
+          custom domain and pointed its DNS to this server.
+        </p>
+        <div className="bg-white border border-gray-200 rounded-xl shadow-sm divide-y divide-gray-100 px-5">
+          <DomainRow
+            label="Open Tracking Domain"
+            description="Domain used for the 1×1 pixel URL embedded in emails (e.g. track.yourdomain.com). Must be reachable by mail clients."
+            value={settings.open_tracking_domain}
+            onChange={val => update('open_tracking_domain', val)}
+            placeholder="track.yourdomain.com"
+          />
+          <DomainRow
+            label="Click Tracking Domain"
+            description="Domain used for click-redirect links rewritten in your emails. Recipients will briefly see this domain when clicking."
+            value={settings.click_tracking_domain}
+            onChange={val => update('click_tracking_domain', val)}
+            placeholder="click.yourdomain.com"
+          />
+          <DomainRow
+            label="Unsubscribe Domain"
+            description="Domain used to build the unsubscribe link injected into every email via {{unsubscribe_url}}."
+            value={settings.unsubscribe_domain}
+            onChange={val => update('unsubscribe_domain', val)}
+            placeholder="unsubscribe.yourdomain.com"
           />
         </div>
       </div>
