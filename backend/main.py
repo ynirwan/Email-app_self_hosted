@@ -716,8 +716,9 @@ app.include_router(webhooks.router, prefix="/api", tags=["Webhooks"])
 # Unsubscribe — public (clicked from email, no user session)
 app.include_router(unsubscribe.router, prefix="/api", tags=["Unsubscribe"])
 
-# Tracking pixel / click redirect — public (called from email clients)
-app.include_router(tracking.public_router, prefix="/api", tags=["Tracking"])
+# Tracking — public (pixel/click/unsubscribe-confirm, hit directly from emails)
+# Routes: GET /t/o/{token}.gif  GET /t/c/{token}  GET /t/verify/{token}  POST /t/u/{token}
+app.include_router(tracking.router, prefix="", tags=["Tracking"])
 
 # ── Protected routes ──────────────────────────────────────────────────────
 app.include_router(

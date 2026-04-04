@@ -1,5 +1,5 @@
 // src/pages/SettingsPage.jsx
-import React from 'react';
+import React from "react";
 import { Link, useLocation, Outlet } from "react-router-dom";
 
 export default function SettingsPage() {
@@ -9,12 +9,13 @@ export default function SettingsPage() {
     { name: "User Settings", path: "/settings/user" },
     { name: "SMTP Settings", path: "/settings/email" },
     { name: "Domain Settings", path: "/settings/domain" },
+    { name: "Tracking", path: "/settings/tracking" },
   ];
 
   return (
     <div className="space-y-6">
       <div className="flex space-x-4 border-b mb-4">
-        {tabs.map(tab => (
+        {tabs.map((tab) => (
           <Link
             key={tab.path}
             to={tab.path}
@@ -28,9 +29,7 @@ export default function SettingsPage() {
           </Link>
         ))}
       </div>
-
       <Outlet /> {/* Renders the nested tab content */}
     </div>
   );
 }
-

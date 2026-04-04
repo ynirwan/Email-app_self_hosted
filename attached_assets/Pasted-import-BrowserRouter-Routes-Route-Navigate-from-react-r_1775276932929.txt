@@ -15,6 +15,7 @@ import SettingsPage from "./pages/SettingsPage"; // ✅ Added import
 import EmailSettings from "./pages/EmailSettings";
 import DomainSettings from "./pages/DomainSettings";
 import UserSettings from "./pages/UserSettings";
+import TrackingSettings from "./pages/TrackingSettings";
 import TemplatesPage from "./pages/TemplatesPage";
 import SuppressionManagement from "./pages/SuppressionManagement";
 import Segmentation from "./pages/Segmentation";
@@ -28,7 +29,7 @@ import AutomationBuilder from "./pages/AutomationBuilder";
 import AutomationAnalytics from "./pages/AutomationAnalytics";
 import AutomationCampaignAnalytics from "./pages/AutomationCampaignAnalytics";
 import OptInForm from "./pages/OptInForm";
-import TrackingSettings from "./pages/TrackingSettings";
+import UnsubscribePage from "./pages/UnsubscribePage";
 
 const App = () => {
   const isLoggedIn = !!localStorage.getItem("token");
@@ -40,6 +41,7 @@ const App = () => {
         <Route path="/register" element={<Register />} />
         <Route path="/login" element={<Login />} />
         <Route path="/subscribe/:listId" element={<OptInForm />} />
+        <Route path="/unsubscribe/:token" element={<UnsubscribePage />} />
 
         {/* Protected Routes */}
         {isLoggedIn ? (

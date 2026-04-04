@@ -12,10 +12,12 @@ from database import get_settings_collection, get_audit_collection
 
 router = APIRouter()
 
+
 class SendingLimits(BaseModel):
     per_minute: int = 100
     per_hour: int = 3600
     per_day: int = 50000
+
 
 class BounceHandling(BaseModel):
     enabled: bool = True
@@ -29,6 +31,7 @@ class BounceHandling(BaseModel):
             return None
         return v
 
+
 class EmailSettings(BaseModel):
     provider: str
     smtp_server: str
@@ -39,11 +42,13 @@ class EmailSettings(BaseModel):
     sending_limits: SendingLimits
     bounce_handling: BounceHandling
 
+
 class EmailTestSettings(BaseModel):
     smtp_server: str
     smtp_port: int
     username: str
     password: str
+
 
 async def get_smtp_mode():
     """Get SMTP mode from database settings"""
@@ -54,6 +59,7 @@ async def get_smtp_mode():
     if settings and settings.get("config", {}).get("smtp_choice"):
         return settings["config"]["smtp_choice"].lower()
     return "unmanaged"
+
 
 async def get_managed_smtp_limits():
     """Get managed SMTP limits from database settings"""
@@ -66,26 +72,28 @@ async def get_managed_smtp_limits():
             return {
                 "max_per_minute": sending_limits.get("per_minute", 500),
                 "max_per_hour": sending_limits.get("per_hour", 25000),
-                "max_per_day": sending_limits.get("per_day", 100000)
+                "max_per_day": sending_limits.get("per_day", 100000),
             }
-    return {
-        "max_per_minute": 500,
-        "max_per_hour": 25000,
-        "max_per_day": 100000
-    }
+    return {"max_per_minute": 500, "max_per_hour": 25000, "max_per_day": 100000}
+
 
 async def validate_managed_smtp_limits(limits: SendingLimits):
     """Validate limits against managed SMTP constraints"""
     managed_limits = await get_managed_smtp_limits()
-    
+
     if limits.per_minute > managed_limits["max_per_minute"]:
-        raise ValueError(f"Per minute limit cannot exceed {managed_limits['max_per_minute']}")
-    
+        raise ValueError(
+            f"Per minute limit cannot exceed {managed_limits['max_per_minute']}"
+        )
+
     if limits.per_hour > managed_limits["max_per_hour"]:
-        raise ValueError(f"Per hour limit cannot exceed {managed_limits['max_per_hour']}")
-    
+        raise ValueError(
+            f"Per hour limit cannot exceed {managed_limits['max_per_hour']}"
+        )
+
     if limits.per_day > managed_limits["max_per_day"]:
         raise ValueError(f"Per day limit cannot exceed {managed_limits['max_per_day']}")
+
 
 @router.get("/email/system-config")
 async def get_system_config():
@@ -93,17 +101,20 @@ async def get_system_config():
     try:
         settings_collection = get_settings_collection()
         settings = await settings_collection.find_one({"type": "email"})
-        
+
         smtp_mode = await get_smtp_mode()
         managed_limits = await get_managed_smtp_limits()
-        
+
         return {
             "smtp_mode": smtp_mode,
             "is_configured": settings is not None,
-            "managed_limits": managed_limits
+            "managed_limits": managed_limits,
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to get system config: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to get system config: {str(e)}"
+        )
+
 
 @router.get("/email")
 async def get_email_settings():
@@ -116,7 +127,7 @@ async def get_email_settings():
         if not settings:
             # Return default settings based on SMTP mode
             default_provider = "internal" if smtp_mode == "managed" else ""
-            
+
             return {
                 "provider": default_provider,
                 "smtp_server": "Internal" if smtp_mode == "managed" else "",
@@ -126,27 +137,30 @@ async def get_email_settings():
                 "sending_limits": {
                     "per_minute": 100,
                     "per_hour": 3600,
-                    "per_day": 50000
+                    "per_day": 50000,
                 },
                 "bounce_handling": {
                     "enabled": True,
                     "webhook_url": "",
                     "forward_bounces": False,
-                    "forward_email": ""
-                }
+                    "forward_email": "",
+                },
             }
-        
+
         config = settings.get("config", {})
-        
+
         # For managed SMTP, force internal provider
         if smtp_mode == "managed" and config.get("provider") != "internal":
             config["provider"] = "internal"
             config["smtp_server"] = "Internal"
-        
+
         return config
-        
+
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to fetch email settings: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to fetch email settings: {str(e)}"
+        )
+
 
 @router.put("/email")
 async def update_email_settings(settings: EmailSettings):
@@ -162,7 +176,7 @@ async def update_email_settings(settings: EmailSettings):
             if settings.provider != "internal":
                 settings.provider = "internal"
                 settings.smtp_server = "Internal"
-            
+
             # Validate limits against managed constraints
             try:
                 await validate_managed_smtp_limits(settings.sending_limits)
@@ -181,29 +195,35 @@ async def update_email_settings(settings: EmailSettings):
                     "type": "email",
                     "config": settings.dict(),
                     "updated_at": datetime.utcnow(),
-                    "smtp_mode": smtp_mode
+                    "smtp_mode": smtp_mode,
                 }
             },
-            upsert=True
+            upsert=True,
         )
 
         # ✅ Log the configuration change for audit trail
-        audit_action = "email_settings_created" if is_new_config else "email_settings_updated"
-        await audit_collection.insert_one({
-            "action": audit_action,
-            "provider": settings.provider,
-            "smtp_server": settings.smtp_server,
-            "smtp_mode": smtp_mode,
-            "updated_at": datetime.utcnow(),
-            "settings_id": str(result.upserted_id) if result.upserted_id else "existing"
-        })
+        audit_action = (
+            "email_settings_created" if is_new_config else "email_settings_updated"
+        )
+        await audit_collection.insert_one(
+            {
+                "action": audit_action,
+                "provider": settings.provider,
+                "smtp_server": settings.smtp_server,
+                "smtp_mode": smtp_mode,
+                "updated_at": datetime.utcnow(),
+                "settings_id": str(result.upserted_id)
+                if result.upserted_id
+                else "existing",
+            }
+        )
 
         return {
             "message": f"Email settings {'saved' if is_new_config else 'updated'} successfully",
             "is_new_config": is_new_config,
             "smtp_mode": smtp_mode,
             "modified_count": result.modified_count,
-            "upserted_id": str(result.upserted_id) if result.upserted_id else None
+            "upserted_id": str(result.upserted_id) if result.upserted_id else None,
         }
 
     except HTTPException:
@@ -212,16 +232,21 @@ async def update_email_settings(settings: EmailSettings):
         # Log error to audit
         try:
             audit_collection = get_audit_collection()
-            await audit_collection.insert_one({
-                "action": "email_settings_update_failed",
-                "error": str(e),
-                "smtp_mode": "unknown",
-                "attempted_at": datetime.utcnow()
-            })
+            await audit_collection.insert_one(
+                {
+                    "action": "email_settings_update_failed",
+                    "error": str(e),
+                    "smtp_mode": "unknown",
+                    "attempted_at": datetime.utcnow(),
+                }
+            )
         except:
             pass
-        
-        raise HTTPException(status_code=500, detail=f"Failed to update settings: {str(e)}")
+
+        raise HTTPException(
+            status_code=500, detail=f"Failed to update settings: {str(e)}"
+        )
+
 
 @router.post("/email/test")
 async def test_email_connection(settings: EmailTestSettings):
@@ -229,67 +254,82 @@ async def test_email_connection(settings: EmailTestSettings):
     try:
         smtp_mode = await get_smtp_mode()
         audit_collection = get_audit_collection()
-        
+
         # Don't allow connection testing for managed SMTP
         if smtp_mode == "managed":
             raise HTTPException(
-                status_code=400, 
-                detail="Connection testing is not available for managed SMTP service"
+                status_code=400,
+                detail="Connection testing is not available for managed SMTP service",
             )
-        
+
         username = settings.username.strip()
         password = settings.password.strip()
-        
+
         # Test the connection
         server = smtplib.SMTP(settings.smtp_server, settings.smtp_port, timeout=10)
         server.starttls()
         server.login(username, password)
         server.quit()
-        
+
         # Log successful test
-        await audit_collection.insert_one({
-            "action": "smtp_connection_test",
-            "status": "success",
-            "smtp_server": settings.smtp_server,
-            "smtp_port": settings.smtp_port,
-            "username": username,
-            "tested_at": datetime.utcnow()
-        })
-        
+        await audit_collection.insert_one(
+            {
+                "action": "smtp_connection_test",
+                "status": "success",
+                "smtp_server": settings.smtp_server,
+                "smtp_port": settings.smtp_port,
+                "username": username,
+                "tested_at": datetime.utcnow(),
+            }
+        )
+
         return {"detail": "✅ SMTP connection successful!"}
-        
+
     except smtplib.SMTPAuthenticationError as e:
         # Log failed test
-        await audit_collection.insert_one({
-            "action": "smtp_connection_test",
-            "status": "auth_failed",
-            "smtp_server": settings.smtp_server,
-            "error": str(e),
-            "tested_at": datetime.utcnow()
-        })
-        raise HTTPException(status_code=401, detail="❌ Authentication failed — check username/password or region")
-        
+        await audit_collection.insert_one(
+            {
+                "action": "smtp_connection_test",
+                "status": "auth_failed",
+                "smtp_server": settings.smtp_server,
+                "error": str(e),
+                "tested_at": datetime.utcnow(),
+            }
+        )
+        raise HTTPException(
+            status_code=401,
+            detail="❌ Authentication failed — check username/password or region",
+        )
+
     except smtplib.SMTPConnectError as e:
         # Log failed test
-        await audit_collection.insert_one({
-            "action": "smtp_connection_test",
-            "status": "connection_failed",
-            "smtp_server": settings.smtp_server,
-            "error": str(e),
-            "tested_at": datetime.utcnow()
-        })
-        raise HTTPException(status_code=502, detail="❌ Could not connect to SMTP server — check host/port")
-        
+        await audit_collection.insert_one(
+            {
+                "action": "smtp_connection_test",
+                "status": "connection_failed",
+                "smtp_server": settings.smtp_server,
+                "error": str(e),
+                "tested_at": datetime.utcnow(),
+            }
+        )
+        raise HTTPException(
+            status_code=502,
+            detail="❌ Could not connect to SMTP server — check host/port",
+        )
+
     except Exception as e:
         # Log failed test
-        await audit_collection.insert_one({
-            "action": "smtp_connection_test",
-            "status": "error",
-            "smtp_server": settings.smtp_server,
-            "error": str(e),
-            "tested_at": datetime.utcnow()
-        })
+        await audit_collection.insert_one(
+            {
+                "action": "smtp_connection_test",
+                "status": "error",
+                "smtp_server": settings.smtp_server,
+                "error": str(e),
+                "tested_at": datetime.utcnow(),
+            }
+        )
         raise HTTPException(status_code=500, detail=f"❌ Unexpected error: {e}")
+
 
 @router.get("/email/status")
 async def get_email_system_status():
@@ -303,29 +343,32 @@ async def get_email_system_status():
 
         # Get recent audit logs
         recent_tests = await audit_collection.find(
-            {"action": "smtp_connection_test"},
-            sort=[("tested_at", -1)],
-            limit=5
+            {"action": "smtp_connection_test"}, sort=[("tested_at", -1)], limit=5
         ).to_list(5)
 
         # Get recent configuration changes
         recent_config_changes = await audit_collection.find(
             {"action": {"$regex": "^email_settings_"}},
             sort=[("updated_at", -1)],
-            limit=5
+            limit=5,
         ).to_list(5)
 
         return {
             "configured": settings is not None,
             "smtp_mode": smtp_mode,
-            "provider": settings.get("config", {}).get("provider") if settings else None,
+            "provider": settings.get("config", {}).get("provider")
+            if settings
+            else None,
             "last_updated": settings.get("updated_at") if settings else None,
             "recent_connection_tests": recent_tests,
             "recent_config_changes": recent_config_changes,
-            "managed_limits": (await get_managed_smtp_limits()) if smtp_mode == "managed" else None
+            "managed_limits": (await get_managed_smtp_limits())
+            if smtp_mode == "managed"
+            else None,
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get status: {str(e)}")
+
 
 @router.get("/email/audit")
 async def get_email_audit_logs(limit: int = 50):
@@ -337,17 +380,16 @@ async def get_email_audit_logs(limit: int = 50):
         logs = await audit_collection.find(
             {"action": {"$regex": "^email_|^smtp_"}},
             sort=[("updated_at", -1), ("tested_at", -1)],
-            limit=limit
+            limit=limit,
         ).to_list(limit)
 
-        return {
-            "audit_logs": logs,
-            "smtp_mode": smtp_mode,
-            "total_logs": len(logs)
-        }
+        return {"audit_logs": logs, "smtp_mode": smtp_mode, "total_logs": len(logs)}
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to get audit logs: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to get audit logs: {str(e)}"
+        )
+
 
 @router.delete("/email")
 async def delete_email_settings():
@@ -366,16 +408,18 @@ async def delete_email_settings():
         result = await settings_collection.delete_one({"type": "email"})
 
         # Log the deletion
-        await audit_collection.insert_one({
-            "action": "email_settings_deleted",
-            "smtp_mode": smtp_mode,
-            "deleted_at": datetime.utcnow(),
-            "deleted_count": result.deleted_count
-        })
+        await audit_collection.insert_one(
+            {
+                "action": "email_settings_deleted",
+                "smtp_mode": smtp_mode,
+                "deleted_at": datetime.utcnow(),
+                "deleted_count": result.deleted_count,
+            }
+        )
 
         return {
             "message": "Email settings deleted successfully",
-            "deleted_count": result.deleted_count
+            "deleted_count": result.deleted_count,
         }
 
     except HTTPException:
@@ -384,16 +428,21 @@ async def delete_email_settings():
         # Log error to audit
         try:
             audit_collection = get_audit_collection()
-            await audit_collection.insert_one({
-                "action": "email_settings_delete_failed",
-                "error": str(e),
-                "smtp_mode": "unknown",
-                "attempted_at": datetime.utcnow()
-            })
+            await audit_collection.insert_one(
+                {
+                    "action": "email_settings_delete_failed",
+                    "error": str(e),
+                    "smtp_mode": "unknown",
+                    "attempted_at": datetime.utcnow(),
+                }
+            )
         except:
             pass
 
-        raise HTTPException(status_code=500, detail=f"Failed to delete settings: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to delete settings: {str(e)}"
+        )
+
 
 @router.get("/email/limits")
 async def get_email_limits():
@@ -401,53 +450,148 @@ async def get_email_limits():
     try:
         settings_collection = get_settings_collection()
         smtp_mode = await get_smtp_mode()
-        
+
         settings = await settings_collection.find_one({"type": "email"})
-        current_limits = settings.get("config", {}).get("sending_limits", {}) if settings else {}
-        
-        response = {
-            "smtp_mode": smtp_mode,
-            "current_limits": current_limits
-        }
-        
+        current_limits = (
+            settings.get("config", {}).get("sending_limits", {}) if settings else {}
+        )
+
+        response = {"smtp_mode": smtp_mode, "current_limits": current_limits}
+
         if smtp_mode == "managed":
             response["managed_limits"] = await get_managed_smtp_limits()
             response["limits_enforced_by"] = "system"
         else:
             response["limits_enforced_by"] = "application"
-        
+
         return response
-        
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get limits: {str(e)}")
+
 
 @router.post("/email/validate-limits")
 async def validate_email_limits(limits: SendingLimits):
     """Validate email sending limits against system constraints"""
     try:
         smtp_mode = await get_smtp_mode()
-        
+
         if smtp_mode == "managed":
             try:
                 await validate_managed_smtp_limits(limits)
                 return {
                     "valid": True,
                     "message": "Limits are within system constraints",
-                    "smtp_mode": smtp_mode
+                    "smtp_mode": smtp_mode,
                 }
             except ValueError as e:
                 return {
                     "valid": False,
                     "message": str(e),
                     "smtp_mode": smtp_mode,
-                    "managed_limits": await get_managed_smtp_limits()
+                    "managed_limits": await get_managed_smtp_limits(),
                 }
         else:
             return {
                 "valid": True,
                 "message": "No system constraints for unmanaged SMTP",
-                "smtp_mode": smtp_mode
+                "smtp_mode": smtp_mode,
             }
-            
+
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to validate limits: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to validate limits: {str(e)}"
+        )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TRACKING SETTINGS
+# Stored in settings collection under {"type": "tracking"}
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TrackingSettings(BaseModel):
+    open_tracking_enabled: bool = True
+    click_tracking_enabled: bool = True
+    unsubscribe_tracking_enabled: bool = True  # always write unsub events
+    track_unique_only: bool = True  # only count first open/click per subscriber
+
+
+_TRACKING_DEFAULTS = {
+    "open_tracking_enabled": True,
+    "click_tracking_enabled": True,
+    "unsubscribe_tracking_enabled": True,
+    "track_unique_only": True,
+}
+
+
+async def get_tracking_settings_doc() -> dict:
+    """Internal helper — returns the raw settings doc with defaults applied."""
+    col = get_settings_collection()
+    doc = await col.find_one({"type": "tracking"})
+    merged = dict(_TRACKING_DEFAULTS)
+    if doc:
+        for k in _TRACKING_DEFAULTS:
+            if k in doc:
+                merged[k] = doc[k]
+    return merged
+
+
+@router.get("/tracking")
+async def get_tracking_settings():
+    """Return current tracking feature flags."""
+    try:
+        return await get_tracking_settings_doc()
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Failed to load tracking settings: {e}"
+        )
+
+
+@router.put("/tracking")
+async def update_tracking_settings(payload: TrackingSettings, request: Request):
+    """Persist tracking feature flags."""
+    try:
+        col = get_settings_collection()
+        audit_col = get_audit_collection()
+        now = datetime.utcnow()
+
+        before = await get_tracking_settings_doc()
+
+        update_data = payload.dict()
+        update_data["type"] = "tracking"
+        update_data["updated_at"] = now
+
+        await col.update_one(
+            {"type": "tracking"},
+            {"$set": update_data},
+            upsert=True,
+        )
+
+        # Audit log
+        try:
+            await audit_col.insert_one(
+                {
+                    "timestamp": now,
+                    "action": "update_tracking_settings",
+                    "entity_type": "settings",
+                    "entity_id": "tracking",
+                    "user_action": "Updated tracking feature flags",
+                    "before_data": before,
+                    "after_data": update_data,
+                    "metadata": {
+                        "ip_address": str(request.client.host)
+                        if request.client
+                        else "unknown",
+                    },
+                }
+            )
+        except Exception:
+            pass  # audit failure must never block the save
+
+        return {"status": "saved", **update_data}
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Failed to save tracking settings: {e}"
+        )

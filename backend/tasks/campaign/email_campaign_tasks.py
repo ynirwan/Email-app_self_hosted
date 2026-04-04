@@ -504,6 +504,16 @@ def send_single_campaign_email(self, campaign_id: str, subscriber_id: str):
             logger.warning(f"Failed to generate unsubscribe token: {unsub_err}")
             personalization_context["unsubscribe_url"] = "#"
 
+        # Inject open-tracking pixel URL (used as {{open_tracking_url}} in templates)
+        try:
+            from routes.tracking import generate_tracking_token, build_open_pixel_url
+
+            open_token = generate_tracking_token(campaign_id, subscriber_id, recipient_email)
+            personalization_context["open_tracking_url"] = build_open_pixel_url(open_token)
+        except Exception as ot_err:
+            logger.warning(f"Failed to generate open tracking URL: {ot_err}")
+            personalization_context["open_tracking_url"] = ""
+
         personalization_context.update(
             {
                 "subscriber_id": str(subscriber.get("_id", "")),

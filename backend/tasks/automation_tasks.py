@@ -447,7 +447,25 @@ def execute_automation_step(
         templates_collection = get_sync_templates_collection()
         suppressions_collection = get_sync_suppressions_collection()
         workflow_instances_collection = get_sync_workflow_instances_collection()
-        
+
+        # Atomic claim: prevent double-sends when both ETA and poller dispatch this task.
+        # Only proceed if the execution is still in a "scheduled" or "dispatched_by_poller" state.
+        claimed = executions_collection.find_one_and_update(
+            {
+                "automation_step_id": step_id,
+                "subscriber_id": subscriber_id,
+                "workflow_instance_id": workflow_instance_id,
+                "status": {"$in": ["scheduled", "dispatched_by_poller"]},
+            },
+            {"$set": {"status": "running", "started_at": datetime.utcnow()}},
+            return_document=False,
+        )
+        if claimed is None:
+            logger.info(
+                f"Execution for step {step_id} / subscriber {subscriber_id} already running or completed — skipping"
+            )
+            return {"status": "already_running_or_completed"}
+
         # Get automation rule
         rule = rules_collection.find_one({"_id": ObjectId(automation_rule_id)})
         if not rule:
@@ -545,13 +563,13 @@ def execute_automation_step(
             fallback_values=step.get("fallback_values", {})
         )
         
-        # Update execution record
+        # Update execution record (status is "running" — set by our atomic claim above)
         executions_collection.update_one(
             {
                 "automation_step_id": step_id,
                 "subscriber_id": subscriber_id,
                 "workflow_instance_id": workflow_instance_id,
-                "status": "scheduled"
+                "status": "running",
             },
             {
                 "$set": {
