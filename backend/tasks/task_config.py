@@ -4,6 +4,13 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
+def get_redis_key(key_type: str, identifier: str = "") -> str:
+    """Build a namespaced Redis key. Mirrors core.config.get_redis_key."""
+    prefix = os.getenv("REDIS_KEY_PREFIX", "email_marketing")
+    base = f"{prefix}:{key_type}"
+    return f"{base}:{identifier}" if identifier else base
+
+
 class TaskSettings:
     # ===== CAMPAIGN PROCESSING =====
     MAX_BATCH_SIZE: int = int(os.getenv("MAX_BATCH_SIZE", "1000"))
@@ -170,6 +177,26 @@ class TaskSettings:
 
     # ===== PROVIDER =====
     PROVIDER_HEALTH_CHECK_INTERVAL_SECONDS: int = 300
+
+    # ===== REDIS (single source of truth for all task modules) =====
+    REDIS_URL: str = os.getenv("REDIS_URL", "redis://redis:6379/0")
+    REDIS_KEY_PREFIX: str = os.getenv("REDIS_KEY_PREFIX", "email_marketing")
+
+    # ===== LOGGING =====
+    LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
+
+    # ===== ENCRYPTION =====
+    MASTER_ENCRYPTION_KEY: str = os.getenv("MASTER_ENCRYPTION_KEY", "")
+
+    # ===== EMAIL MOCK =====
+    MOCK_EMAIL_SENDING: bool = (
+        os.getenv("MOCK_EMAIL_SENDING", "false").lower() == "true"
+    )
+
+    # ===== DLQ RETENTION (days alias of DLQ_MAX_AGE_HOURS) =====
+    @property
+    def DLQ_RETENTION_DAYS(self) -> int:
+        return max(1, self.DLQ_MAX_AGE_HOURS // 24)
 
 
     # ===== EXTRA SETTINGS NEEDED BY TASKS =====
