@@ -35,6 +35,7 @@ from celery_app import celery_app
 from celery import chord, group
 
 from tasks.task_config import task_settings
+from core.config import settings
 from database import (
     get_sync_campaigns_collection,
     get_sync_email_logs_collection,
