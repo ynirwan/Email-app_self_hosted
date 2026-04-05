@@ -451,7 +451,7 @@ export default function Analytics() {
                               ? "bg-green-500"
                               : (a.open_rate || 0) >= 10
                                 ? "bg-yellow-400"
-                                : "bg-gray-300"
+                                : "bg-red-300"
                           }
                         />
                       </td>
