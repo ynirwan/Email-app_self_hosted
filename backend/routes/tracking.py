@@ -93,7 +93,9 @@ def _get_tracking_domain(key: str, fallback_env: str = "APP_BASE_URL") -> str:
     except Exception:
         pass
 
-    return os.environ.get(fallback_env, os.environ.get("APP_BASE_URL", "http://localhost:8000"))
+    return os.environ.get(
+        fallback_env, os.environ.get("APP_BASE_URL", "http://localhost:8000")
+    )
 
 
 def build_open_pixel_url(token: str, base_url: str = None) -> str:
@@ -243,9 +245,13 @@ async def _record_open(token: str, ip: str, ua: str):
         else:
             # 2) Already opened before → only increment if not unique-only mode
             if track_unique_only:
-                doc = await col.find_one({"open_token": token, "type": "tracking_master"})
+                doc = await col.find_one(
+                    {"open_token": token, "type": "tracking_master"}
+                )
                 if not doc:
-                    logger.warning(f"[tracking] _record_open master doc NOT FOUND token={token}")
+                    logger.warning(
+                        f"[tracking] _record_open master doc NOT FOUND token={token}"
+                    )
                     return
 
                 await col.update_one(
@@ -265,7 +271,9 @@ async def _record_open(token: str, ip: str, ua: str):
                     return_document=True,
                 )
                 if not doc:
-                    logger.warning(f"[tracking] _record_open master doc NOT FOUND token={token}")
+                    logger.warning(
+                        f"[tracking] _record_open master doc NOT FOUND token={token}"
+                    )
                     return
 
                 logger.info(f"[tracking] NON-UNIQUE OPEN counted token={token}")
@@ -336,9 +344,13 @@ async def _record_click(token: str, url: str, ip: str, ua: str):
             is_unique = True
         else:
             if track_unique_only:
-                doc = await col.find_one({"open_token": token, "type": "tracking_master"})
+                doc = await col.find_one(
+                    {"open_token": token, "type": "tracking_master"}
+                )
                 if not doc:
-                    logger.warning(f"[tracking] _record_click master doc NOT FOUND token={token}")
+                    logger.warning(
+                        f"[tracking] _record_click master doc NOT FOUND token={token}"
+                    )
                     return
 
                 await col.update_one(
@@ -358,7 +370,9 @@ async def _record_click(token: str, url: str, ip: str, ua: str):
                     return_document=True,
                 )
                 if not doc:
-                    logger.warning(f"[tracking] _record_click master doc NOT FOUND token={token}")
+                    logger.warning(
+                        f"[tracking] _record_click master doc NOT FOUND token={token}"
+                    )
                     return
 
                 logger.info(f"[tracking] NON-UNIQUE CLICK counted token={token}")
@@ -413,11 +427,19 @@ async def _increment_analytics(campaign_id: str, field: str):
         analytics = await analytics_col.find_one({"campaign_id": cid})
 
         if campaign and analytics:
-            total_sent = (campaign.get("sent_count") or 0) + (campaign.get("delivered_count") or 0)
+            total_sent = (campaign.get("sent_count") or 0) + (
+                campaign.get("delivered_count") or 0
+            )
             if total_sent > 0:
-                open_rate = round(analytics.get("total_opened", 0) / total_sent * 100, 2)
-                click_rate = round(analytics.get("total_clicked", 0) / total_sent * 100, 2)
-                unsub_rate = round(analytics.get("total_unsubscribed", 0) / total_sent * 100, 2)
+                open_rate = round(
+                    analytics.get("total_opened", 0) / total_sent * 100, 2
+                )
+                click_rate = round(
+                    analytics.get("total_clicked", 0) / total_sent * 100, 2
+                )
+                unsub_rate = round(
+                    analytics.get("total_unsubscribed", 0) / total_sent * 100, 2
+                )
 
                 await analytics_col.update_one(
                     {"campaign_id": cid},
@@ -554,13 +576,17 @@ async def _atomic_unsubscribe(token: str, request: Request = None) -> dict:
                 }
             },
         )
-        logger.info(f"[unsubscribe] updated {sub_result.modified_count} subscriber docs for {email}")
+        logger.info(
+            f"[unsubscribe] updated {sub_result.modified_count} subscriber docs for {email}"
+        )
     except Exception as e:
         logger.error(f"[unsubscribe] FAILED to update subscribers for {email}: {e}")
         errors.append(f"subscribers: {e}")
 
     try:
-        existing_sup = await suppressions_col.find_one({"email": email, "scope": "global"})
+        existing_sup = await suppressions_col.find_one(
+            {"email": email, "scope": "global"}
+        )
         if existing_sup:
             await suppressions_col.update_one(
                 {"_id": existing_sup["_id"]},
@@ -571,8 +597,12 @@ async def _atomic_unsubscribe(token: str, request: Request = None) -> dict:
                         "source": "unsubscribe_link",
                         "updated_at": now,
                         "last_unsubscribe_at": now,
-                        "campaign_id": campaign_id if campaign_id else existing_sup.get("campaign_id"),
-                        "subscriber_id": subscriber_id if subscriber_id else existing_sup.get("subscriber_id"),
+                        "campaign_id": campaign_id
+                        if campaign_id
+                        else existing_sup.get("campaign_id"),
+                        "subscriber_id": subscriber_id
+                        if subscriber_id
+                        else existing_sup.get("subscriber_id"),
                     }
                 },
             )
@@ -604,7 +634,9 @@ async def _atomic_unsubscribe(token: str, request: Request = None) -> dict:
             await email_events_col.update_many(
                 {
                     "email": email,
-                    "campaign_id": ObjectId(campaign_id) if ObjectId.is_valid(campaign_id) else campaign_id,
+                    "campaign_id": ObjectId(campaign_id)
+                    if ObjectId.is_valid(campaign_id)
+                    else campaign_id,
                 },
                 {"$set": {"is_unsubscribed": True, "last_event_at": now}},
             )
@@ -615,8 +647,12 @@ async def _atomic_unsubscribe(token: str, request: Request = None) -> dict:
         await email_events_col.insert_one(
             {
                 "email": email,
-                "campaign_id": ObjectId(campaign_id) if campaign_id and ObjectId.is_valid(campaign_id) else campaign_id,
-                "subscriber_id": ObjectId(subscriber_id) if subscriber_id and ObjectId.is_valid(subscriber_id) else subscriber_id,
+                "campaign_id": ObjectId(campaign_id)
+                if campaign_id and ObjectId.is_valid(campaign_id)
+                else campaign_id,
+                "subscriber_id": ObjectId(subscriber_id)
+                if subscriber_id and ObjectId.is_valid(subscriber_id)
+                else subscriber_id,
                 "event_type": "unsubscribed",
                 "type": "event",
                 "timestamp": now,
@@ -739,7 +775,13 @@ class _TrackingSettingsUpdate(_BaseModel):
 
 
 def _clean_domain(domain: str) -> str:
-    return domain.strip().lower().replace("https://", "").replace("http://", "").rstrip("/")
+    return (
+        domain.strip()
+        .lower()
+        .replace("https://", "")
+        .replace("http://", "")
+        .rstrip("/")
+    )
 
 
 @settings_router.get("/tracking")
@@ -749,10 +791,19 @@ async def get_tracking_settings():
     col = get_settings_collection()
     doc = await col.find_one({"type": "tracking"}) or {}
     return {
-        "open_tracking_enabled": doc.get("open_tracking_enabled", _TOGGLE_DEFAULTS["open_tracking_enabled"]),
-        "click_tracking_enabled": doc.get("click_tracking_enabled", _TOGGLE_DEFAULTS["click_tracking_enabled"]),
-        "unsubscribe_tracking_enabled": doc.get("unsubscribe_tracking_enabled", _TOGGLE_DEFAULTS["unsubscribe_tracking_enabled"]),
-        "track_unique_only": doc.get("track_unique_only", _TOGGLE_DEFAULTS["track_unique_only"]),
+        "open_tracking_enabled": doc.get(
+            "open_tracking_enabled", _TOGGLE_DEFAULTS["open_tracking_enabled"]
+        ),
+        "click_tracking_enabled": doc.get(
+            "click_tracking_enabled", _TOGGLE_DEFAULTS["click_tracking_enabled"]
+        ),
+        "unsubscribe_tracking_enabled": doc.get(
+            "unsubscribe_tracking_enabled",
+            _TOGGLE_DEFAULTS["unsubscribe_tracking_enabled"],
+        ),
+        "track_unique_only": doc.get(
+            "track_unique_only", _TOGGLE_DEFAULTS["track_unique_only"]
+        ),
         "unsubscribe_domain": doc.get("unsubscribe_domain", ""),
         "open_tracking_domain": doc.get("open_tracking_domain", ""),
         "click_tracking_domain": doc.get("click_tracking_domain", ""),
@@ -792,10 +843,19 @@ async def update_tracking_settings(payload: _TrackingSettingsUpdate):
     doc = await col.find_one({"type": "tracking"}) or {}
     return {
         "status": "saved",
-        "open_tracking_enabled": doc.get("open_tracking_enabled", _TOGGLE_DEFAULTS["open_tracking_enabled"]),
-        "click_tracking_enabled": doc.get("click_tracking_enabled", _TOGGLE_DEFAULTS["click_tracking_enabled"]),
-        "unsubscribe_tracking_enabled": doc.get("unsubscribe_tracking_enabled", _TOGGLE_DEFAULTS["unsubscribe_tracking_enabled"]),
-        "track_unique_only": doc.get("track_unique_only", _TOGGLE_DEFAULTS["track_unique_only"]),
+        "open_tracking_enabled": doc.get(
+            "open_tracking_enabled", _TOGGLE_DEFAULTS["open_tracking_enabled"]
+        ),
+        "click_tracking_enabled": doc.get(
+            "click_tracking_enabled", _TOGGLE_DEFAULTS["click_tracking_enabled"]
+        ),
+        "unsubscribe_tracking_enabled": doc.get(
+            "unsubscribe_tracking_enabled",
+            _TOGGLE_DEFAULTS["unsubscribe_tracking_enabled"],
+        ),
+        "track_unique_only": doc.get(
+            "track_unique_only", _TOGGLE_DEFAULTS["track_unique_only"]
+        ),
         "unsubscribe_domain": doc.get("unsubscribe_domain", ""),
         "open_tracking_domain": doc.get("open_tracking_domain", ""),
         "click_tracking_domain": doc.get("click_tracking_domain", ""),

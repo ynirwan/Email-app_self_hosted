@@ -28,6 +28,10 @@
 import logging
 import time
 import redis as _redis_module
+import os
+import json
+
+from logging.handlers import RotatingFileHandler
 from datetime import datetime, timedelta
 from typing import Dict, List, Any, Optional
 from bson import ObjectId
@@ -50,11 +54,60 @@ from .template_renderer import template_renderer
 from tasks.campaign.provider_manager import email_provider_manager
 from tasks.campaign.audit_logger import (
     log_campaign_event,
-    log_email_event,
     AuditEventType,
 )
 
 logger = logging.getLogger(__name__)
+
+# ============================================================
+# FILE-BASED OPERATIONAL LOGGING (/var/log)
+# ============================================================
+
+
+BACKEND_ROOT = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "..")
+)
+LOG_DIR = os.path.join(BACKEND_ROOT, "var", "log")
+os.makedirs(LOG_DIR, exist_ok=True)
+
+
+def _build_rotating_logger(name: str, filename: str) -> logging.Logger:
+    _logger = logging.getLogger(name)
+    if _logger.handlers:
+        return _logger
+
+    _logger.setLevel(logging.INFO)
+    _logger.propagate = False
+
+    handler = RotatingFileHandler(
+        os.path.join(LOG_DIR, filename),
+        maxBytes=20 * 1024 * 1024,  # 20MB
+        backupCount=10,
+        encoding="utf-8",
+    )
+    handler.setFormatter(logging.Formatter("%(message)s"))
+    _logger.addHandler(handler)
+    return _logger
+
+
+submission_logger = _build_rotating_logger(
+    "campaign_submission_logger", "submission.log"
+)
+delivery_logger = _build_rotating_logger(
+    "campaign_delivery_logger", "delivery.log"
+)
+campaign_ops_logger = _build_rotating_logger(
+    "campaign_ops_logger", "campaign.log"
+)
+
+
+def _write_json_log(file_logger: logging.Logger, payload: Dict[str, Any]):
+    try:
+        payload.setdefault("timestamp", datetime.utcnow().isoformat())
+        file_logger.info(json.dumps(payload, default=str, ensure_ascii=False))
+    except Exception as e:
+        logger.warning(f"Failed to write var log: {e}")
+
 
 # ============================================================
 # MODULE-LEVEL WORKER CACHES
@@ -172,7 +225,7 @@ def _evict_campaign_caches(campaign_id: str):
 
 
 # ============================================================
-# EMAIL STATUS LOGGING  (unchanged)
+# EMAIL STATUS LOGGING
 # ============================================================
 
 
@@ -200,6 +253,7 @@ def log_email_status(
             "created_at": datetime.utcnow(),
             "updated_at": datetime.utcnow(),
         }
+
         if status == "sent":
             log_entry["sent_at"] = datetime.utcnow()
         elif status == "delivered":
@@ -210,39 +264,21 @@ def log_email_status(
 
         email_logs_collection.insert_one(log_entry)
 
-        if task_settings.ENABLE_AUDIT_LOGGING:
-            audit_details = {
+        # File-based delivery log (replaces duplicate audit email logging)
+        _write_json_log(
+            delivery_logger,
+            {
+                "event": "email_status",
+                "campaign_id": campaign_id,
+                "subscriber_id": subscriber_id,
+                "email": email,
                 "status": status,
-                "provider": provider,
                 "message_id": message_id,
+                "provider": provider,
                 "cost": cost,
-            }
-            if error_reason:
-                audit_details["error"] = error_reason
-            if status == "sent":
-                log_email_event(
-                    AuditEventType.EMAIL_SENT,
-                    campaign_id,
-                    subscriber_id,
-                    email,
-                    audit_details,
-                )
-            elif status == "delivered":
-                log_email_event(
-                    AuditEventType.EMAIL_DELIVERED,
-                    campaign_id,
-                    subscriber_id,
-                    email,
-                    audit_details,
-                )
-            elif status == "failed":
-                log_email_event(
-                    AuditEventType.EMAIL_FAILED,
-                    campaign_id,
-                    subscriber_id,
-                    email,
-                    audit_details,
-                )
+                "error": error_reason,
+            },
+        )
 
     except Exception as e:
         logger.error(f"Failed to log email status: {e}")
@@ -352,9 +388,6 @@ def send_single_campaign_email(self, campaign_id: str, subscriber_id: str):
             {"_id": 1},
         )
         if existing_sent:
-            # FIX: do NOT increment processed_count here — it was already
-            # counted when the email was first sent successfully.  Incrementing
-            # it again on a requeue caused the counter to exceed the list size.
             _decrement_queued(campaign_id)
             return {"status": "skipped", "reason": "already_sent"}
 
@@ -375,17 +408,6 @@ def send_single_campaign_email(self, campaign_id: str, subscriber_id: str):
             }
 
         # ── STEP 4c: REQUEUE DETECTION ───────────────────────────────────────
-        # If a "failed" log already exists for this subscriber in this campaign,
-        # this task is a requeue (from DLQ or manual retry).
-        #
-        # Requeue implications:
-        #   • processed_count was already incremented when it first failed —
-        #     do NOT increment again regardless of outcome.
-        #   • failed_count was already incremented — on success reverse it (-1);
-        #     on another failure leave it unchanged (already counted).
-        #   • queued_count was NOT incremented when the task was requeued
-        #     (DLQ bypasses send_campaign_batch) — still call _decrement_queued()
-        #     which is floor-guarded and will not go negative.
         existing_failed = email_logs_collection.find_one(
             {
                 "campaign_id": ObjectId(campaign_id),
@@ -452,7 +474,7 @@ def send_single_campaign_email(self, campaign_id: str, subscriber_id: str):
         field_map = snap["field_map"]
         fallback_values = snap["fallback_values"]
 
-        # ── STEP 7: PERSONALIZATION (unchanged logic) ─────────────────────────
+        # ── STEP 7: PERSONALIZATION ──────────────────────────────────────────
         personalization_context = {}
 
         for template_field, mapped_field in field_map.items():
@@ -522,18 +544,20 @@ def send_single_campaign_email(self, campaign_id: str, subscriber_id: str):
                 build_open_pixel_url,
                 get_tracking_flags_sync,
             )
+
             _flags = get_tracking_flags_sync()
-            _open_enabled  = _flags.get("open_tracking_enabled",  True)
+            _open_enabled = _flags.get("open_tracking_enabled", True)
             _click_enabled = _flags.get("click_tracking_enabled", True)
 
             if _open_enabled or _click_enabled:
                 _open_token = generate_tracking_token(
                     campaign_id, subscriber_id, recipient_email
                 )
-            # Expose raw URL in template context for templates that embed
-            # their own <img> tag via {{open_tracking_url}}
+
             personalization_context["open_tracking_url"] = (
-                build_open_pixel_url(_open_token) if _open_enabled and _open_token else ""
+                build_open_pixel_url(_open_token)
+                if _open_enabled and _open_token
+                else ""
             )
         except Exception as ot_err:
             logger.warning(f"Failed to generate tracking token: {ot_err}")
@@ -586,30 +610,37 @@ def send_single_campaign_email(self, campaign_id: str, subscriber_id: str):
         _html_to_send = personalized["html_content"]
         if _open_token and _html_to_send:
             try:
-                from routes.tracking import rewrite_links_for_tracking, create_tracking_record
+                from routes.tracking import (
+                    rewrite_links_for_tracking,
+                    create_tracking_record,
+                )
                 import asyncio as _asyncio
 
-                # Click tracking: rewrite <a href> links
                 if _click_enabled:
-                    _html_to_send = rewrite_links_for_tracking(_html_to_send, _open_token)
+                    _html_to_send = rewrite_links_for_tracking(
+                        _html_to_send, _open_token
+                    )
 
-                # Open tracking: inject pixel before </body>
                 if _open_enabled:
                     from routes.tracking import build_open_pixel_url as _bop
+
                     _pixel = (
                         f'<img src="{_bop(_open_token)}" width="1" height="1" '
                         f'alt="" style="display:none;border:0;" />'
                     )
                     if "</body>" in _html_to_send:
-                        _html_to_send = _html_to_send.replace("</body>", _pixel + "</body>", 1)
+                        _html_to_send = _html_to_send.replace(
+                            "</body>", _pixel + "</body>", 1
+                        )
                     else:
                         _html_to_send += _pixel
 
-                # Write tracking record (async call from sync Celery task)
                 try:
                     _loop = _asyncio.new_event_loop()
                     _loop.run_until_complete(
-                        create_tracking_record(campaign_id, subscriber_id, recipient_email, _open_token)
+                        create_tracking_record(
+                            campaign_id, subscriber_id, recipient_email, _open_token
+                        )
                     )
                     _loop.close()
                 except Exception as _te:
@@ -617,6 +648,20 @@ def send_single_campaign_email(self, campaign_id: str, subscriber_id: str):
 
             except Exception as _lre:
                 logger.warning(f"Tracking inject/rewrite failed: {_lre}")
+
+        _write_json_log(
+            submission_logger,
+            {
+                "event": "submission_attempt",
+                "campaign_id": campaign_id,
+                "subscriber_id": subscriber_id,
+                "email": recipient_email,
+                "task_id": self.request.id,
+                "provider_hint": provider_type.value if provider_type else "default",
+                "subject": personalized.get("subject"),
+                "is_requeue": is_requeue,
+            },
+        )
 
         try:
             send_result = email_provider_manager.send_email_with_failover(
@@ -639,6 +684,25 @@ def send_single_campaign_email(self, campaign_id: str, subscriber_id: str):
                 provider = send_result.get("selected_provider", "unknown")
                 cost = send_result.get("cost", 0.0)
 
+                _write_json_log(
+                    submission_logger,
+                    {
+                        "event": "submission_result",
+                        "campaign_id": campaign_id,
+                        "subscriber_id": subscriber_id,
+                        "email": recipient_email,
+                        "task_id": self.request.id,
+                        "status": "sent",
+                        "provider": provider,
+                        "message_id": message_id,
+                        "cost": cost,
+                        "attempted_providers": send_result.get(
+                            "attempted_providers", []
+                        ),
+                        "execution_time": execution_time,
+                    },
+                )
+
                 log_email_status(
                     campaign_id,
                     subscriber_id,
@@ -650,11 +714,6 @@ def send_single_campaign_email(self, campaign_id: str, subscriber_id: str):
                     cost,
                 )
 
-                # FIX: separate queued_count decrement so the floor guard is
-                # always applied.  Counter logic differs for requeued tasks:
-                #   • Fresh send:   sent_count +1, processed_count +1
-                #   • Requeue win:  sent_count +1, failed_count -1
-                #                   (processed_count already counted on 1st fail)
                 if is_requeue:
                     campaigns_collection.update_one(
                         {"_id": ObjectId(campaign_id)},
@@ -700,6 +759,21 @@ def send_single_campaign_email(self, campaign_id: str, subscriber_id: str):
                 attempted_providers = send_result.get("attempted_providers", [])
                 is_permanent = send_result.get("permanent_failure", False)
 
+                _write_json_log(
+                    submission_logger,
+                    {
+                        "event": "submission_result",
+                        "campaign_id": campaign_id,
+                        "subscriber_id": subscriber_id,
+                        "email": recipient_email,
+                        "task_id": self.request.id,
+                        "status": "failed",
+                        "error": error_reason,
+                        "attempted_providers": attempted_providers,
+                        "permanent_failure": is_permanent,
+                    },
+                )
+
                 if is_permanent or self.request.retries >= self.max_retries:
                     if task_settings.ENABLE_DLQ and not is_permanent:
                         dlq_manager.send_to_dlq(
@@ -723,10 +797,6 @@ def send_single_campaign_email(self, campaign_id: str, subscriber_id: str):
                         attempted_providers[0] if attempted_providers else "unknown",
                     )
 
-                    # FIX: requeue — counters were already incremented on the
-                    # first failure; do not double-count.
-                    # Fresh failure: failed_count +1, processed_count +1
-                    # Requeue failure: no counter change (already accounted for)
                     if not is_requeue:
                         campaigns_collection.update_one(
                             {"_id": ObjectId(campaign_id)},
@@ -769,6 +839,19 @@ def send_single_campaign_email(self, campaign_id: str, subscriber_id: str):
                     raise self.retry(countdown=countdown, exc=Exception(error_reason))
 
         except Exception as e:
+            _write_json_log(
+                submission_logger,
+                {
+                    "event": "submission_exception",
+                    "campaign_id": campaign_id,
+                    "subscriber_id": subscriber_id,
+                    "email": recipient_email if "recipient_email" in locals() else None,
+                    "task_id": self.request.id,
+                    "retry_count": self.request.retries,
+                    "error": str(e),
+                },
+            )
+
             if self.request.retries >= self.max_retries:
                 error_msg = str(e)
                 if task_settings.ENABLE_DLQ:
@@ -792,8 +875,7 @@ def send_single_campaign_email(self, campaign_id: str, subscriber_id: str):
                     error_msg,
                     "unknown",
                 )
-                # FIX: requeue — do not re-increment counters already recorded
-                # on the first attempt's failure.
+
                 if not is_requeue:
                     campaigns_collection.update_one(
                         {"_id": ObjectId(campaign_id)},
@@ -834,7 +916,7 @@ def send_single_campaign_email(self, campaign_id: str, subscriber_id: str):
 
 
 # ============================================================
-# TASK: send_campaign_batch  (unchanged)
+# TASK: send_campaign_batch
 # ============================================================
 
 
@@ -851,13 +933,11 @@ def send_campaign_batch(
     If a batch is already running, this task exits immediately.
     This prevents duplicate queueing and negative queued_count.
     """
-    # ── Redis lock — one batch per campaign at a time ─────────────────────────
     try:
         _redis = _redis_module.Redis.from_url(
             task_settings.REDIS_URL, decode_responses=True
         )
         lock_key = f"campaign_batch_lock:{campaign_id}"
-        # TTL = soft_time_limit + buffer so lock auto-expires if worker crashes
         acquired = _redis.set(lock_key, self.request.id, nx=True, ex=360)
         if not acquired:
             running_task = _redis.get(lock_key)
@@ -870,7 +950,6 @@ def send_campaign_batch(
                 "lock_held_by": running_task,
             }
     except Exception as lock_err:
-        # Redis unavailable — continue without lock (degraded mode)
         logger.warning(f"Could not acquire batch lock for {campaign_id}: {lock_err}")
         _redis = None
         lock_key = None
@@ -906,8 +985,6 @@ def send_campaign_batch(
                 "campaign_id": campaign_id,
             }
 
-        # Hard stop if paused — do not queue any new emails.
-        # Save cursor so resume_campaign picks up from exactly this position.
         if campaign.get("status") == "paused" or campaign_controller.is_campaign_paused(
             campaign_id
         ):
@@ -928,7 +1005,6 @@ def send_campaign_batch(
         if not subscribers:
             processed_count = campaign.get("processed_count", 0)
             target_count = campaign.get("target_list_count", 0)
-            # Finalize if: cursor existed (scanned whole list), counts match, or no target set
             if last_id or processed_count >= target_count or not target_count:
                 finalize_result = finalize_campaign(campaign_id)
                 return {
@@ -961,7 +1037,6 @@ def send_campaign_batch(
 
         if not new_subscribers:
             if len(subscribers) < batch_size:
-                # Last page of subscribers, all already sent — finalize instead of chaining
                 finalize_result = finalize_campaign(campaign_id)
                 return {
                     "status": "campaign_completed",
@@ -979,7 +1054,6 @@ def send_campaign_batch(
                 "next_task_id": next_task.id,
             }
 
-        # Build immutable signatures for each individual email (si = ignore previous result)
         email_sigs = [
             send_single_campaign_email.si(campaign_id, str(sub["_id"]))
             for sub in new_subscribers
@@ -995,7 +1069,6 @@ def send_campaign_batch(
 
         next_task_id = None
         if len(subscribers) == batch_size:
-            # More subscribers remain — chain next batch ONLY after this batch completes
             last_subscriber = subscribers[-1]
             next_batch_sig = send_campaign_batch.si(
                 campaign_id, batch_size, str(last_subscriber["_id"])
@@ -1003,7 +1076,6 @@ def send_campaign_batch(
             result = chord(email_sigs)(next_batch_sig)
             next_task_id = result.id
         else:
-            # Final batch — no next batch needed, dispatch individually
             group(email_sigs).delay()
 
         execution_time = time.time() - start_time
@@ -1029,10 +1101,8 @@ def send_campaign_batch(
         }
 
     finally:
-        # Always release lock so the next batch can run
         try:
             if _redis and lock_key:
-                # Only delete if we still own it (another task may have taken it)
                 current = _redis.get(lock_key)
                 if current == self.request.id:
                     _redis.delete(lock_key)
@@ -1061,8 +1131,6 @@ def get_subscribers_for_campaign(
         if not campaign:
             return []
 
-        # Build suppressed email set for this batch window
-        # Fetch all suppressed emails upfront (cached in memory for this batch)
         suppressed_emails = set(
             doc["email"]
             for doc in suppressions_collection.find({}, {"email": 1, "_id": 0})
@@ -1075,8 +1143,6 @@ def get_subscribers_for_campaign(
             "status": "active",
         }
 
-        # Exclude suppressed emails at DB level when the set is small enough
-        # (MongoDB $nin has a practical limit; for large sets we filter in Python)
         if suppressed_emails and len(suppressed_emails) <= 5000:
             query["email"] = {
                 "$nin": list(suppressed_emails),
@@ -1106,7 +1172,6 @@ def get_subscribers_for_campaign(
             .limit(batch_size)
         )
 
-        # Python-side filter for large suppression sets
         if suppressed_emails and len(suppressed_emails) > 5000:
             subscribers = [
                 s for s in subscribers if s.get("email") not in suppressed_emails
@@ -1129,8 +1194,6 @@ def finalize_campaign(campaign_id: str) -> Dict[str, Any]:
         if not campaign:
             return {"error": "campaign_not_found"}
 
-        # Guard: don't finalize while tasks are still in flight.
-        # queued_count > 0 means some send_single tasks haven't completed yet.
         queued_count = campaign.get("queued_count", 0)
         if queued_count > 0:
             logger.warning(
@@ -1161,24 +1224,15 @@ def finalize_campaign(campaign_id: str) -> Dict[str, Any]:
         sent_count = status_counts.get("sent", 0)
         delivered_count = status_counts.get("delivered", 0)
         failed_count = status_counts.get("failed", 0)
-        # FIX: emails promoted from "sent" → "delivered" by webhooks are genuinely delivered.
-        # The canonical "emails that reached the inbox" = sent + delivered.
-        # Store both separately AND a combined total so stats never double-count.
+
         canonical_sent = sent_count + delivered_count
-        # completed = at least some sent/delivered
-        # partial = some sent but also failures (still completed, not failed)
-        # failed = zero sent AND zero delivered (complete failure)
+
         if sent_count > 0 or delivered_count > 0:
             final_status = "completed"
         elif total_processed == 0:
-            # Nothing processed at all — likely misconfigured campaign
             final_status = "failed"
         else:
-            # Everything failed — all processed but none sent
             final_status = "failed"
-        # NOTE: final_status is scoped to THIS campaign_id only.
-        # Each campaign finalizes independently — a failure here cannot
-        # affect any other campaign running simultaneously.
 
         campaigns_collection.update_one(
             {"_id": ObjectId(campaign_id)},
@@ -1196,7 +1250,7 @@ def finalize_campaign(campaign_id: str) -> Dict[str, Any]:
             },
         )
 
-        _evict_campaign_caches(campaign_id)  # ← evict after completion
+        _evict_campaign_caches(campaign_id)
 
         if task_settings.ENABLE_AUDIT_LOGGING:
             log_campaign_event(
@@ -1227,7 +1281,7 @@ def finalize_campaign(campaign_id: str) -> Dict[str, Any]:
 
 
 # ============================================================
-# TASK: start_campaign  (unchanged)
+# TASK: start_campaign
 # ============================================================
 
 
@@ -1279,7 +1333,7 @@ def start_campaign(self, campaign_id: str):
 
 
 # ============================================================
-# TASK: check_scheduled_campaigns  (unchanged)
+# TASK: check_scheduled_campaigns
 # ============================================================
 
 
@@ -1316,3 +1370,4 @@ def check_scheduled_campaigns(self):
 
     except Exception as e:
         logger.error(f"check_scheduled_campaigns failed: {e}")
+        return {"error": str(e)}
