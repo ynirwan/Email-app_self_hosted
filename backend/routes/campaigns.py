@@ -18,7 +18,7 @@ from database import (
     get_templates_collection,
 )
 from tasks.campaign.email_campaign_tasks import celery_app, send_campaign_batch
-from .email_sender import send_test_email
+#from .test_email.py import send_test_email
 from .list_validator import validate_target_lists_exist, compute_target_list_count
 from .field_handler import (
     get_subscriber_field_value,

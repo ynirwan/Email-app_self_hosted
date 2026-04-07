@@ -119,6 +119,7 @@ from routes import (
     audit,
     unsubscribe,
     tracking,
+    test_email,
 )
 
 # ============================================

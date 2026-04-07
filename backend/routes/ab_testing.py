@@ -548,103 +548,104 @@ async def get_ab_test(test_id: str):
             status_code=500, detail=f"Failed to retrieve A/B test: {str(e)}"
         )
 
-        @router.post("/ab-tests/{test_id}/start")
-        async def start_ab_test(test_id: str):
-            try:
-                col = get_ab_tests_collection()
-                if not ObjectId.is_valid(test_id):
-                    raise HTTPException(status_code=400, detail="Invalid test ID")
 
-                test = await col.find_one({"_id": ObjectId(test_id)})
-                if not test:
-                    raise HTTPException(status_code=404, detail="A/B test not found")
-                if test["status"] != TestStatus.DRAFT:
-                    raise HTTPException(
-                        status_code=400, detail="Test must be in draft status to start"
-                    )
+# FIX C-01: start_ab_test was nested inside get_ab_test after a return statement.
+# FastAPI never registered it — POST /ab-tests/{id}/start returned 405.
+# Extracted here as a proper top-level route.
+@router.post("/ab-tests/{test_id}/start")
+async def start_ab_test(test_id: str):
+    try:
+        col = get_ab_tests_collection()
+        if not ObjectId.is_valid(test_id):
+            raise HTTPException(status_code=400, detail="Invalid test ID")
 
-                # ── 1. Build content snapshot before changing status ─────────────────
-                template_id = test.get("template_id")
-                if not template_id:
-                    raise HTTPException(
-                        status_code=400,
-                        detail="A/B test has no template_id — cannot start",
-                    )
+        test = await col.find_one({"_id": ObjectId(test_id)})
+        if not test:
+            raise HTTPException(status_code=404, detail="A/B test not found")
+        if test["status"] != TestStatus.DRAFT:
+            raise HTTPException(
+                status_code=400, detail="Test must be in draft status to start"
+            )
 
-                if not ObjectId.is_valid(template_id):
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"Invalid template_id '{template_id}' stored on test",
-                    )
+        # ── 1. Build content snapshot before changing status ─────────────────
+        template_id = test.get("template_id")
+        if not template_id:
+            raise HTTPException(
+                status_code=400,
+                detail="A/B test has no template_id — cannot start",
+            )
 
-                templates_col = get_templates_collection()
-                template = await templates_col.find_one({"_id": ObjectId(template_id)})
-                if not template:
-                    raise HTTPException(
-                        status_code=404,
-                        detail=(
-                            f"Template '{template_id}' not found — "
-                            "it may have been deleted. Update the A/B test before starting."
-                        ),
-                    )
+        if not ObjectId.is_valid(template_id):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid template_id '{template_id}' stored on test",
+            )
 
-                # Reuse the same snapshot builder used by campaigns.
-                # The test doc acts as a "campaign-like" object for field_map / fallback.
-                try:
-                    from tasks.campaign.snapshot_utils import build_snapshot
+        templates_col = get_templates_collection()
+        template = await templates_col.find_one({"_id": ObjectId(template_id)})
+        if not template:
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    f"Template '{template_id}' not found — "
+                    "it may have been deleted. Update the A/B test before starting."
+                ),
+            )
 
-                    snapshot = build_snapshot(template, test)
-                except ValueError as ve:
-                    raise HTTPException(status_code=422, detail=str(ve))
+        # Reuse the same snapshot builder used by campaigns.
+        try:
+            from tasks.campaign.snapshot_utils import build_snapshot
 
-                # ── 2. Get subscribers and assign variants ────────────────────────────
-                subscribers = await get_test_subscribers(
-                    test.get("target_lists", []),
-                    test["sample_size"],
-                )
-                if not subscribers:
-                    raise HTTPException(
-                        status_code=400, detail="No subscribers found for this test"
-                    )
+            snapshot = build_snapshot(template, test)
+        except ValueError as ve:
+            raise HTTPException(status_code=422, detail=str(ve))
 
-                variant_assignments = assign_variants(
-                    subscribers, test["split_percentage"]
-                )
+        # ── 2. Get subscribers and assign variants ────────────────────────────
+        subscribers = await get_test_subscribers(
+            test.get("target_lists", []),
+            test["sample_size"],
+        )
+        if not subscribers:
+            raise HTTPException(
+                status_code=400, detail="No subscribers found for this test"
+            )
 
-                # ── 3. Persist snapshot + status=running atomically ──────────────────
-                await col.update_one(
-                    {"_id": ObjectId(test_id)},
-                    {
-                        "$set": {
-                            "status": TestStatus.RUNNING,
-                            "start_date": datetime.utcnow(),
-                            "variant_assignments": variant_assignments,
-                            "content_snapshot": snapshot,  # ← NEW
-                            "snapshot_taken_at": snapshot["taken_at"],  # ← NEW
-                            "updated_at": datetime.utcnow(),
-                        }
-                    },
-                )
+        variant_assignments = assign_variants(subscribers, test["split_percentage"])
 
-                # ── 4. Trigger Celery batch AFTER snapshot is persisted ───────────────
-                task = send_ab_test_batch.delay(test_id, variant_assignments)
-                logger.info(f"A/B test started: {test_id}, task={task.id}")
-
-                return {
-                    "message": "A/B test started successfully",
-                    "test_id": test_id,
-                    "task_id": task.id,
-                    "variant_a_count": len(variant_assignments["A"]),
-                    "variant_b_count": len(variant_assignments["B"]),
+        # ── 3. Persist snapshot + status=running atomically ──────────────────
+        await col.update_one(
+            {"_id": ObjectId(test_id)},
+            {
+                "$set": {
+                    "status": TestStatus.RUNNING,
+                    "start_date": datetime.utcnow(),
+                    "variant_assignments": variant_assignments,
+                    "content_snapshot": snapshot,
+                    "snapshot_taken_at": snapshot["taken_at"],
+                    "updated_at": datetime.utcnow(),
                 }
+            },
+        )
 
-            except HTTPException:
-                raise
-            except Exception as e:
-                logger.error(f"Failed to start A/B test: {e}")
-                raise HTTPException(
-                    status_code=500, detail=f"Failed to start A/B test: {str(e)}"
-                )
+        # ── 4. Trigger Celery batch AFTER snapshot is persisted ───────────────
+        task = send_ab_test_batch.delay(test_id, variant_assignments)
+        logger.info(f"A/B test started: {test_id}, task={task.id}")
+
+        return {
+            "message": "A/B test started successfully",
+            "test_id": test_id,
+            "task_id": task.id,
+            "variant_a_count": len(variant_assignments["A"]),
+            "variant_b_count": len(variant_assignments["B"]),
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to start A/B test: {e}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to start A/B test: {str(e)}"
+        )
 
 
 @router.get("/ab-tests/{test_id}/results")
@@ -746,7 +747,9 @@ async def complete_ab_test(test_id: str, request: CompleteTestRequest):
             and winner.get("winner") != "TIE"
         ):
             # Fire Celery task so we don't block the API response
-            from tasks.ab_testing import auto_complete_ab_test
+            # FIX C-14: was 'from tasks.ab_testing' (old flat path) — ImportError was swallowed,
+            # campaign_applied was set True but nothing actually ran.
+            from tasks.ab.ab_testing import auto_complete_ab_test
 
             auto_complete_ab_test.apply_async(
                 kwargs={"test_id": test_id, "apply_to_campaign": True},
