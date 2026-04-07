@@ -49,7 +49,6 @@ celery_app = Celery(
         # Core email campaign tasks (always included)
         "tasks.campaign.email_campaign_tasks",
         "tasks.ab.ab_testing",
-        #    "tasks.startup_recovery",
     ],
 )
 
@@ -156,7 +155,6 @@ celery_app.conf.update(
             Exchange("automation", type="direct"),
             routing_key="automation",
         ),
-        Queue("recovery", Exchange("recovery", type="direct"), routing_key="recovery"),
         Queue(
             "ses_events",
             Exchange("ses_events", type="direct"),
@@ -209,10 +207,7 @@ celery_app.conf.update(
         "tasks.pause_campaign": {"queue": "campaigns", "priority": 9},
         "tasks.resume_campaign": {"queue": "campaigns", "priority": 8},
         "tasks.stop_campaign": {"queue": "campaigns", "priority": 9},
-        # ===== RECOVERY TASKS =====
-        "tasks.startup_recovery": {"queue": "recovery", "priority": 10},
-        "tasks.startup_recovery_only": {"queue": "recovery", "priority": 10},
-        "tasks.recover_failed_campaign": {"queue": "recovery", "priority": 8},
+
         # ===== AUTOMATION TASKS =====
         "tasks.execute_automation_step": {"queue": "automation", "priority": 6},
         "tasks.process_automation_trigger": {"queue": "automation", "priority": 7},
@@ -766,7 +761,6 @@ def verify_celery_config() -> Dict[str, Any]:
             "production_features": "tasks.resource_manager" in celery_app.conf.include,
             "queues": [
                 "campaigns",
-                "recovery",
                 "automation",
                 "webhooks",
                 "subscribers",

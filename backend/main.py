@@ -228,15 +228,7 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.error(f"❌ Database initialization error: {e}")
 
-    startup_recovery_enabled = settings.STARTUP_RECOVERY_ENABLED
-    if startup_recovery_enabled:
-        try:
-            from tasks.startup_recovery import startup_recovery_only
-
-            startup_recovery_only.apply_async(countdown=60)
-            logger.info("✅ Startup recovery scheduled")
-        except Exception as e:
-            logger.warning(f"⚠️  Startup recovery not available: {e}")
+ 
 
     # Log production features
     enabled_features = [k for k, v in PRODUCTION_FEATURES.items() if v]

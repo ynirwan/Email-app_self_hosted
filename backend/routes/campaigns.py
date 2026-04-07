@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException, Path, status, Query
-from pydantic import BaseModel, EmailStr, Field, validator
+from pydantic import BaseModel, EmailStr, Field, validator, model_validator
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 from bson import ObjectId
@@ -60,8 +60,9 @@ class CampaignCreate(BaseModel):
     sender_name: Optional[str] = Field(default="", max_length=100)
     sender_email: Optional[str] = Field(default="", max_length=100)
     reply_to: Optional[str] = Field(default="", max_length=100)
-    target_lists: List[str] = Field(..., min_items=1)
-    target_segments: List[str] = Field([], min_items=0)
+    # FIX #2: target_lists is now optional (default []) to support segments-only campaigns
+    target_lists: List[str] = Field(default=[], min_items=0)
+    target_segments: List[str] = Field(default=[], min_items=0)
     template_id: str
     field_map: Dict[str, str] = Field(
         default_factory=dict
@@ -74,13 +75,23 @@ class CampaignCreate(BaseModel):
 
     @validator("target_lists")
     def validate_target_lists(cls, v):
-        """Ensure target_lists is not empty and contains valid list IDs"""
-        if not v or len(v) == 0:
-            raise ValueError("At least one target list must be selected")
+        """Deduplicate list IDs; emptiness is checked in root validator"""
         unique_lists = list(dict.fromkeys(v))
         if len(unique_lists) != len(v):
             raise ValueError("Duplicate lists found in target_lists")
         return unique_lists
+
+    @validator("target_segments")
+    def validate_target_segments(cls, v):
+        """Deduplicate segment IDs"""
+        return list(dict.fromkeys(v))
+
+    @model_validator(mode="after")
+    def validate_audience_not_empty(self):
+        """At least one of target_lists or target_segments must be provided"""
+        if not self.target_lists and not self.target_segments:
+            raise ValueError("At least one target list or segment must be selected")
+        return self
 
 
 # Update your existing CampaignUpdate class
@@ -90,7 +101,10 @@ class CampaignUpdate(BaseModel):
     sender_name: Optional[str] = Field(default="", max_length=100)
     sender_email: Optional[str] = Field(default="", max_length=100)
     reply_to: Optional[str] = Field(default="", max_length=100)
-    target_lists: List[str] = Field(..., min_items=1)
+    # FIX #2: target_lists is now optional (default []) to support segments-only campaigns
+    target_lists: List[str] = Field(default=[], min_items=0)
+    # FIX #1: target_segments was missing from CampaignUpdate — caused AttributeError on update
+    target_segments: List[str] = Field(default=[], min_items=0)
     template_id: str
     field_map: Dict[str, str] = Field(default_factory=dict)
     status: Optional[str] = Field(default="draft")
@@ -101,13 +115,23 @@ class CampaignUpdate(BaseModel):
 
     @validator("target_lists")
     def validate_target_lists(cls, v):
-        """Ensure target_lists is not empty and contains valid list IDs"""
-        if not v or len(v) == 0:
-            raise ValueError("At least one target list must be selected")
+        """Deduplicate list IDs; emptiness is checked in root validator"""
         unique_lists = list(dict.fromkeys(v))
         if len(unique_lists) != len(v):
             raise ValueError("Duplicate lists found in target_lists")
         return unique_lists
+
+    @validator("target_segments")
+    def validate_target_segments(cls, v):
+        """Deduplicate segment IDs"""
+        return list(dict.fromkeys(v))
+
+    @model_validator(mode="after")
+    def validate_audience_not_empty(self):
+        """At least one of target_lists or target_segments must be provided"""
+        if not self.target_lists and not self.target_segments:
+            raise ValueError("At least one target list or segment must be selected")
+        return self
 
 
 # Also update your TestEmail class to match the document
@@ -125,27 +149,41 @@ async def create_campaign(campaign: CampaignCreate):
     try:
         campaigns_collection = get_campaigns_collection()
 
-        # ✅ STEP 1: Validate that target lists exist (keep existing logic)
-        if not await validate_target_lists_exist(campaign.target_lists):
-            raise HTTPException(
-                status_code=400,
-                detail="One or more target lists do not exist or have no subscribers",
-            )
+        # ✅ STEP 1: Validate target lists only when lists are actually provided
+        # FIX #6: unconditional call caused 400 error in segments-only mode
+        if campaign.target_lists:
+            if not await validate_target_lists_exist(campaign.target_lists):
+                raise HTTPException(
+                    status_code=400,
+                    detail="One or more target lists do not exist or have no subscribers",
+                )
 
         # ✅ NEW: Validate field mappings with tier system
+        # Pass empty list when lists are not used (segments-only mode)
         validated_mapping = await validate_tiered_field_mapping(
             campaign.field_map, campaign.target_lists
         )
 
         # ✅ STEP 2: Calculate target audience with tier-aware counting
-        target_count = await calculate_tiered_audience_count(
-            campaign.target_lists, validated_mapping
+        # FIX #2: segments-only campaigns have no lists, count segments separately
+        list_count = (
+            await calculate_tiered_audience_count(
+                campaign.target_lists, validated_mapping
+            )
+            if campaign.target_lists
+            else 0
         )
 
-        if target_count == 0:
+        # Segment subscriber counts come from the segment documents themselves;
+        # the snapshot task resolves final recipients at send time.
+        # Here we just need a non-zero indicator for validation.
+        segments_have_members = len(campaign.target_segments) > 0
+        target_count = list_count  # used for target_list_count field
+
+        if list_count == 0 and not segments_have_members:
             raise HTTPException(
                 status_code=400,
-                detail="Selected lists have no subscribers. Cannot create campaign with empty audience.",
+                detail="Selected audience has no subscribers. Add lists or segments with active subscribers.",
             )
 
         # ✅ STEP 3: Build campaign document with new fields
@@ -275,19 +313,28 @@ async def update_campaign(campaign_id: str, campaign_data: CampaignUpdate):
         if not existing_campaign:
             raise HTTPException(status_code=404, detail="Campaign not found")
 
-        # ✅ Block edits unless status is draft
-        if existing_campaign.get("status", "draft") != "draft":
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="Campaign is not in 'draft' status and cannot be edited",
+        # FIX #3: Instead of hard-blocking non-draft campaigns with a 409,
+        # allow the update but return a warning so the frontend can inform the user.
+        # The frontend already shows a confirm dialog for sent campaigns.
+        non_draft_warning = None
+        campaign_current_status = existing_campaign.get("status", "draft")
+        if campaign_current_status not in ("draft", "scheduled"):
+            non_draft_warning = (
+                f"Campaign was in '{campaign_current_status}' status. "
+                "Metadata updated. Previously sent emails are unaffected."
+            )
+            logger.warning(
+                f"Updating non-draft campaign {campaign_id} (status={campaign_current_status})"
             )
 
-        # ✅ Validate target lists
-        if not await validate_target_lists_exist(campaign_data.target_lists):
-            raise HTTPException(
-                status_code=400,
-                detail="One or more target lists do not exist or have no subscribers",
-            )
+        # ✅ Validate target lists only when lists are actually provided
+        # FIX #6: unconditional call caused 400 error in segments-only mode
+        if campaign_data.target_lists:
+            if not await validate_target_lists_exist(campaign_data.target_lists):
+                raise HTTPException(
+                    status_code=400,
+                    detail="One or more target lists do not exist or have no subscribers",
+                )
 
         # ✅ Tiered mapping validation
         validated_mapping = await validate_tiered_field_mapping(
@@ -295,13 +342,22 @@ async def update_campaign(campaign_id: str, campaign_data: CampaignUpdate):
         )
 
         # ✅ Audience count
-        target_count = await calculate_tiered_audience_count(
-            campaign_data.target_lists, validated_mapping
+        # FIX #2: segments-only campaigns have no lists; count separately
+        list_count = (
+            await calculate_tiered_audience_count(
+                campaign_data.target_lists, validated_mapping
+            )
+            if campaign_data.target_lists
+            else 0
         )
-        if target_count == 0:
+
+        segments_have_members = len(campaign_data.target_segments) > 0
+        target_count = list_count
+
+        if list_count == 0 and not segments_have_members:
             raise HTTPException(
                 status_code=400,
-                detail="Selected lists have no subscribers. Cannot update campaign with empty audience.",
+                detail="Selected audience has no subscribers. Add lists or segments with active subscribers.",
             )
 
         # ✅ Build update
@@ -348,6 +404,7 @@ async def update_campaign(campaign_id: str, campaign_data: CampaignUpdate):
             "computed_target_count": target_count,
             "target_lists_updated": campaign_data.target_lists,
             "field_mapping_summary": validated_mapping["summary"],
+            "warning": non_draft_warning,
         }
 
     except HTTPException:
@@ -733,10 +790,13 @@ async def pause_campaign(campaign_id: str):
         # Set Redis pause flag so in-flight Celery batch tasks stop immediately
         r = redis_lib.Redis.from_url(settings.REDIS_URL)
         pause_key = get_redis_key("campaign_paused", campaign_id)
-        r.setex(pause_key, 3600, json.dumps({
-            "paused_at": datetime.utcnow().isoformat(),
-            "reason": "api_request"
-        }))
+        r.setex(
+            pause_key,
+            3600,
+            json.dumps(
+                {"paused_at": datetime.utcnow().isoformat(), "reason": "api_request"}
+            ),
+        )
 
         logger.info(f"Campaign paused: {campaign_id}")
         return {"message": "Campaign paused successfully", "status": "paused"}

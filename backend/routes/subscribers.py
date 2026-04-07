@@ -47,9 +47,7 @@ from pymongo.errors import BulkWriteError, DuplicateKeyError
 from functools import wraps
 import traceback
 
-
-from datetime import datetime, timedelta
-from pymongo import UpdateOne
+router = APIRouter()
 
 # ===== LOGGING SETUP =====
 logger = logging.getLogger(__name__)
@@ -139,17 +137,6 @@ except ImportError:
         LOG_LEVEL = "INFO"
 
     settings = MockSettings()
-
-try:
-    from tasks.simple_file_recovery import simple_file_recovery
-
-    PRODUCTION_FEATURES["file_first_recovery"] = True
-    logger.info(" File-First Recovery enabled")
-except ImportPort:
-    logger.info("  File-First Recovery not available")
-
-router = APIRouter()
-
 
 # Models
 class JobStatus(BaseModel):
@@ -2265,39 +2252,6 @@ async def retry_failed_job(
     except Exception as e:
         logger.error(f"Retry job failed: {e}")
         raise HTTPException(status_code=500, detail="Failed to retry job")
-
-
-# ===== FILE-FIRST RECOVERY ENDPOINTS =====
-@router.get("/upload-queue/status")
-async def get_upload_queue_status():
-    """Get upload queue status for file-first system"""
-    try:
-        if PRODUCTION_FEATURES.get("file_first_recovery", False):
-            return simple_file_recovery.get_status()
-        else:
-            return {
-                "error": "File-first recovery not available",
-                "queued": 0,
-                "processing": 0,
-                "completed": 0,
-            }
-    except Exception as e:
-        return {"error": str(e)}
-
-
-@router.post("/upload-queue/retry")
-async def manual_retry_uploads():
-    """Manually retry stuck/failed uploads"""
-    try:
-        if PRODUCTION_FEATURES.get("file_first_recovery", False):
-            result = await simple_file_recovery.manual_retry()
-            return result
-        else:
-            return {"error": "File-first recovery not available"}
-    except Exception as e:
-        logger.error(f"Manual retry failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
 
 # ===== UTILITY FUNCTIONS =====
 async def log_activity(
