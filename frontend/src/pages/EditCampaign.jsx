@@ -496,17 +496,24 @@ export default function EditCampaign() {
             </select>
 
             {/* fallback input */}
-            {fieldMap[field] === "__DEFAULT__" && (
-              <input
-                type="text"
-                placeholder="Default value"
-                className="w-full px-3 py-2 border rounded border-blue-300 bg-blue-50"
-                value={fallbackValues[field] || ""}
-                onChange={(e) =>
-                  setFallbackValues((p) => ({ ...p, [field]: e.target.value }))
-                }
-              />
-            )}
+            {fieldMap[field] &&
+              fieldMap[field] !== "__EMPTY__" &&
+              (fieldMap[field] === "__DEFAULT__" ||
+                !fieldMap[field].startsWith("__")) && (
+                <input
+                  type="text"
+                  placeholder={
+                    fieldMap[field] === "__DEFAULT__"
+                      ? "Default value"
+                      : `Fallback if subscriber's ${fieldMap[field]} is empty`
+                  }
+                  className="w-full px-3 py-2 border rounded border-blue-300 bg-blue-50"
+                  value={fallbackValues[field] || ""}
+                  onChange={(e) =>
+                    setFallbackValues((p) => ({ ...p, [field]: e.target.value }))
+                  }
+                />
+              )}
           </div>
         ))}
       </div>

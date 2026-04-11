@@ -56,6 +56,7 @@ class ABTestVariant(BaseModel):
 class ABTestCreate(BaseModel):
     test_name: str
     target_lists: List[str]
+    target_segments: Optional[List[str]] = Field(default_factory=list)
     template_id: str
     subject: str
     sender_name: str
@@ -119,28 +120,88 @@ def convert_objectid_to_str(document):
 # ============================================================
 
 
-async def get_ab_test_target_count(target_lists: List[str]) -> int:
+async def get_ab_test_target_count(
+    target_lists: List[str], target_segments: Optional[List[str]] = None
+) -> int:
     subscribers_collection = get_subscribers_collection()
-    return await subscribers_collection.count_documents(
-        {
-            "$or": [
+    target_segments = target_segments or []
+
+    match_conditions = []
+    if target_lists:
+        match_conditions.extend(
+            [
                 {"lists": {"$in": target_lists}},
                 {"list": {"$in": target_lists}},
-            ],
-            "status": "active",
-        }
-    )
+            ]
+        )
 
+    if target_segments:
+        from database import get_segments_collection
+        from routes.segments import build_segment_query, SegmentCriteria
 
-async def get_test_subscribers(target_lists: List[str], sample_size: int) -> List[dict]:
-    subscribers_collection = get_subscribers_collection()
+        segments_collection = get_segments_collection()
+        for segment_id in target_segments:
+            try:
+                if not ObjectId.is_valid(segment_id):
+                    continue
+                segment = await segments_collection.find_one({"_id": ObjectId(segment_id)})
+                if segment and segment.get("criteria"):
+                    match_conditions.append(
+                        build_segment_query(SegmentCriteria(**segment["criteria"]))
+                    )
+            except Exception as e:
+                logger.warning(f"Failed to process target segment {segment_id}: {e}")
+
+    if not match_conditions:
+        return 0
+
     query = {
-        "$or": [
-            {"lists": {"$in": target_lists}},
-            {"list": {"$in": target_lists}},
-        ],
-        "status": "active",
+        "$and": [
+            {"status": "active"},
+            {"$or": match_conditions},
+        ]
     }
+    return await subscribers_collection.count_documents(query)
+
+
+async def get_test_subscribers(
+    target_lists: List[str],
+    sample_size: int,
+    target_segments: Optional[List[str]] = None,
+) -> List[dict]:
+    subscribers_collection = get_subscribers_collection()
+    target_segments = target_segments or []
+
+    match_conditions = []
+    if target_lists:
+        match_conditions.extend(
+            [
+                {"lists": {"$in": target_lists}},
+                {"list": {"$in": target_lists}},
+            ]
+        )
+
+    if target_segments:
+        from database import get_segments_collection
+        from routes.segments import build_segment_query, SegmentCriteria
+
+        segments_collection = get_segments_collection()
+        for segment_id in target_segments:
+            try:
+                if not ObjectId.is_valid(segment_id):
+                    continue
+                segment = await segments_collection.find_one({"_id": ObjectId(segment_id)})
+                if segment and segment.get("criteria"):
+                    match_conditions.append(
+                        build_segment_query(SegmentCriteria(**segment["criteria"]))
+                    )
+            except Exception as e:
+                logger.warning(f"Failed to process target segment {segment_id}: {e}")
+
+    if not match_conditions:
+        return []
+
+    query = {"$and": [{"status": "active"}, {"$or": match_conditions}]}
     subscribers = []
     async for doc in subscribers_collection.find(query).limit(sample_size):
         doc["_id"] = str(doc["_id"])
@@ -425,9 +486,10 @@ async def create_ab_test(test: ABTestCreate):
     try:
         col = get_ab_tests_collection()
 
-        if not test.target_lists:
+        if not test.target_lists and not test.target_segments:
             raise HTTPException(
-                status_code=400, detail="At least one target list is required"
+                status_code=400,
+                detail="At least one target list or segment is required",
             )
         if not test.template_id:
             raise HTTPException(status_code=400, detail="Template is required")
@@ -436,11 +498,13 @@ async def create_ab_test(test: ABTestCreate):
         if not test.sender_email.strip():
             raise HTTPException(status_code=400, detail="Sender email is required")
 
-        total_subscribers = await get_ab_test_target_count(test.target_lists)
+        total_subscribers = await get_ab_test_target_count(
+            test.target_lists, test.target_segments
+        )
         if total_subscribers == 0:
             raise HTTPException(
                 status_code=400,
-                detail="No active subscribers found in the selected lists",
+                detail="No active subscribers found in the selected audience",
             )
 
         min_sample = min(1000, max(100, int(total_subscribers * 0.1)))
@@ -452,6 +516,7 @@ async def create_ab_test(test: ABTestCreate):
         test_doc = {
             "test_name": test.test_name,
             "target_lists": test.target_lists,
+            "target_segments": test.target_segments or [],
             "template_id": test.template_id,
             "subject": test.subject,
             "sender_name": test.sender_name,
@@ -487,6 +552,7 @@ async def create_ab_test(test: ABTestCreate):
                 "sender_email": test.sender_email,
                 "reply_to": test.reply_to or test.sender_email,
                 "target_lists": test.target_lists,
+                "target_segments": test.target_segments or [],
                 "template_id": test.template_id,
                 "field_map": test.field_map or {},
                 "fallback_values": test.fallback_values or {},
@@ -514,7 +580,9 @@ async def create_ab_test(test: ABTestCreate):
 
         test_doc["_id"] = test_id_str
 
-        logger.info(f"A/B test created: {result.inserted_id} lists={test.target_lists}")
+        logger.info(
+            f"A/B test created: {result.inserted_id} lists={test.target_lists} segments={test.target_segments or []}"
+        )
         return {
             "message": "A/B test created successfully",
             "test_id": test_id_str,
@@ -604,6 +672,7 @@ async def start_ab_test(test_id: str):
         subscribers = await get_test_subscribers(
             test.get("target_lists", []),
             test["sample_size"],
+            test.get("target_segments", []),
         )
         if not subscribers:
             raise HTTPException(
@@ -669,6 +738,7 @@ async def get_ab_test_results(test_id: str):
             "status": test["status"],
             "test_type": test["test_type"],
             "target_lists": test.get("target_lists", []),
+            "target_segments": test.get("target_segments", []),
             "subject": test.get("subject", ""),
             "sender_name": test.get("sender_name", ""),
             "results": results,
