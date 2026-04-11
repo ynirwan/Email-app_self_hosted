@@ -269,6 +269,9 @@ celery_app.conf.update(
         "tasks.cleanup_campaign_flags": {"queue": "cleanup", "priority": 2},
         "tasks.cleanup_inactive_subscribers": {"queue": "cleanup", "priority": 1},
         "tasks.cleanup_old_jobs": {"queue": "cleanup", "priority": 1},
+        # Campaign lifecycle
+        "tasks.finalize_campaign_task": {"queue": "campaigns", "priority": 9},
+        "tasks.reconcile_sending_campaigns": {"queue": "cleanup", "priority": 5},
     },
     # ===== TASK ANNOTATIONS =====
     task_annotations={
@@ -413,6 +416,12 @@ beat_schedule.update(
             "task": "tasks.cleanup_old_jobs",
             "schedule": timedelta(days=1),
             "options": {"queue": "cleanup", "priority": 1},
+        },
+        # Watchdog: self-heals stalled/chord-failed campaigns every 10 min
+        "reconcile-sending-campaigns": {
+            "task": "tasks.reconcile_sending_campaigns",
+            "schedule": timedelta(minutes=10),
+            "options": {"queue": "cleanup", "priority": 5},
         },
     }
 )

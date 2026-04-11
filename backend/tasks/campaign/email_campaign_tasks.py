@@ -44,6 +44,7 @@ from database import (
     get_sync_email_logs_collection,
     get_sync_subscribers_collection,
     get_sync_templates_collection,
+    get_sync_email_delivery_state_collection,   # BLOCKER-4: canonical delivery state
 )
 from tasks.campaign.resource_manager import resource_manager
 from tasks.campaign.rate_limiter import rate_limiter, EmailProvider, RateLimitResult
@@ -308,6 +309,94 @@ def _decrement_queued(campaign_id: str):
         pass  # best-effort
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# BLOCKER-4: CANONICAL DELIVERY STATE
+# One doc per (campaign_id, subscriber_id) — the single source of truth for
+# each recipient's journey. email_logs remains append-only audit trail.
+#
+# BLOCKER-4 FIX: _TERMINAL_STATES must only contain irreversible recipient
+# outcomes. "duplicate" and "skipped" are execution outcomes — they must NOT
+# be terminal because a later legitimate retry should be able to promote the
+# state to "sent". Treating them as terminal would permanently block a
+# recipient who was temporarily skipped due to a race.
+# ─────────────────────────────────────────────────────────────────────────────
+_TERMINAL_STATES = frozenset({"sent", "delivered", "failed", "suppressed", "invalid"})
+
+
+def upsert_delivery_state(
+    campaign_id: str,
+    subscriber_id: str,
+    email: str,
+    state: str,
+    *,
+    provider: str = None,
+    message_id: str = None,
+    failure_reason: str = None,
+    attempts_inc: int = 0,
+) -> None:
+    """
+    Upsert the canonical delivery-state doc for one recipient.
+
+    Rules:
+    - Creates doc on first call.
+    - Never overwrites a terminal state with a non-terminal one (idempotent).
+    - "duplicate"/"skipped" are non-terminal: a future retry can still reach "sent".
+    - Records per-state timestamps for observability.
+    - Best-effort: never raises — a write failure here must not block email sending.
+    """
+    try:
+        col = get_sync_email_delivery_state_collection()
+        now = datetime.utcnow()
+
+        set_fields: Dict[str, Any] = {
+            "email": email,
+            "updated_at": now,
+            "state": state,
+        }
+        if provider:
+            set_fields["provider"] = provider
+        if message_id:
+            set_fields["message_id"] = message_id
+        if failure_reason:
+            set_fields["failure_reason"] = failure_reason
+
+        if state == "sent":
+            set_fields["sent_at"] = now
+        elif state == "delivered":
+            set_fields["delivered_at"] = now
+        elif state == "failed":
+            set_fields["failed_at"] = now
+        elif state == "suppressed":
+            set_fields["suppressed_at"] = now
+
+        update: Dict[str, Any] = {
+            "$set": set_fields,
+            "$setOnInsert": {"created_at": now},
+        }
+        if attempts_inc:
+            update["$inc"] = {"attempts": attempts_inc}
+
+        col.update_one(
+            {
+                "campaign_id": ObjectId(campaign_id),
+                "subscriber_id": subscriber_id,
+                # Only allow overwrite if current state is NOT terminal.
+                # This keeps "sent" permanent even if a duplicate task fires later.
+                "$or": [
+                    {"state": {"$nin": list(_TERMINAL_STATES)}},
+                    {"state": state},  # re-upsert same terminal state is idempotent
+                ],
+            },
+            update,
+            upsert=True,
+        )
+    except Exception as e:
+        logger.warning(
+            f"upsert_delivery_state non-fatal failure for "
+            f"{campaign_id}/{subscriber_id} -> {state}: {e}"
+        )
+
+
 @celery_app.task(
     bind=True,
     max_retries=task_settings.MAX_EMAIL_RETRIES,
@@ -378,16 +467,50 @@ def send_single_campaign_email(self, campaign_id: str, subscriber_id: str):
             _decrement_queued(campaign_id)
             return {"status": "failed", "reason": "email_missing"}
 
+        # ── STEP 3b: PER-RECIPIENT SEND LOCK ─────────────────────────────────
+        # Acquired before duplicate check to close the TOCTOU window.
+        # Two concurrent tasks for same (campaign, subscriber) race here;
+        # only one wins nx=True. The loser returns "skipped" cleanly without
+        # touching counters or delivery state — the winner will do all that.
+        # TTL=900s covers max send timeout + all retries.
+        _send_lock_key = f"campaign_send_lock:{campaign_id}:{subscriber_id}"
+        _send_redis = None
+        try:
+            from core.redis_client import get_redis as _get_redis
+            _send_redis = _get_redis()
+            lock_acquired = _send_redis.set(_send_lock_key, self.request.id, nx=True, ex=900)
+            if not lock_acquired:
+                _decrement_queued(campaign_id)
+                return {"status": "skipped", "reason": "send_lock_held_by_concurrent_task"}
+        except Exception as _lock_err:
+            logger.warning(
+                f"Send lock unavailable for {campaign_id}/{subscriber_id}: {_lock_err}. "
+                f"Continuing — duplicate check below still guards."
+            )
+            _send_redis = None
+
         # ── STEP 4: DUPLICATE CHECK ──────────────────────────────────────────
-        existing_sent = email_logs_collection.find_one(
+        # Check canonical delivery state first (fast, indexed, authoritative).
+        # Fall back to email_logs for campaigns that predate delivery state.
+        delivery_state_col = get_sync_email_delivery_state_collection()
+        existing_state = delivery_state_col.find_one(
             {
                 "campaign_id": ObjectId(campaign_id),
                 "subscriber_id": subscriber_id,
-                "latest_status": {"$in": ["sent", "delivered"]},
+                "state": {"$in": ["sent", "delivered"]},
             },
             {"_id": 1},
         )
-        if existing_sent:
+        if not existing_state:
+            existing_state = email_logs_collection.find_one(
+                {
+                    "campaign_id": ObjectId(campaign_id),
+                    "subscriber_id": subscriber_id,
+                    "latest_status": {"$in": ["sent", "delivered"]},
+                },
+                {"_id": 1},
+            )
+        if existing_state:
             _decrement_queued(campaign_id)
             return {"status": "skipped", "reason": "already_sent"}
 
@@ -401,6 +524,7 @@ def send_single_campaign_email(self, campaign_id: str, subscriber_id: str):
             campaigns_collection.update_one(
                 {"_id": ObjectId(campaign_id)}, {"$inc": {"processed_count": 1}}
             )
+            upsert_delivery_state(campaign_id, subscriber_id, recipient_email, "suppressed")
             return {
                 "status": "skipped",
                 "reason": "suppressed",
@@ -713,6 +837,10 @@ def send_single_campaign_email(self, campaign_id: str, subscriber_id: str):
                     provider,
                     cost,
                 )
+                upsert_delivery_state(
+                    campaign_id, subscriber_id, recipient_email, "sent",
+                    provider=provider, message_id=message_id, attempts_inc=1,
+                )
 
                 if is_requeue:
                     campaigns_collection.update_one(
@@ -796,6 +924,10 @@ def send_single_campaign_email(self, campaign_id: str, subscriber_id: str):
                         error_reason,
                         attempted_providers[0] if attempted_providers else "unknown",
                     )
+                    upsert_delivery_state(
+                        campaign_id, subscriber_id, recipient_email, "failed",
+                        failure_reason=error_reason, attempts_inc=1,
+                    )
 
                     if not is_requeue:
                         campaigns_collection.update_one(
@@ -875,6 +1007,10 @@ def send_single_campaign_email(self, campaign_id: str, subscriber_id: str):
                     error_msg,
                     "unknown",
                 )
+                upsert_delivery_state(
+                    campaign_id, subscriber_id, recipient_email, "failed",
+                    failure_reason=error_msg, attempts_inc=1,
+                )
 
                 if not is_requeue:
                     campaigns_collection.update_one(
@@ -913,6 +1049,17 @@ def send_single_campaign_email(self, campaign_id: str, subscriber_id: str):
             "campaign_id": campaign_id,
             "subscriber_id": subscriber_id,
         }
+    finally:
+        # Always release the per-recipient send lock so future legitimate
+        # retries (e.g. from DLQ) can acquire it. Only delete if we still
+        # own it — another task may have taken it on a race.
+        try:
+            if _send_redis and _send_lock_key:
+                current_holder = _send_redis.get(_send_lock_key)
+                if current_holder == self.request.id:
+                    _send_redis.delete(_send_lock_key)
+        except Exception:
+            pass
 
 
 # ============================================================
@@ -989,7 +1136,21 @@ def send_campaign_batch(
             campaign_id
         ):
             cursor_key = f"campaign:cursor:{campaign_id}"
-            campaign_controller.redis_client.set(cursor_key, last_id or "", ex=86400)
+            # BLOCKER-1 FIX: was campaign_controller.redis_client.set() — redis_client
+            # no longer lives on the controller. Use the shared pool directly.
+            # Also write cursor to Mongo for durability (Redis can expire).
+            try:
+                from core.redis_client import get_redis as _get_redis
+                _get_redis().set(cursor_key, last_id or "", ex=86400)
+            except Exception as _re:
+                logger.warning(f"Redis cursor write failed for {campaign_id}: {_re}")
+            campaigns_collection.update_one(
+                {"_id": ObjectId(campaign_id)},
+                {"$set": {
+                    "resume_cursor": last_id,
+                    "resume_cursor_saved_at": datetime.utcnow(),
+                }},
+            )
             return {
                 "status": "paused",
                 "reason": "campaign_paused",
@@ -1059,6 +1220,34 @@ def send_campaign_batch(
             for sub in new_subscribers
         ]
 
+        # BLOCKER-3 FIX: Recheck pause/stop immediately before queuing.
+        # A user can hit Pause after subscribers are fetched but before sigs
+        # are dispatched. Without this check, a full batch leaks through even
+        # though the UI shows "paused". This is the tightest safe point.
+        if campaign_controller.is_campaign_paused(campaign_id):
+            try:
+                from core.redis_client import get_redis as _get_redis
+                _get_redis().set(f"campaign:cursor:{campaign_id}", last_id or "", ex=86400)
+            except Exception:
+                pass
+            campaigns_collection.update_one(
+                {"_id": ObjectId(campaign_id)},
+                {"$set": {
+                    "resume_cursor": last_id,
+                    "resume_cursor_saved_at": datetime.utcnow(),
+                }},
+            )
+            return {
+                "status": "paused",
+                "reason": "pause_detected_pre_queue",
+                "campaign_id": campaign_id,
+                "saved_cursor": last_id,
+            }
+
+        if campaign_controller.is_campaign_stopped(campaign_id):
+            return {"status": "stopped", "reason": "stop_detected_pre_queue",
+                    "campaign_id": campaign_id}
+
         campaigns_collection.update_one(
             {"_id": ObjectId(campaign_id)},
             {
@@ -1076,7 +1265,13 @@ def send_campaign_batch(
             result = chord(email_sigs)(next_batch_sig)
             next_task_id = result.id
         else:
-            group(email_sigs).delay()
+            # Final batch — chord ensures finalize only fires after ALL
+            # individual send tasks complete. BLOCKER-5 FIX: use .s() not .si()
+            # so Celery's chord callback machinery works correctly across
+            # different result backend configurations. The callback accepts
+            # *args to tolerate variadic chord results.
+            finalize_sig = finalize_campaign_task.s(campaign_id)
+            chord(email_sigs)(finalize_sig)
 
         execution_time = time.time() - start_time
         result = {
@@ -1185,7 +1380,38 @@ def get_subscribers_for_campaign(
 
 
 def finalize_campaign(campaign_id: str) -> Dict[str, Any]:
-    """Finalize completed campaign. Evicts worker caches on completion."""
+    """
+    Finalize a completed campaign.
+
+    BLOCKER-2 FIX: Guarded by a Redis NX finalize lock so concurrent callers
+    (chord callback, watchdog, manual invoke, end-of-list batch path) cannot
+    race against each other. Only the first caller executes; subsequent ones
+    return "already_finalizing" immediately.
+
+    Lock TTL = 10 minutes. If the winner crashes mid-finalize, the watchdog
+    will re-trigger after the lock expires + stale_threshold passes.
+    """
+    # ── Finalize lock — only one finalizer runs at a time ────────────────────
+    _finalize_lock_key = f"campaign_finalize_lock:{campaign_id}"
+    _finalize_redis = None
+    _held_lock = False
+    try:
+        from core.redis_client import get_redis as _get_redis
+        _finalize_redis = _get_redis()
+        _held_lock = bool(
+            _finalize_redis.set(_finalize_lock_key, "1", nx=True, ex=600)
+        )
+        if not _held_lock:
+            logger.info(
+                f"finalize_campaign: lock already held for {campaign_id} — skipping duplicate"
+            )
+            return {"status": "already_finalizing", "campaign_id": campaign_id}
+    except Exception as _lock_err:
+        logger.warning(
+            f"finalize_campaign: could not acquire lock for {campaign_id}: {_lock_err}. "
+            f"Proceeding without lock (degraded mode)."
+        )
+
     try:
         campaigns_collection = get_sync_campaigns_collection()
         email_logs_collection = get_sync_email_logs_collection()
@@ -1194,23 +1420,44 @@ def finalize_campaign(campaign_id: str) -> Dict[str, Any]:
         if not campaign:
             return {"error": "campaign_not_found"}
 
+        # Guard: don't finalize while tasks are genuinely still in flight.
+        # BLOCKER-3 FIX: stale timeout so a crashed worker's drifted
+        # queued_count can never deadlock finalization forever.
         queued_count = campaign.get("queued_count", 0)
-        if queued_count > 0:
-            logger.warning(
-                f"finalize_campaign called for {campaign_id} but queued_count={queued_count} — deferring"
-            )
-            return {
-                "status": "deferred",
-                "reason": "tasks_still_queued",
-                "queued_count": queued_count,
-            }
+        last_batch_at = campaign.get("last_batch_at")
 
-        if campaign and campaign.get("stop_type") == "graceful":
+        if queued_count > 0:
+            stale_threshold = datetime.utcnow() - timedelta(minutes=30)
+            is_stale = last_batch_at is None or last_batch_at < stale_threshold
+            if not is_stale:
+                logger.warning(
+                    f"finalize_campaign: {campaign_id} queued_count={queued_count}, "
+                    f"last_batch_at={last_batch_at} — deferring (tasks still in flight)"
+                )
+                return {
+                    "status": "deferred",
+                    "reason": "tasks_still_queued",
+                    "queued_count": queued_count,
+                }
+            logger.warning(
+                f"finalize_campaign: {campaign_id} queued_count={queued_count} is STALE "
+                f"(last_batch_at={last_batch_at}) — forcing queued_count=0 and finalizing"
+            )
             campaigns_collection.update_one(
                 {"_id": ObjectId(campaign_id)},
-                {"$set": {"status": "stopped", "completed_at": datetime.utcnow()}},
+                {"$set": {"queued_count": 0}},
+            )
+
+        if campaign.get("stop_type") == "graceful":
+            campaigns_collection.update_one(
+                {"_id": ObjectId(campaign_id)},
+                {
+                    "$set": {"status": "stopped", "completed_at": datetime.utcnow()},
+                    "$unset": {"resume_cursor": "", "resume_cursor_saved_at": ""},
+                },
             )
             _evict_campaign_caches(campaign_id)
+            _cleanup_campaign_redis_keys(campaign_id)
             return {"status": "stopped", "message": "Campaign was manually stopped"}
 
         stats_pipeline = [
@@ -1226,8 +1473,7 @@ def finalize_campaign(campaign_id: str) -> Dict[str, Any]:
         failed_count = status_counts.get("failed", 0)
 
         canonical_sent = sent_count + delivered_count
-
-        if sent_count > 0 or delivered_count > 0:
+        if canonical_sent > 0:
             final_status = "completed"
         elif total_processed == 0:
             final_status = "failed"
@@ -1246,11 +1492,13 @@ def finalize_campaign(campaign_id: str) -> Dict[str, Any]:
                     "processed_count": total_processed,
                     "queued_count": 0,
                     "final_stats": status_counts,
-                }
+                },
+                "$unset": {"resume_cursor": "", "resume_cursor_saved_at": ""},
             },
         )
 
         _evict_campaign_caches(campaign_id)
+        _cleanup_campaign_redis_keys(campaign_id)
 
         if task_settings.ENABLE_AUDIT_LOGGING:
             log_campaign_event(
@@ -1266,7 +1514,8 @@ def finalize_campaign(campaign_id: str) -> Dict[str, Any]:
             )
 
         logger.info(
-            f"Campaign {campaign_id} finalized: {final_status} — {total_processed} processed"
+            f"Campaign {campaign_id} finalized: {final_status} "
+            f"({total_processed} processed)"
         )
         return {
             "status": final_status,
@@ -1278,6 +1527,58 @@ def finalize_campaign(campaign_id: str) -> Dict[str, Any]:
     except Exception as e:
         logger.error(f"Campaign finalization failed for {campaign_id}: {e}")
         return {"error": str(e)}
+    finally:
+        # Release finalize lock only if we acquired it
+        if _held_lock and _finalize_redis:
+            try:
+                _finalize_redis.delete(_finalize_lock_key)
+            except Exception:
+                pass
+
+
+def _cleanup_campaign_redis_keys(campaign_id: str) -> None:
+    """
+    Delete all transient Redis keys for a finished campaign.
+    Called from finalize_campaign after DB is updated.
+    Best-effort — never raises.
+    """
+    try:
+        from core.redis_client import get_redis as _get_redis
+        from tasks.task_config import get_redis_key
+        r = _get_redis()
+        r.delete(f"campaign:cursor:{campaign_id}")
+        r.delete(f"campaign_batch_lock:{campaign_id}")
+        r.delete(f"campaign_finalize_lock:{campaign_id}")
+        r.delete(get_redis_key("campaign_paused", campaign_id))
+        r.delete(get_redis_key("campaign_stopped", campaign_id))
+    except Exception as e:
+        logger.debug(f"_cleanup_campaign_redis_keys non-fatal for {campaign_id}: {e}")
+
+
+@celery_app.task(
+    bind=True,
+    queue="campaigns",
+    name="tasks.finalize_campaign_task",
+    ignore_result=False,
+)
+def finalize_campaign_task(self, *results, campaign_id: str):
+    """
+    Chord callback — fires after every send_single_campaign_email in the
+    final batch has returned.
+
+    BLOCKER-5 FIX: Signature uses (*results, campaign_id) so it is tolerant
+    of variadic chord result delivery. Some Celery versions pass a list of
+    results as a single positional arg; others pass them individually.
+    Using *results absorbs all of that without breaking.
+
+    'results' is intentionally ignored — we re-derive final state from DB
+    to guarantee correctness regardless of chord result completeness.
+    """
+    logger.info(
+        f"finalize_campaign_task chord callback for campaign {campaign_id} "
+        f"(received {len(results)} result(s))"
+    )
+    return finalize_campaign(campaign_id)
 
 
 # ============================================================
