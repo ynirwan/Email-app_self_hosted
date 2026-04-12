@@ -49,6 +49,7 @@ celery_app = Celery(
         # Core email campaign tasks (always included)
         "tasks.campaign.email_campaign_tasks",
         "tasks.ab.ab_testing",
+        "tasks.ab.winner_send",
     ],
 )
 
@@ -196,6 +197,8 @@ celery_app.conf.update(
         "tasks.auto_complete_ab_test": {"queue": "ab_tests", "priority": 7},
         "tasks.send_ab_test_batch": {"queue": "ab_tests", "priority": 6},
         "tasks.send_ab_test_single_email": {"queue": "ab_tests", "priority": 5},
+        "tasks.send_winner_to_remaining": {"queue": "ab_tests", "priority": 8},
+        "tasks.send_winner_single_email": {"queue": "ab_tests", "priority": 5},
         # ===== EMAIL CAMPAIGN TASKS =====
         "tasks.send_single_campaign_email": {"queue": "campaigns", "priority": 7},
         "tasks.send_campaign_batch": {"queue": "campaigns", "priority": 6},

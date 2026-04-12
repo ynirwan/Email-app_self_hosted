@@ -388,9 +388,32 @@ def auto_complete_ab_test(self, test_id: str):
         )
 
         logger.info(f"[AB AutoComplete] Test {test_id} completed. Winner: {winner}")
+
+        # Send winning variant to remaining subscribers if flag is set and
+        # there is a clear winner (not a TIE).
+        winner_variant = winner.get("winner") if isinstance(winner, dict) else winner
+        if (
+            test.get("auto_send_winner", True)
+            and winner_variant
+            and winner_variant != "TIE"
+        ):
+            try:
+                from tasks.ab.winner_send import send_winner_to_remaining
+                send_winner_to_remaining.apply_async(
+                    args=[test_id, winner_variant],
+                    countdown=5,
+                )
+                logger.info(
+                    f"[AB AutoComplete] send_winner_to_remaining queued for "
+                    f"test {test_id}, variant {winner_variant}"
+                )
+            except Exception as _we:
+                logger.error(
+                    f"[AB AutoComplete] Failed to queue winner send for {test_id}: {_we}"
+                )
+
         return {"completed": True, "test_id": test_id, "winner": winner}
 
     except Exception as e:
         logger.error(f"auto_complete_ab_test failed for {test_id}: {e}")
         return {"error": str(e)}
-

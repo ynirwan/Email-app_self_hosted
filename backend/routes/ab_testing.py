@@ -13,7 +13,6 @@ from database import (
     get_templates_collection,
     get_sync_ab_tests_collection,
     get_sync_ab_test_results_collection,
-    get_campaigns_collection,
 )
 from tasks.ab.ab_testing import send_ab_test_batch
 
@@ -354,49 +353,6 @@ def calculate_statistical_significance(results: Dict) -> Dict:
 # ============================================================
 
 
-def apply_winner_to_campaign_sync(test_id: str, campaign_id: str, winner_variant: str):
-    """Update campaign with winner config then trigger remaining-subscriber send."""
-    from database import get_sync_campaigns_collection
-    from tasks.email_campaign_tasks import send_campaign_batch
-
-    col_tests = get_sync_ab_tests_collection()
-    col_campaigns = get_sync_campaigns_collection()
-
-    test = col_tests.find_one({"_id": ObjectId(test_id)})
-    if not test or not ObjectId.is_valid(campaign_id):
-        logger.error(f"apply_winner: bad ids test={test_id} campaign={campaign_id}")
-        return
-
-    variant_index = 0 if winner_variant == "A" else 1
-    variants = test.get("variants", [])
-    if variant_index >= len(variants):
-        logger.error(f"apply_winner: variant index {variant_index} out of range")
-        return
-
-    winning = variants[variant_index]
-    update: Dict = {"winner_variant_applied": winner_variant}
-    for field in (
-        "subject",
-        "sender_name",
-        "sender_email",
-        "reply_to",
-        "content",
-        "template_id",
-    ):
-        if field in winning and winning[field]:
-            update[field] = winning[field]
-
-    col_campaigns.update_one({"_id": ObjectId(campaign_id)}, {"$set": update})
-    logger.info(
-        f"apply_winner: campaign {campaign_id} updated with variant {winner_variant}"
-    )
-
-    send_campaign_batch.delay(campaign_id=campaign_id)
-    logger.info(
-        f"apply_winner: send_campaign_batch triggered for campaign {campaign_id}"
-    )
-
-
 # ============================================================
 # ROUTES
 # ============================================================
@@ -541,47 +497,11 @@ async def create_ab_test(test: ABTestCreate):
 
         result = await col.insert_one(test_doc)
         test_id_str = str(result.inserted_id)
-
-        # ── Create a linked campaign so the winner can be auto-applied ──
-        try:
-            campaigns_col = get_campaigns_collection()
-            campaign_doc = {
-                "title": f"[A/B Test] {test.test_name}",
-                "subject": test.subject,
-                "sender_name": test.sender_name,
-                "sender_email": test.sender_email,
-                "reply_to": test.reply_to or test.sender_email,
-                "target_lists": test.target_lists,
-                "target_segments": test.target_segments or [],
-                "template_id": test.template_id,
-                "field_map": test.field_map or {},
-                "fallback_values": test.fallback_values or {},
-                "status": "draft",
-                "ab_test_id": test_id_str,
-                "created_at": datetime.utcnow(),
-                "updated_at": datetime.utcnow(),
-            }
-            campaign_result = await campaigns_col.insert_one(campaign_doc)
-            campaign_id_str = str(campaign_result.inserted_id)
-            # Link campaign back to the test document
-            await col.update_one(
-                {"_id": result.inserted_id},
-                {"$set": {"campaign_id": campaign_result.inserted_id}},
-            )
-            test_doc["campaign_id"] = campaign_id_str
-            logger.info(
-                f"Linked campaign {campaign_id_str} created for A/B test {test_id_str}"
-            )
-        except Exception as camp_err:
-            logger.warning(
-                f"Could not create linked campaign for A/B test {test_id_str}: {camp_err}"
-            )
-            campaign_id_str = None
-
         test_doc["_id"] = test_id_str
 
         logger.info(
-            f"A/B test created: {result.inserted_id} lists={test.target_lists} segments={test.target_segments or []}"
+            f"A/B test created: {result.inserted_id} "
+            f"lists={test.target_lists} segments={test.target_segments or []}"
         )
         return {
             "message": "A/B test created successfully",
@@ -755,9 +675,8 @@ async def get_ab_test_results(test_id: str):
             "auto_send_winner": test.get("auto_send_winner", True),
             "winner_variant": test.get("winner_variant"),
             "winner_variant_applied": test.get("winner_variant_applied"),
-            "campaign_id": str(test["campaign_id"])
-            if test.get("campaign_id")
-            else None,
+            "winner_send_status": test.get("winner_send_status"),
+            "winner_send_count": test.get("winner_send_count"),
         }
 
         return convert_objectid_to_str(response_data)
@@ -813,23 +732,18 @@ async def complete_ab_test(test_id: str, request: CompleteTestRequest):
 
         if (
             request.apply_to_campaign
-            and test.get("campaign_id")
-            and winner.get("winner") != "TIE"
+            and winner.get("winner") not in (None, "TIE")
         ):
-            # Fire Celery task so we don't block the API response
-            # FIX C-14: was 'from tasks.ab_testing' (old flat path) — ImportError was swallowed,
-            # campaign_applied was set True but nothing actually ran.
-            from tasks.ab.ab_testing import auto_complete_ab_test
-
-            auto_complete_ab_test.apply_async(
-                kwargs={"test_id": test_id, "apply_to_campaign": True},
-                countdown=1,
+            from tasks.ab.winner_send import send_winner_to_remaining
+            send_winner_to_remaining.apply_async(
+                args=[test_id, winner["winner"]],
+                countdown=2,
             )
             campaign_applied = True
 
         msg = f"Test completed. Winner: Variant {winner.get('winner')}."
         if campaign_applied:
-            msg += " Winner variant applied to campaign. Sending to remaining subscribers shortly."
+            msg += " Sending winning variant to remaining subscribers."
 
         logger.info(
             f"A/B test manually completed: {test_id}, winner={winner.get('winner')}"
