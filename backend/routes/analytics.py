@@ -87,36 +87,15 @@ def _get_event_email(event: dict) -> str:
 
 @router.get("/campaigns/{campaign_id}")
 async def get_campaign_analytics(campaign_id: str):
-    """Get comprehensive analytics for a specific campaign"""
     try:
         cid = _safe_oid(campaign_id)
 
         analytics_collection = get_analytics_collection()
         events_collection = get_email_events_collection()
         campaigns_collection = get_campaigns_collection()
+        logs_col = get_email_logs_collection()
 
-        # Get only the fields needed for the analytics response
-        campaign = await campaigns_collection.find_one(
-            {"_id": cid},
-            {
-                "title": 1,
-                "subject": 1,
-                "sender_name": 1,
-                "sender_email": 1,
-                "reply_to": 1,
-                "status": 1,
-                "target_lists": 1,
-                "target_list_count": 1,
-                "sent_count": 1,
-                "processed_count": 1,
-                "queued_count": 1,
-                "created_at": 1,
-                "started_at": 1,
-                "completed_at": 1,
-                "last_batch_at": 1,
-                "content_snapshot": 1,
-            },
-        )
+        campaign = await campaigns_collection.find_one({"_id": cid})
         if not campaign:
             raise HTTPException(status_code=404, detail="Campaign not found")
 
@@ -125,8 +104,7 @@ async def get_campaign_analytics(campaign_id: str):
         analytics = await analytics_collection.find_one({"campaign_id": cid})
 
         if not analytics:
-            # Create basic analytics structure if it doesn't exist
-            analytics_doc = {
+            analytics = {
                 "campaign_id": cid,
                 "total_delivered": 0,
                 "total_bounced": 0,
@@ -134,200 +112,94 @@ async def get_campaign_analytics(campaign_id: str):
                 "total_clicked": 0,
                 "total_unsubscribed": 0,
                 "total_spam_reports": 0,
-                "delivery_rate": 0.0,
-                "open_rate": 0.0,
-                "click_rate": 0.0,
-                "bounce_rate": 0.0,
-                "unsubscribe_rate": 0.0,
                 "created_at": datetime.utcnow(),
                 "updated_at": datetime.utcnow(),
             }
-            insert_result = await analytics_collection.insert_one(analytics_doc)
-            analytics_doc["_id"] = insert_result.inserted_id
-            analytics = analytics_doc
+            res = await analytics_collection.insert_one(analytics)
+            analytics["_id"] = res.inserted_id
 
         analytics["_id"] = str(analytics["_id"])
         analytics["campaign_id"] = str(analytics["campaign_id"])
 
-        # ── Authoritative sent count ─────────────────────────────────────────
-        # Priority:
-        #   1. campaign.sent_count (set by finalize_campaign — most accurate)
-        #   2. email_delivery_state terminal sent/delivered docs (set by workers)
-        #   3. email_logs count (legacy fallback for pre-delivery-state campaigns)
+        # ── total_sent resolution ─────────────────
         total_sent = campaign.get("sent_count", 0) or 0
 
         if total_sent == 0:
-            # Try email_delivery_state (new canonical collection)
             delivery_state_col = get_email_delivery_state_collection()
             total_sent = await delivery_state_col.count_documents(
-                {
-                    "campaign_id": cid,
-                    "state": {"$in": ["sent", "delivered"]},
-                }
+                {"campaign_id": cid, "state": {"$in": ["sent", "delivered"]}}
             )
 
         if total_sent == 0:
-            # Final fallback: email_logs (works for campaigns before delivery state existed)
-            logs_col = get_email_logs_collection()
             total_sent = await logs_col.count_documents(
-                {
-                    "campaign_id": cid,
-                    "latest_status": {"$in": ["sent", "delivered"]},
-                }
+                {"campaign_id": cid, "latest_status": {"$in": ["sent", "delivered"]}}
             )
 
-        # Use stored values, fallback to direct event counts if zero / stale
-        total_opened = analytics.get("total_opened", 0) or 0
-        total_clicked = analytics.get("total_clicked", 0) or 0
-        total_bounced = analytics.get("total_bounced", 0) or 0
-        total_delivered = analytics.get("total_delivered", 0) or 0
-        total_unsubscribed = analytics.get("total_unsubscribed", 0) or 0
-        total_spam_reports = analytics.get("total_spam_reports", 0) or 0
+        # ── FIX: always recompute ─────────────────
 
-        if total_opened == 0:
-            total_opened = await events_collection.count_documents(
-                {
-                    "campaign_id": cid,
-                    "event_type": "opened",
-                    "type": "event",
-                }
-            )
+        total_delivered = await logs_col.count_documents(
+            {"campaign_id": cid, "latest_status": "delivered"}
+        )
 
-        if total_clicked == 0:
-            total_clicked = await events_collection.count_documents(
-                {
-                    "campaign_id": cid,
-                    "event_type": "clicked",
-                    "type": "event",
-                }
-            )
-
+        total_bounced = await events_collection.count_documents(
+            {"campaign_id": cid, "event_type": "bounced", "type": "event"}
+        )
         if total_bounced == 0:
-            total_bounced = await events_collection.count_documents(
-                {
-                    "campaign_id": cid,
-                    "event_type": "bounced",
-                    "type": "event",
-                }
+            total_bounced = await logs_col.count_documents(
+                {"campaign_id": cid, "latest_status": {"$in": ["bounced", "bounce"]}}
             )
 
-        if total_delivered == 0:
-            total_delivered = await events_collection.count_documents(
-                {
-                    "campaign_id": cid,
-                    "event_type": "delivered",
-                    "type": "event",
-                }
-            )
+        total_opened = await events_collection.count_documents(
+            {"campaign_id": cid, "event_type": "opened", "type": "event"}
+        )
 
-        if total_unsubscribed == 0:
-            total_unsubscribed = await events_collection.count_documents(
-                {
-                    "campaign_id": cid,
-                    "event_type": "unsubscribed",
-                    "type": "event",
-                }
-            )
+        total_clicked = await events_collection.count_documents(
+            {"campaign_id": cid, "event_type": "clicked", "type": "event"}
+        )
 
-        if total_spam_reports == 0:
-            total_spam_reports = await events_collection.count_documents(
-                {
-                    "campaign_id": cid,
-                    "event_type": "spam_report",
-                    "type": "event",
-                }
-            )
+        total_unsubscribed = await events_collection.count_documents(
+            {"campaign_id": cid, "event_type": "unsubscribed", "type": "event"}
+        )
 
-        # If delivered tracking isn't used, infer delivered from sent - bounced
+        total_spam_reports = await events_collection.count_documents(
+            {"campaign_id": cid, "event_type": "spam_report", "type": "event"}
+        )
+
         if total_delivered == 0 and total_sent > 0:
             total_delivered = max(0, total_sent - total_bounced)
 
-        delivery_rate = 0.0
-        open_rate = 0.0
-        click_rate = 0.0
-        bounce_rate = 0.0
-        unsubscribe_rate = 0.0
+        delivery_rate = round((total_delivered / total_sent) * 100, 1) if total_sent else 0
+        open_rate = round((total_opened / total_sent) * 100, 1) if total_sent else 0
+        click_rate = round((total_clicked / total_sent) * 100, 1) if total_sent else 0
+        bounce_rate = round((total_bounced / total_sent) * 100, 1) if total_sent else 0
+        unsubscribe_rate = round((total_unsubscribed / total_sent) * 100, 1) if total_sent else 0
 
-        if total_sent > 0:
-            delivery_rate = round((total_delivered / total_sent) * 100, 1)
-            open_rate = round((total_opened / total_sent) * 100, 1)
-            click_rate = round((total_clicked / total_sent) * 100, 1)
-            bounce_rate = round((total_bounced / total_sent) * 100, 1)
-            unsubscribe_rate = round((total_unsubscribed / total_sent) * 100, 1)
-
-        # Persist corrected aggregate values + resolved sent count (best effort).
-        # Storing total_sent_snapshot means _increment_analytics can read a
-        # consistent denominator even before finalize_campaign sets sent_count.
         await analytics_collection.update_one(
             {"campaign_id": cid},
             {
-                "$set": {
-                    "total_sent_snapshot": total_sent,
+                "$max": {
                     "total_delivered": total_delivered,
                     "total_bounced": total_bounced,
+                    "total_spam_reports": total_spam_reports,
+                },
+                "$set": {
+                    "total_sent_snapshot": total_sent,
                     "total_opened": total_opened,
                     "total_clicked": total_clicked,
                     "total_unsubscribed": total_unsubscribed,
-                    "total_spam_reports": total_spam_reports,
                     "delivery_rate": delivery_rate,
                     "open_rate": open_rate,
                     "click_rate": click_rate,
                     "bounce_rate": bounce_rate,
                     "unsubscribe_rate": unsubscribe_rate,
                     "updated_at": datetime.utcnow(),
-                }
+                },
             },
         )
 
-        # Recent events
-        recent_events = []
-        async for event in (
-            events_collection.find(
-                {
-                    "campaign_id": cid,
-                    "event_type": {
-                        "$in": [
-                            "opened",
-                            "clicked",
-                            "unsubscribed",
-                            "bounced",
-                            "delivered",
-                            "spam_report",
-                        ]
-                    },
-                    "type": "event",
-                }
-            )
-            .sort("timestamp", -1)
-            .limit(20)
-        ):
-            recent_events.append(_serialize_event(event))
-
-        top_links = await get_top_clicked_links(campaign_id)
-
         return {
-            "campaign": {
-                "_id": campaign["_id"],
-                "title": campaign.get("title"),
-                "subject": campaign.get("subject"),
-                "sender_name": campaign.get("sender_name"),
-                "sender_email": campaign.get("sender_email"),
-                "reply_to": campaign.get("reply_to"),
-                "status": campaign.get("status"),
-                "target_lists": campaign.get("target_lists", []),
-                "target_list_count": campaign.get("target_list_count", 0),
-                "sent_count": campaign.get("sent_count", 0),
-                "processed_count": campaign.get("processed_count", 0),
-                "queued_count": campaign.get("queued_count", 0),
-                "created_at": campaign.get("created_at"),
-                "started_at": campaign.get("started_at"),
-                "completed_at": campaign.get("completed_at"),
-                "last_batch_at": campaign.get("last_batch_at"),
-                "content_snapshot": campaign.get("content_snapshot"),
-            },
+            "campaign": campaign,
             "analytics": {
-                "_id": analytics["_id"],
-                "campaign_id": analytics["campaign_id"],
                 "total_sent": total_sent,
                 "total_delivered": total_delivered,
                 "total_bounced": total_bounced,
@@ -341,12 +213,8 @@ async def get_campaign_analytics(campaign_id: str):
                 "bounce_rate": bounce_rate,
                 "unsubscribe_rate": unsubscribe_rate,
             },
-            "recent_events": recent_events,
-            "top_links": top_links,
         }
 
-    except HTTPException:
-        raise
     except Exception as e:
         logger.error(f"Error getting campaign analytics: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error")
@@ -470,15 +338,15 @@ async def get_analytics_dashboard(days: int = Query(default=30, ge=1, le=365)):
         async for campaign in campaigns_collection.find(
             {
                 "created_at": {"$gte": start_date, "$lte": end_date},
-                # Exclude A/B test ghost campaigns (created by old code, now removed)
+                # Exclude ghost campaigns created by old A/B test code
                 "ab_test_id": {"$exists": False},
             }
         ).sort("created_at", -1):
             campaign_id_str = str(campaign["_id"])
             campaign["_id"] = campaign_id_str
-            cid = ObjectId(campaign_id_str)
+            cid = _safe_oid(campaign_id_str)
 
-            # Resolve sent count: campaign doc → delivery_state → email_logs
+            # 3-tier sent_count resolution
             camp_sent = campaign.get("sent_count", 0) or 0
             if camp_sent == 0:
                 camp_sent = await delivery_state_col.count_documents(
@@ -489,29 +357,30 @@ async def get_analytics_dashboard(days: int = Query(default=30, ge=1, le=365)):
                     {"campaign_id": cid, "latest_status": {"$in": ["sent", "delivered"]}}
                 )
 
-            analytics = await analytics_collection.find_one(
-                {"campaign_id": cid}
-            )
+            analytics = await analytics_collection.find_one({"campaign_id": cid})
 
             if analytics:
                 analytics["_id"] = str(analytics["_id"])
                 analytics["campaign_id"] = campaign_id_str
-                analytics["total_sent"] = camp_sent
+                # Use total_sent_snapshot if available (written by get_campaign_analytics)
+                # to avoid recounting on every dashboard load
+                resolved_sent = analytics.get("total_sent_snapshot") or camp_sent
+                analytics["total_sent"] = resolved_sent
 
-                if camp_sent > 0:
+                if resolved_sent > 0:
                     analytics["open_rate"] = round(
-                        (analytics.get("total_opened", 0) / camp_sent) * 100, 2
+                        (analytics.get("total_opened", 0) / resolved_sent) * 100, 2
                     )
                     analytics["click_rate"] = round(
-                        (analytics.get("total_clicked", 0) / camp_sent) * 100, 2
+                        (analytics.get("total_clicked", 0) / resolved_sent) * 100, 2
                     )
                     analytics["delivery_rate"] = round(
                         (
                             analytics.get(
                                 "total_delivered",
-                                max(0, camp_sent - analytics.get("total_bounced", 0)),
+                                max(0, resolved_sent - analytics.get("total_bounced", 0)),
                             )
-                            / camp_sent
+                            / resolved_sent
                         )
                         * 100,
                         2,
@@ -701,10 +570,6 @@ async def get_campaign_metric_detail(
 ):
     """
     Unified detail endpoint for any campaign metric.
-
-    For the "delivered" metric: falls back to email_delivery_state (canonical
-    per-recipient state) and then email_logs when email_events has no data —
-    because most SMTP providers don't send delivery confirmation webhooks.
     """
     try:
         col = get_email_events_collection()
@@ -725,79 +590,41 @@ async def get_campaign_metric_detail(
         cid = _safe_oid(campaign_id)
 
         # ── Special handling for "delivered" ─────────────────────────────────
-        # email_events only has delivered records if the provider sends webhooks.
-        # Fall back to email_delivery_state (always written by workers) then
-        # email_logs (pre-delivery-state legacy data).
+        # email_events only has "delivered" rows if the provider sends delivery
+        # confirmation webhooks. Most SMTP/SES setups write to email_logs instead
+        # (ses_webhook_tasks writes latest_status="delivered").
+        # Fall back to email_logs when email_events has no delivered records.
         if metric == "delivered":
-            # Try email_events first (has timestamp + IP if webhook fired)
-            events_delivered = await col.count_documents(
+            events_delivered_count = await col.count_documents(
                 {"campaign_id": cid, "event_type": "delivered", "type": "event"}
             )
-
-            if events_delivered == 0:
-                # Fall back to delivery state collection
-                ds_col = get_email_delivery_state_collection()
-                ds_total = await ds_col.count_documents(
-                    {"campaign_id": cid, "state": {"$in": ["sent", "delivered"]}}
+            if events_delivered_count == 0:
+                logs_col = get_email_logs_collection()
+                total_log = await logs_col.count_documents(
+                    {"campaign_id": cid, "latest_status": "delivered"}
                 )
-
-                if ds_total == 0:
-                    # Final fallback: email_logs
-                    logs_col = get_email_logs_collection()
-                    log_rows = []
-                    async for doc in logs_col.find(
-                        {
-                            "campaign_id": cid,
-                            "latest_status": {"$in": ["sent", "delivered"]},
-                        },
-                        {"email": 1, "latest_status": 1, "sent_at": 1, "subscriber_id": 1},
-                    ).sort("sent_at", -1).skip(skip).limit(limit):
-                        log_rows.append({
-                            "email": doc.get("email", ""),
-                            "timestamp": doc.get("sent_at"),
-                            "is_unique": True,
-                            "total_count": 1,
-                            "source": "email_logs",
-                        })
-                    total_log = await logs_col.count_documents(
-                        {"campaign_id": cid, "latest_status": {"$in": ["sent", "delivered"]}}
-                    )
-                    return {
-                        "metric": metric,
-                        "total_all": total_log,
-                        "total_unique": total_log,
-                        "total_duplicate": 0,
-                        "skip": skip,
-                        "limit": limit,
-                        "rows": log_rows,
+                log_rows = []
+                async for doc in logs_col.find(
+                    {"campaign_id": cid, "latest_status": "delivered"},
+                    {"email": 1, "delivered_at": 1, "sent_at": 1, "subscriber_id": 1},
+                ).sort("delivered_at", -1).skip(skip).limit(limit):
+                    log_rows.append({
+                        "email": doc.get("email", ""),
+                        "timestamp": doc.get("delivered_at") or doc.get("sent_at"),
+                        "is_unique": True,
+                        "total_count": 1,
                         "source": "email_logs",
-                    }
-                else:
-                    # Read from delivery state
-                    ds_rows = []
-                    async for doc in ds_col.find(
-                        {"campaign_id": cid, "state": {"$in": ["sent", "delivered"]}},
-                        {"email": 1, "state": 1, "sent_at": 1, "subscriber_id": 1},
-                    ).sort("sent_at", -1).skip(skip).limit(limit):
-                        ds_rows.append({
-                            "email": doc.get("email", ""),
-                            "timestamp": doc.get("sent_at"),
-                            "is_unique": True,
-                            "total_count": 1,
-                            "source": "delivery_state",
-                        })
-                    return {
-                        "metric": metric,
-                        "total_all": ds_total,
-                        "total_unique": ds_total,
-                        "total_duplicate": 0,
-                        "skip": skip,
-                        "limit": limit,
-                        "rows": ds_rows,
-                        "source": "delivery_state",
-                    }
-
-        cid = _safe_oid(campaign_id)
+                    })
+                return {
+                    "metric": metric,
+                    "total_all": total_log,
+                    "total_unique": total_log,
+                    "total_duplicate": 0,
+                    "skip": skip,
+                    "limit": limit,
+                    "rows": log_rows,
+                    "source": "email_logs",
+                }
 
         group_key = (
             {"email": "$email", "url": "$url"}

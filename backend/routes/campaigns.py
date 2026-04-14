@@ -8,6 +8,7 @@ import smtplib
 import redis as redis_lib
 import json
 from core.config import settings, get_redis_key
+from core.redis_client import get_redis   # BLOCKER-1 FIX: central pool, no per-instance connections
 from tasks.campaign.snapshot_utils import build_snapshot
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -788,7 +789,7 @@ async def pause_campaign(campaign_id: str):
         )
 
         # Set Redis pause flag so in-flight Celery batch tasks stop immediately
-        r = redis_lib.Redis.from_url(settings.REDIS_URL)
+        r = get_redis()
         pause_key = get_redis_key("campaign_paused", campaign_id)
         r.setex(
             pause_key,
@@ -828,7 +829,7 @@ async def resume_campaign(campaign_id: str):
             )
 
         # Clear the Redis pause flag and restore the saved cursor position
-        r = redis_lib.Redis.from_url(settings.REDIS_URL)
+        r = get_redis()
         r.delete(get_redis_key("campaign_paused", campaign_id))
 
         cursor_key = f"campaign:cursor:{campaign_id}"

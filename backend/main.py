@@ -126,9 +126,7 @@ from routes import (
 # LOGGING CONFIGURATION
 # ============================================
 
-LOG_DIR = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "var", "log"
-)
+LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "var", "log")
 os.makedirs(LOG_DIR, exist_ok=True)
 
 from logging.handlers import RotatingFileHandler
@@ -228,8 +226,6 @@ async def lifespan(app: FastAPI):
                     logger.error("❌ Database connection failed")
         except Exception as e:
             logger.error(f"❌ Database initialization error: {e}")
-
- 
 
     # Log production features
     enabled_features = [k for k, v in PRODUCTION_FEATURES.items() if v]

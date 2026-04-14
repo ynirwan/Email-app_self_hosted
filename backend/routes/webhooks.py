@@ -1,7 +1,7 @@
 # backend/routes/webhooks.py
 from fastapi import APIRouter, Request, HTTPException, BackgroundTasks
 from pydantic import BaseModel, validator
-import redis.asyncio as redis
+from core.redis_client import get_async_redis, get_async_redis_client
 import json
 import logging
 from datetime import datetime
@@ -12,7 +12,6 @@ import hmac
 import base64
 from urllib.parse import urlparse
 import asyncio
-from contextlib import asynccontextmanager
 
 # 🔥 NEW: Import your database and suppression functions
 from database import get_email_logs_collection, get_subscribers_collection, get_suppressions_collection
@@ -23,8 +22,6 @@ from core.config import settings
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
 logger = logging.getLogger(__name__)
 
-# Redis connection pool
-redis_pool = None
 
 # Webhook configuration
 WEBHOOK_CONFIG = {
@@ -35,29 +32,6 @@ WEBHOOK_CONFIG = {
     "rate_limit_per_minute": 10000
 }
 
-async def get_redis_pool():
-    """Initialize and return Redis connection pool"""
-    global redis_pool
-    if not redis_pool:
-        redis_pool = redis.ConnectionPool.from_url(
-            settings.REDIS_URL,
-            max_connections=50,
-            decode_responses=True,
-            retry_on_timeout=True,
-            socket_connect_timeout=5,
-            socket_timeout=5
-        )
-    return redis_pool
-
-@asynccontextmanager
-async def get_redis_client():
-    """Async context manager for Redis client"""
-    pool = await get_redis_pool()
-    client = redis.Redis(connection_pool=pool)
-    try:
-        yield client
-    finally:
-        await client.close()
 
 # Pydantic models for request validation
 class SNSPayload(BaseModel):
@@ -93,7 +67,7 @@ class WebhookStats(BaseModel):
 async def get_webhook_stats() -> WebhookStats:
     """Get webhook stats from Redis (thread-safe)"""
     try:
-        async with get_redis_client() as redis_client:
+        async with get_async_redis() as redis_client:
             stats_data = await redis_client.get("webhook_stats")
             if stats_data:
                 return WebhookStats(**json.loads(stats_data))
@@ -105,7 +79,7 @@ async def get_webhook_stats() -> WebhookStats:
 async def update_webhook_stats(update_dict: Dict[str, Any]):
     """Update webhook stats in Redis"""
     try:
-        async with get_redis_client() as redis_client:
+        async with get_async_redis() as redis_client:
             current_stats = await get_webhook_stats()
             for key, value in update_dict.items():
                 if hasattr(current_stats, key):
@@ -285,7 +259,7 @@ async def process_ses_event_immediate(ses_message: Dict[str, Any]) -> bool:
 async def queue_ses_event(event_payload: Dict[str, Any]) -> bool:
     """Queue SES event for processing with error handling"""
     try:
-        async with get_redis_client() as redis_client:
+        async with get_async_redis() as redis_client:
             # Serialize event payload
             event_json = json.dumps(event_payload, default=str)
             event_type = event_payload.get("event_type", "unknown")
@@ -455,7 +429,7 @@ async def webhook_health():
 
         # Check Redis connectivity
         try:
-            async with get_redis_client() as redis_client:
+            async with get_async_redis() as redis_client:
                 await redis_client.ping()
                 health_status["redis_connected"] = True
         except Exception as e:
@@ -465,7 +439,7 @@ async def webhook_health():
 
         # Check queue sizes
         try:
-            async with get_redis_client() as redis_client:
+            async with get_async_redis() as redis_client:
                 queue_sizes = {
                     "critical": await redis_client.llen("ses_events_critical"),
                     "normal": await redis_client.llen("ses_events_normal"),
@@ -506,7 +480,7 @@ async def webhook_health():
 async def webhook_statistics():
     """Detailed webhook statistics"""
     try:
-        async with get_redis_client() as redis_client:
+        async with get_async_redis() as redis_client:
             # Get queue information
             queue_info = {
                 "critical": {
@@ -601,7 +575,7 @@ async def test_webhook():
 async def clear_webhook_queues():
     """Clear all webhook queues (admin operation)"""
     try:
-        async with get_redis_client() as redis_client:
+        async with get_async_redis() as redis_client:
             cleared_counts = {
                 "critical": await redis_client.delete("ses_events_critical") or 0,
                 "normal": await redis_client.delete("ses_events_normal") or 0,
@@ -631,7 +605,7 @@ async def inspect_queue(queue_name: str, limit: int = 10):
         raise HTTPException(status_code=400, detail=f"Invalid queue name. Must be one of: {valid_queues}")
 
     try:
-        async with get_redis_client() as redis_client:
+        async with get_async_redis() as redis_client:
             # Get queue size
             queue_size = await redis_client.llen(queue_name)
             
