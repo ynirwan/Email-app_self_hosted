@@ -203,6 +203,46 @@ def send_ab_test_single_email(
             email = subscriber.get("email", "")
             custom_fields = subscriber.get("custom_fields", {})
 
+            subscriber_id = str(subscriber.get("_id") or subscriber.get("id", ""))
+
+            # ── Unsubscribe token ──────────────────────────────────────────────
+            unsub_url = "#"
+            try:
+                from routes.unsubscribe import (
+                    generate_unsubscribe_token,
+                    build_unsubscribe_url,
+                )
+                unsub_token = generate_unsubscribe_token(test_id, subscriber_id, email)
+                unsub_url = build_unsubscribe_url(unsub_token)
+            except Exception as _ue:
+                logger.warning(f"AB test unsubscribe token failed: {_ue}")
+
+            html_content = html_content.replace("{{unsubscribe_url}}", unsub_url)
+
+            # ── Open & click tracking ──────────────────────────────────────────
+            _open_token = None
+            _open_enabled = True
+            _click_enabled = True
+            try:
+                from routes.tracking import (
+                    generate_tracking_token,
+                    build_open_pixel_url,
+                    get_tracking_flags_sync,
+                    create_ab_tracking_record_sync,
+                    rewrite_links_for_tracking,
+                )
+                _flags = get_tracking_flags_sync()
+                _open_enabled = _flags.get("open_tracking_enabled", True)
+                _click_enabled = _flags.get("click_tracking_enabled", True)
+
+                if _open_enabled or _click_enabled:
+                    _open_token = generate_tracking_token(test_id, subscriber_id, email)
+                    create_ab_tracking_record_sync(
+                        test_id, variant, subscriber_id, email, _open_token
+                    )
+            except Exception as _te:
+                logger.warning(f"AB test tracking setup failed: {_te}")
+
             # Apply explicit field_map first
             import re
 
@@ -244,6 +284,27 @@ def send_ab_test_single_email(
                 f"</body></html>"
             )
 
+        # ── Inject open pixel + rewrite links ────────────────────────────────
+        if _open_token and html_content:
+            try:
+                from routes.tracking import (
+                    rewrite_links_for_tracking,
+                    build_open_pixel_url,
+                )
+                if _click_enabled:
+                    html_content = rewrite_links_for_tracking(html_content, _open_token)
+                if _open_enabled:
+                    _pixel = (
+                        f'<img src="{build_open_pixel_url(_open_token)}" '
+                        f'width="1" height="1" alt="" style="display:none;border:0;" />'
+                    )
+                    if "</body>" in html_content:
+                        html_content = html_content.replace("</body>", _pixel + "</body>", 1)
+                    else:
+                        html_content += _pixel
+            except Exception as _pe:
+                logger.warning(f"AB test pixel injection failed: {_pe}")
+
         # ── Send ─────────────────────────────────────────────────────────────
         email_service = get_email_service_sync(col_settings)
         result = email_service.send_email(
@@ -268,11 +329,16 @@ def send_ab_test_single_email(
                         subscriber.get("_id") or subscriber.get("id", "")
                     ),
                     "subscriber_email": subscriber["email"],
+                    "open_token": _open_token,
                     "email_sent": True,
                     "sent_at": datetime.utcnow(),
                     "message_id": message_id,
                     "email_opened": False,
                     "email_clicked": False,
+                    "first_open_at": None,
+                    "last_open_at": None,
+                    "first_click_at": None,
+                    "last_click_at": None,
                     "conversion": False,
                 }
             )

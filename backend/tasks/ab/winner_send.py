@@ -48,6 +48,7 @@ _DISPATCH_CHUNK = 500
 # Reads test, resolves audience, dispatches per-recipient tasks.
 # ============================================================
 
+
 @celery_app.task(
     bind=True,
     queue="ab_tests",
@@ -93,7 +94,9 @@ def send_winner_to_remaining(self, test_id: str, winner_variant: str):
         sampled_ids = set()
         for sub_list in variant_assignments.values():
             for entry in sub_list:
-                sub_id = entry.get("id") or entry.get("_id") or entry.get("subscriber_id")
+                sub_id = (
+                    entry.get("id") or entry.get("_id") or entry.get("subscriber_id")
+                )
                 if sub_id:
                     sampled_ids.add(str(sub_id))
 
@@ -104,9 +107,7 @@ def send_winner_to_remaining(self, test_id: str, winner_variant: str):
 
         # ── Fetch remaining subscribers ───────────────────────────────────────
         remaining = _fetch_remaining_subscribers(test, sampled_ids)
-        logger.info(
-            f"send_winner_to_remaining: {len(remaining)} remaining recipients"
-        )
+        logger.info(f"send_winner_to_remaining: {len(remaining)} remaining recipients")
 
         if not remaining:
             logger.info(
@@ -114,10 +115,12 @@ def send_winner_to_remaining(self, test_id: str, winner_variant: str):
             )
             col.update_one(
                 {"_id": ObjectId(test_id)},
-                {"$set": {
-                    "winner_send_status": "no_remaining_subscribers",
-                    "winner_send_at": datetime.utcnow(),
-                }},
+                {
+                    "$set": {
+                        "winner_send_status": "no_remaining_subscribers",
+                        "winner_send_at": datetime.utcnow(),
+                    }
+                },
             )
             return {"skipped": True, "reason": "no_remaining_subscribers"}
 
@@ -135,12 +138,14 @@ def send_winner_to_remaining(self, test_id: str, winner_variant: str):
         # Record that winner-send was kicked off
         col.update_one(
             {"_id": ObjectId(test_id)},
-            {"$set": {
-                "winner_send_status": "dispatched",
-                "winner_send_at": datetime.utcnow(),
-                "winner_send_count": dispatched,
-                "winner_variant_sent": winner_variant,
-            }},
+            {
+                "$set": {
+                    "winner_send_status": "dispatched",
+                    "winner_send_at": datetime.utcnow(),
+                    "winner_send_count": dispatched,
+                    "winner_variant_sent": winner_variant,
+                }
+            },
         )
 
         logger.info(
@@ -162,6 +167,7 @@ def send_winner_to_remaining(self, test_id: str, winner_variant: str):
 # TASK: send_winner_single_email
 # Sends one email to one remaining subscriber.
 # ============================================================
+
 
 @celery_app.task(
     bind=True,
@@ -194,16 +200,18 @@ def send_winner_single_email(
             logger.debug(
                 f"send_winner_single_email: {recipient_email} suppressed — skipping"
             )
-            ab_results_col.insert_one({
-                "test_id": test_id,
-                "variant": variant,
-                "subscriber_id": subscriber_id,
-                "subscriber_email": recipient_email,
-                "email_sent": False,
-                "is_winner_send": True,
-                "skipped_reason": "suppressed",
-                "sent_at": datetime.utcnow(),
-            })
+            ab_results_col.insert_one(
+                {
+                    "test_id": test_id,
+                    "variant": variant,
+                    "subscriber_id": subscriber_id,
+                    "subscriber_email": recipient_email,
+                    "email_sent": False,
+                    "is_winner_send": True,
+                    "skipped_reason": "suppressed",
+                    "sent_at": datetime.utcnow(),
+                }
+            )
             return {"status": "skipped", "reason": "suppressed"}
 
         # ── Fetch test (projection: only what we need) ───────────────────────
@@ -227,11 +235,11 @@ def send_winner_single_email(
         # ── Resolve per-variant overrides (same logic as ab_testing.py) ──────
         subject = variant_config.get("subject") or test.get("subject", "")
         sender_name = variant_config.get("sender_name") or test.get("sender_name", "")
-        sender_email = variant_config.get("sender_email") or test.get("sender_email", "")
+        sender_email = variant_config.get("sender_email") or test.get(
+            "sender_email", ""
+        )
         reply_to = (
-            variant_config.get("reply_to")
-            or test.get("reply_to")
-            or sender_email
+            variant_config.get("reply_to") or test.get("reply_to") or sender_email
         )
 
         # ── Resolve HTML from snapshot (preferred) or live template ──────────
@@ -252,22 +260,61 @@ def send_winner_single_email(
             fallback_values = test.get("fallback_values", {})
             if test.get("template_id"):
                 from database import get_sync_templates_collection
+
                 tmpl = get_sync_templates_collection().find_one(
                     {"_id": ObjectId(test["template_id"])}
                 )
                 if tmpl:
-                    html_content = (
-                        tmpl.get("html_content", "") or tmpl.get("content", "")
+                    html_content = tmpl.get("html_content", "") or tmpl.get(
+                        "content", ""
                     )
 
         # ── Personalise ───────────────────────────────────────────────────────
         if html_content:
             email = subscriber.get("email", "")
-            first_name = (
-                subscriber.get("first_name", "")
-                or subscriber.get("standard_fields", {}).get("first_name", "")
-            )
+            first_name = subscriber.get("first_name", "") or subscriber.get(
+                "standard_fields", {}
+            ).get("first_name", "")
             custom_fields = subscriber.get("custom_fields", {})
+
+            # ── Unsubscribe token ──────────────────────────────────────────────
+            unsub_url = "#"
+            try:
+                from routes.unsubscribe import (
+                    generate_unsubscribe_token,
+                    build_unsubscribe_url,
+                )
+
+                _unsub_token = generate_unsubscribe_token(test_id, subscriber_id, email)
+                unsub_url = build_unsubscribe_url(_unsub_token)
+            except Exception as _ue:
+                logger.warning(f"winner_send unsubscribe token failed: {_ue}")
+
+            html_content = html_content.replace("{{unsubscribe_url}}", unsub_url)
+
+            # ── Open & click tracking ──────────────────────────────────────────
+            _open_token = None
+            _open_enabled = True
+            _click_enabled = True
+            try:
+                from routes.tracking import (
+                    generate_tracking_token,
+                    build_open_pixel_url,
+                    get_tracking_flags_sync,
+                    create_ab_tracking_record_sync,
+                )
+
+                _flags = get_tracking_flags_sync()
+                _open_enabled = _flags.get("open_tracking_enabled", True)
+                _click_enabled = _flags.get("click_tracking_enabled", True)
+
+                if _open_enabled or _click_enabled:
+                    _open_token = generate_tracking_token(test_id, subscriber_id, email)
+                    create_ab_tracking_record_sync(
+                        test_id, variant, subscriber_id, email, _open_token
+                    )
+            except Exception as _te:
+                logger.warning(f"winner_send tracking setup failed: {_te}")
 
             for template_field, mapped_field in field_map.items():
                 value = ""
@@ -294,13 +341,41 @@ def send_winner_single_email(
             html_content = html_content.replace("{{subject}}", subject)
             for k, v in custom_fields.items():
                 html_content = html_content.replace(f"{{{{{k}}}}}", str(v))
+        else:
+            _open_token = None
+            _open_enabled = _click_enabled = False
 
         if not html_content:
-            first_name = subscriber.get("standard_fields", {}).get("first_name", "there")
-            html_content = (
-                f"<html><body><p>Hello {first_name},</p>"
-                f"<p>{subject}</p></body></html>"
+            first_name = subscriber.get("standard_fields", {}).get(
+                "first_name", "there"
             )
+            html_content = (
+                f"<html><body><p>Hello {first_name},</p><p>{subject}</p></body></html>"
+            )
+
+        # ── Inject open pixel + rewrite links ────────────────────────────────
+        if _open_token and html_content:
+            try:
+                from routes.tracking import (
+                    rewrite_links_for_tracking,
+                    build_open_pixel_url,
+                )
+
+                if _click_enabled:
+                    html_content = rewrite_links_for_tracking(html_content, _open_token)
+                if _open_enabled:
+                    _pixel = (
+                        f'<img src="{build_open_pixel_url(_open_token)}" '
+                        f'width="1" height="1" alt="" style="display:none;border:0;" />'
+                    )
+                    if "</body>" in html_content:
+                        html_content = html_content.replace(
+                            "</body>", _pixel + "</body>", 1
+                        )
+                    else:
+                        html_content += _pixel
+            except Exception as _pe:
+                logger.warning(f"winner_send pixel injection failed: {_pe}")
 
         # ── Send ─────────────────────────────────────────────────────────────
         result = email_provider_manager.send_email_with_failover(
@@ -315,19 +390,26 @@ def send_winner_single_email(
         message_id = result.get("message_id")
         success = result.get("success", False)
 
-        ab_results_col.insert_one({
-            "test_id": test_id,
-            "variant": variant,
-            "subscriber_id": subscriber_id,
-            "subscriber_email": recipient_email,
-            "email_sent": success,
-            "is_winner_send": True,
-            "sent_at": datetime.utcnow(),
-            "message_id": message_id,
-            "email_opened": False,
-            "email_clicked": False,
-            "error": None if success else result.get("error"),
-        })
+        ab_results_col.insert_one(
+            {
+                "test_id": test_id,
+                "variant": variant,
+                "subscriber_id": subscriber_id,
+                "subscriber_email": recipient_email,
+                "open_token": _open_token,
+                "email_sent": success,
+                "is_winner_send": True,
+                "sent_at": datetime.utcnow(),
+                "message_id": message_id,
+                "email_opened": False,
+                "email_clicked": False,
+                "first_open_at": None,
+                "last_open_at": None,
+                "first_click_at": None,
+                "last_click_at": None,
+                "error": None if success else result.get("error"),
+            }
+        )
 
         if success:
             logger.debug(
@@ -339,25 +421,26 @@ def send_winner_single_email(
             raise Exception(result.get("error", "Provider returned failure"))
 
     except Exception as e:
-        ab_results_col.insert_one({
-            "test_id": test_id,
-            "variant": variant,
-            "subscriber_id": subscriber_id,
-            "subscriber_email": recipient_email,
-            "email_sent": False,
-            "is_winner_send": True,
-            "sent_at": datetime.utcnow(),
-            "error": str(e),
-        })
-        logger.error(
-            f"send_winner_single_email failed for {recipient_email}: {e}"
+        ab_results_col.insert_one(
+            {
+                "test_id": test_id,
+                "variant": variant,
+                "subscriber_id": subscriber_id,
+                "subscriber_email": recipient_email,
+                "email_sent": False,
+                "is_winner_send": True,
+                "sent_at": datetime.utcnow(),
+                "error": str(e),
+            }
         )
+        logger.error(f"send_winner_single_email failed for {recipient_email}: {e}")
         raise self.retry(exc=e)
 
 
 # ============================================================
 # HELPER: resolve remaining subscribers
 # ============================================================
+
 
 def _fetch_remaining_subscribers(
     test: dict,
@@ -375,9 +458,7 @@ def _fetch_remaining_subscribers(
 
     # Build suppression set (only emails, not full docs — faster for large lists)
     suppressed_emails: set = set()
-    for doc in supp_col.find(
-        {"is_active": {"$ne": False}}, {"email": 1, "_id": 0}
-    ):
+    for doc in supp_col.find({"is_active": {"$ne": False}}, {"email": 1, "_id": 0}):
         if doc.get("email"):
             suppressed_emails.add(doc["email"].lower())
 
@@ -413,7 +494,9 @@ def _fetch_remaining_subscribers(
     if target_segments:
         seg_ids = _resolve_segment_ids(target_segments)
         if seg_ids:
-            remaining_seg = [i for i in seg_ids if i not in seen_ids and i not in sampled_ids]
+            remaining_seg = [
+                i for i in seg_ids if i not in seen_ids and i not in sampled_ids
+            ]
             if remaining_seg:
                 for doc in subscribers_col.find(
                     {
@@ -443,6 +526,7 @@ def _resolve_segment_ids(segment_ids: List[str]) -> List[str]:
     try:
         from routes.segments import build_segment_query, SegmentCriteria
         from database import get_sync_segments_collection
+
         segs_col = get_sync_segments_collection()
         subs_col = get_sync_subscribers_collection()
         all_ids: set = set()

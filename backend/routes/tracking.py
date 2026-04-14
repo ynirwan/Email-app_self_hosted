@@ -183,6 +183,62 @@ async def create_tracking_record(
     )
 
 
+def create_ab_tracking_record_sync(
+    test_id: str,
+    variant: str,
+    subscriber_id: str,
+    email: str,
+    open_token: str,
+) -> dict:
+    """
+    Sync tracking master record for A/B test emails.
+
+    Identical structure to create_tracking_record_sync but stores
+    ab_test_id + variant instead of campaign_id so _record_open /
+    _record_click can update ab_test_results instead of analytics.
+    """
+    try:
+        from database import get_sync_email_events_collection
+
+        col = get_sync_email_events_collection()
+        now = datetime.utcnow()
+
+        result = col.update_one(
+            {"open_token": open_token, "type": "tracking_master"},
+            {
+                "$setOnInsert": {
+                    "open_token": open_token,
+                    "ab_test_id": test_id,        # distinguishes from campaign
+                    "variant": variant,
+                    "campaign_id": None,           # explicitly None — not a campaign
+                    "subscriber_id": subscriber_id,
+                    "email": email.lower().strip(),
+                    "event_type": "sent",
+                    "type": "tracking_master",
+                    "open_count": 0,
+                    "click_count": 0,
+                    "is_unsubscribed": False,
+                    "first_open_at": None,
+                    "first_click_at": None,
+                    "timestamp": now,
+                },
+                "$set": {"last_event_at": now},
+            },
+            upsert=True,
+        )
+        logger.info(
+            f"[tracking] ab_test master record token={open_token} "
+            f"test={test_id} variant={variant} email={email}"
+        )
+        return {"success": True, "token": open_token}
+    except Exception as e:
+        logger.exception(
+            f"[tracking] create_ab_tracking_record_sync FAILED "
+            f"token={open_token} test={test_id} err={e}"
+        )
+        return {"success": False, "error": str(e), "token": open_token}
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Helpers
 # ─────────────────────────────────────────────────────────────────────────────
@@ -281,6 +337,8 @@ async def _record_open(token: str, ip: str, ua: str):
 
         campaign_id = doc.get("campaign_id")
         subscriber_id = doc.get("subscriber_id")
+        ab_test_id = doc.get("ab_test_id")
+        ab_variant = doc.get("variant")
 
         # 3) Event row logging
         # If track_unique_only=True → log only first open event
@@ -290,6 +348,7 @@ async def _record_open(token: str, ip: str, ua: str):
                 {
                     "open_token": token,
                     "campaign_id": campaign_id,
+                    "ab_test_id": ab_test_id,
                     "subscriber_id": subscriber_id,
                     "email": doc.get("email"),
                     "event_type": "opened",
@@ -301,9 +360,31 @@ async def _record_open(token: str, ip: str, ua: str):
                 }
             )
 
-        # 4) Analytics only on first open
+        # 4a) Campaign analytics — only for real campaigns
         if is_unique and campaign_id:
             await _increment_analytics(str(campaign_id), "total_opened")
+
+        # 4b) AB test results — update email_opened flag on the result doc
+        if is_unique and ab_test_id:
+            try:
+                from database import get_ab_test_results_collection
+                ab_col = get_ab_test_results_collection()
+                await ab_col.update_one(
+                    {
+                        "test_id": ab_test_id,
+                        "subscriber_id": subscriber_id,
+                        "email_sent": True,
+                    },
+                    {
+                        "$set": {
+                            "email_opened": True,
+                            "last_open_at": now,
+                        },
+                        "$min": {"first_open_at": now},  # only sets if null/lower
+                    },
+                )
+            except Exception as _ae:
+                logger.warning(f"[tracking] ab_test open update failed: {_ae}")
 
     except Exception as e:
         logger.error(f"[tracking] _record_open error: {e}", exc_info=True)
@@ -380,12 +461,14 @@ async def _record_click(token: str, url: str, ip: str, ua: str):
 
         campaign_id = doc.get("campaign_id")
         subscriber_id = doc.get("subscriber_id")
+        ab_test_id = doc.get("ab_test_id")
 
         if is_unique or not track_unique_only:
             await col.insert_one(
                 {
                     "open_token": token,
                     "campaign_id": campaign_id,
+                    "ab_test_id": ab_test_id,
                     "subscriber_id": subscriber_id,
                     "email": doc.get("email"),
                     "event_type": "clicked",
@@ -398,8 +481,31 @@ async def _record_click(token: str, url: str, ip: str, ua: str):
                 }
             )
 
+        # Campaign analytics
         if is_unique and campaign_id:
             await _increment_analytics(str(campaign_id), "total_clicked")
+
+        # AB test results — update email_clicked flag
+        if is_unique and ab_test_id:
+            try:
+                from database import get_ab_test_results_collection
+                ab_col = get_ab_test_results_collection()
+                await ab_col.update_one(
+                    {
+                        "test_id": ab_test_id,
+                        "subscriber_id": subscriber_id,
+                        "email_sent": True,
+                    },
+                    {
+                        "$set": {
+                            "email_clicked": True,
+                            "last_click_at": now,
+                        },
+                        "$min": {"first_click_at": now},
+                    },
+                )
+            except Exception as _ae:
+                logger.warning(f"[tracking] ab_test click update failed: {_ae}")
 
     except Exception as e:
         logger.error(f"[tracking] _record_click error: {e}", exc_info=True)
@@ -407,55 +513,98 @@ async def _record_click(token: str, url: str, ip: str, ua: str):
 
 async def _increment_analytics(campaign_id: str, field: str):
     """
-    Atomically increment analytics and recompute rates.
+    Atomically increment one analytics counter and recompute rates.
+
+    FIX: sent_count on the campaign doc is only written by finalize_campaign.
+    During active sending it is 0, causing all rates to compute as 0.
+    Now falls back to email_delivery_state then email_logs so rates are
+    correct even while the campaign is still running.
     """
     try:
         analytics_col = get_analytics_collection()
         campaigns_col = get_campaigns_collection()
+        from database import (
+            get_email_delivery_state_collection,
+            get_email_logs_collection,
+        )
+        delivery_state_col = get_email_delivery_state_collection()
+        logs_col = get_email_logs_collection()
 
         cid = ObjectId(campaign_id) if ObjectId.is_valid(campaign_id) else campaign_id
 
+        # Increment the counter first
         await analytics_col.update_one(
             {"campaign_id": cid},
             {"$inc": {field: 1}, "$set": {"updated_at": datetime.utcnow()}},
             upsert=True,
         )
 
+        # Resolve total_sent — 3-tier fallback
         campaign = await campaigns_col.find_one(
             {"_id": cid}, {"sent_count": 1, "delivered_count": 1}
         )
-        analytics = await analytics_col.find_one({"campaign_id": cid})
-
-        if campaign and analytics:
+        total_sent = 0
+        if campaign:
             total_sent = (campaign.get("sent_count") or 0) + (
                 campaign.get("delivered_count") or 0
             )
-            if total_sent > 0:
-                open_rate = round(
-                    analytics.get("total_opened", 0) / total_sent * 100, 2
-                )
-                click_rate = round(
-                    analytics.get("total_clicked", 0) / total_sent * 100, 2
-                )
-                unsub_rate = round(
-                    analytics.get("total_unsubscribed", 0) / total_sent * 100, 2
-                )
 
-                await analytics_col.update_one(
-                    {"campaign_id": cid},
-                    {
-                        "$set": {
-                            "open_rate": open_rate,
-                            "click_rate": click_rate,
-                            "unsubscribe_rate": unsub_rate,
-                        }
-                    },
-                )
+        if total_sent == 0:
+            # Delivery state (written by workers on every send, pre-finalization)
+            total_sent = await delivery_state_col.count_documents(
+                {"campaign_id": cid, "state": {"$in": ["sent", "delivered"]}}
+            )
 
-                await campaigns_col.update_one(
-                    {"_id": cid},
-                    {"$set": {"open_rate": open_rate, "click_rate": click_rate}},
-                )
+        if total_sent == 0:
+            # Legacy fallback: email_logs
+            total_sent = await logs_col.count_documents(
+                {"campaign_id": cid, "latest_status": {"$in": ["sent", "delivered"]}}
+            )
+
+        if total_sent == 0:
+            # 4th fallback: use the snapshot stored by get_campaign_analytics
+            # on the last page load — avoids re-counting if collection is large
+            analytics_snap = await analytics_col.find_one(
+                {"campaign_id": cid}, {"total_sent_snapshot": 1}
+            )
+            if analytics_snap:
+                total_sent = analytics_snap.get("total_sent_snapshot", 0) or 0
+
+        analytics = await analytics_col.find_one({"campaign_id": cid})
+
+        if analytics and total_sent > 0:
+            open_rate = round(
+                analytics.get("total_opened", 0) / total_sent * 100, 2
+            )
+            click_rate = round(
+                analytics.get("total_clicked", 0) / total_sent * 100, 2
+            )
+            unsub_rate = round(
+                analytics.get("total_unsubscribed", 0) / total_sent * 100, 2
+            )
+            delivery_rate = round(
+                max(0, total_sent - analytics.get("total_bounced", 0))
+                / total_sent * 100,
+                2,
+            )
+
+            await analytics_col.update_one(
+                {"campaign_id": cid},
+                {
+                    "$set": {
+                        "open_rate": open_rate,
+                        "click_rate": click_rate,
+                        "unsubscribe_rate": unsub_rate,
+                        "delivery_rate": delivery_rate,
+                        "total_sent_snapshot": total_sent,
+                    }
+                },
+            )
+
+            await campaigns_col.update_one(
+                {"_id": cid},
+                {"$set": {"open_rate": open_rate, "click_rate": click_rate}},
+            )
     except Exception as e:
         logger.error(f"[tracking] _increment_analytics error: {e}", exc_info=True)
 

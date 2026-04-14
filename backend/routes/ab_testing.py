@@ -143,7 +143,9 @@ async def get_ab_test_target_count(
             try:
                 if not ObjectId.is_valid(segment_id):
                     continue
-                segment = await segments_collection.find_one({"_id": ObjectId(segment_id)})
+                segment = await segments_collection.find_one(
+                    {"_id": ObjectId(segment_id)}
+                )
                 if segment and segment.get("criteria"):
                     match_conditions.append(
                         build_segment_query(SegmentCriteria(**segment["criteria"]))
@@ -189,7 +191,9 @@ async def get_test_subscribers(
             try:
                 if not ObjectId.is_valid(segment_id):
                     continue
-                segment = await segments_collection.find_one({"_id": ObjectId(segment_id)})
+                segment = await segments_collection.find_one(
+                    {"_id": ObjectId(segment_id)}
+                )
                 if segment and segment.get("criteria"):
                     match_conditions.append(
                         build_segment_query(SegmentCriteria(**segment["criteria"]))
@@ -202,7 +206,7 @@ async def get_test_subscribers(
 
     query = {"$and": [{"status": "active"}, {"$or": match_conditions}]}
     subscribers = []
-    async for doc in subscribers_collection.find(query).limit(sample_size):
+    async for doc in subscribers_collection.find(query).limit(int(sample_size)):
         doc["_id"] = str(doc["_id"])
         subscribers.append(doc)
     return subscribers
@@ -465,9 +469,11 @@ async def create_ab_test(test: ABTestCreate):
 
         min_sample = min(1000, max(100, int(total_subscribers * 0.1)))
         if test.sample_size > total_subscribers:
-            test.sample_size = total_subscribers
+            test.sample_size = int(total_subscribers)
         elif test.sample_size < min_sample:
-            test.sample_size = min_sample
+            test.sample_size = int(min_sample)
+        else:
+            test.sample_size = int(test.sample_size)
 
         test_doc = {
             "test_name": test.test_name,
@@ -591,7 +597,7 @@ async def start_ab_test(test_id: str):
         # ── 2. Get subscribers and assign variants ────────────────────────────
         subscribers = await get_test_subscribers(
             test.get("target_lists", []),
-            test["sample_size"],
+            int(test["sample_size"]),  # MongoDB may return as float
             test.get("target_segments", []),
         )
         if not subscribers:
@@ -692,7 +698,7 @@ async def get_ab_test_results(test_id: str):
 async def complete_ab_test(test_id: str, request: CompleteTestRequest):
     """
     Manually complete a running A/B test, declare the winner,
-    and optionally apply the winner to the linked campaign.
+    and optionally send the winning variant to remaining subscribers.
     """
     try:
         col = get_ab_tests_collection()
@@ -730,11 +736,9 @@ async def complete_ab_test(test_id: str, request: CompleteTestRequest):
 
         campaign_applied = False
 
-        if (
-            request.apply_to_campaign
-            and winner.get("winner") not in (None, "TIE")
-        ):
+        if request.apply_to_campaign and winner.get("winner") not in (None, "TIE"):
             from tasks.ab.winner_send import send_winner_to_remaining
+
             send_winner_to_remaining.apply_async(
                 args=[test_id, winner["winner"]],
                 countdown=2,
