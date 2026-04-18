@@ -1,13 +1,11 @@
-# backend/tasks/ab_testing.py
+# backend/tasks/ab/ab_testing.py
 # ============================================================
-# FULL REPLACEMENT FILE
-#
-# KEY CHANGES vs original:
-#   1. send_ab_test_single_email reads html_content from
-#      test["content_snapshot"] (written at start_ab_test time).
-#      Falls back to live template fetch if snapshot absent
-#      (backward compatibility for existing running tests).
-#   3. All other tasks (batch, expiry, auto_complete) unchanged.
+# KEY FIXES:
+#   1. send_ab_test_single_email uses _pm.send_email_with_failover()
+#      instead of the removed get_email_service_sync / .send_email()
+#   2. Field mapping reads standard_fields / custom_fields from the
+#      full subscriber dict (now stored in variant_assignments)
+#   3. assign_variants uses hashlib.md5 for stable cross-process hashing
 # ============================================================
 
 import logging
@@ -19,10 +17,8 @@ from database import (
     get_sync_templates_collection,
     get_sync_ab_tests_collection,
     get_sync_ab_test_results_collection,
-    get_sync_settings_collection,
 )
 from tasks.campaign.provider_manager import email_provider_manager as _pm
-get_email_service_sync = lambda name=None: _pm
 from celery_app import celery_app
 from tasks.campaign.template_renderer import template_renderer
 
@@ -31,7 +27,6 @@ logger = logging.getLogger(__name__)
 
 # ============================================================
 # TASK: send_ab_test_batch
-# Dispatches individual-email tasks for both variants.
 # ============================================================
 
 
@@ -134,9 +129,8 @@ def send_ab_test_single_email(
 
     try:
         col_tests = get_sync_ab_tests_collection()
-        col_settings = get_sync_settings_collection()
 
-        # ── Fetch test (projection: only what we need) ───────────────────────
+        # Fetch test — projection: only what we need
         test = col_tests.find_one(
             {"_id": ObjectId(test_id)},
             {
@@ -147,71 +141,59 @@ def send_ab_test_single_email(
                 "reply_to": 1,
                 "field_map": 1,
                 "fallback_values": 1,
-                "content_snapshot": 1,  # ← snapshot written at start_ab_test
+                "content_snapshot": 1,
             },
         )
         if not test:
             raise Exception(f"A/B test not found: {test_id}")
 
-        # ── Resolve per-variant overrides ────────────────────────────────────
+        # Per-variant overrides
         subject = variant_config.get("subject") or test.get("subject", "")
         sender_name = variant_config.get("sender_name") or test.get("sender_name", "")
-        sender_email = variant_config.get("sender_email") or test.get(
-            "sender_email", ""
-        )
+        sender_email = variant_config.get("sender_email") or test.get("sender_email", "")
         reply_to = variant_config.get("reply_to") or test.get("reply_to", sender_email)
 
-        # ── Resolve html_content from snapshot (preferred) ──────────────────
+        # ── Resolve html_content from snapshot ────────────────────────────────
         snap = test.get("content_snapshot")
         html_content = ""
+        field_map = {}
+        fallback_values = {}
 
         if snap:
-            # Happy path: snapshot was written at start_ab_test
             html_content = snap.get("html_content", "")
-            # If the variant overrides the subject, that's already handled above.
-            # field_map / fallback from snapshot
             field_map = snap.get("field_map", test.get("field_map", {}))
-            fallback_values = snap.get(
-                "fallback_values", test.get("fallback_values", {})
-            )
+            fallback_values = snap.get("fallback_values", test.get("fallback_values", {}))
             logger.debug(
                 f"AB test {test_id}/{variant}: using snapshot html ({len(html_content)} bytes)"
             )
-
         else:
-            # Fallback: snapshot absent (old test started before this deploy)
-            # Fetch live template — same as original behaviour
+            # Fallback: no snapshot (old test)
             field_map = test.get("field_map", {})
             fallback_values = test.get("fallback_values", {})
             logger.warning(
-                f"AB test {test_id}: no content_snapshot found, "
-                "falling back to live template fetch"
+                f"AB test {test_id}: no content_snapshot, falling back to live template"
             )
             col_templates = get_sync_templates_collection()
             if test.get("template_id"):
                 tmpl = col_templates.find_one({"_id": ObjectId(test["template_id"])})
                 if tmpl:
-                    html_content = tmpl.get("html_content", "") or tmpl.get(
-                        "content", ""
-                    )
+                    html_content = tmpl.get("html_content", "") or tmpl.get("content", "")
 
-        # ── Personalise html_content ─────────────────────────────────────────
+        # ── Personalise ───────────────────────────────────────────────────────
         if html_content:
-            first_name = subscriber.get("first_name", "") or subscriber.get(
-                "standard_fields", {}
-            ).get("first_name", "")
             email = subscriber.get("email", "")
-            custom_fields = subscriber.get("custom_fields", {})
-
             subscriber_id = str(subscriber.get("_id") or subscriber.get("id", ""))
 
-            # ── Unsubscribe token ──────────────────────────────────────────────
+            # FIX: read standard_fields and custom_fields from full subscriber dict
+            # (these are now stored in variant_assignments by the fixed assign_variants)
+            standard_fields = subscriber.get("standard_fields", {})
+            custom_fields = subscriber.get("custom_fields", {})
+            first_name = standard_fields.get("first_name", "") or subscriber.get("first_name", "")
+
+            # ── Unsubscribe token ────────────────────────────────────────────
             unsub_url = "#"
             try:
-                from routes.unsubscribe import (
-                    generate_unsubscribe_token,
-                    build_unsubscribe_url,
-                )
+                from routes.unsubscribe import generate_unsubscribe_token, build_unsubscribe_url
                 unsub_token = generate_unsubscribe_token(test_id, subscriber_id, email)
                 unsub_url = build_unsubscribe_url(unsub_token)
             except Exception as _ue:
@@ -219,7 +201,7 @@ def send_ab_test_single_email(
 
             html_content = html_content.replace("{{unsubscribe_url}}", unsub_url)
 
-            # ── Open & click tracking ──────────────────────────────────────────
+            # ── Tracking ─────────────────────────────────────────────────────
             _open_token = None
             _open_enabled = True
             _click_enabled = True
@@ -229,7 +211,6 @@ def send_ab_test_single_email(
                     build_open_pixel_url,
                     get_tracking_flags_sync,
                     create_ab_tracking_record_sync,
-                    rewrite_links_for_tracking,
                 )
                 _flags = get_tracking_flags_sync()
                 _open_enabled = _flags.get("open_tracking_enabled", True)
@@ -243,11 +224,11 @@ def send_ab_test_single_email(
             except Exception as _te:
                 logger.warning(f"AB test tracking setup failed: {_te}")
 
-            # Apply explicit field_map first
-            import re
-
+            # ── Apply field_map ───────────────────────────────────────────────
             for template_field, mapped_field in field_map.items():
+                template_field = template_field.strip()
                 value = ""
+
                 if mapped_field == "__EMPTY__":
                     value = ""
                 elif mapped_field == "__DEFAULT__":
@@ -256,41 +237,53 @@ def send_ab_test_single_email(
                     value = email
                 elif mapped_field.startswith("standard."):
                     field_name = mapped_field.replace("standard.", "")
-                    value = subscriber.get("standard_fields", {}).get(field_name, "")
+                    value = standard_fields.get(field_name, "")
+                    if not value:
+                        value = fallback_values.get(template_field, "")
                 elif mapped_field.startswith("custom."):
                     field_name = mapped_field.replace("custom.", "")
                     value = str(custom_fields.get(field_name, ""))
+                    if not value:
+                        value = fallback_values.get(template_field, "")
                 else:
-                    value = fallback_values.get(template_field, "")
-                html_content = html_content.replace(
-                    f"{{{{{template_field}}}}}", str(value)
-                )
+                    # Plain field name — check universal, standard, custom in order
+                    if mapped_field == "email":
+                        value = email
+                    elif mapped_field in standard_fields:
+                        value = standard_fields.get(mapped_field, "")
+                    elif mapped_field in custom_fields:
+                        value = str(custom_fields.get(mapped_field, ""))
+                    else:
+                        value = fallback_values.get(template_field, "")
 
-            # Convenience replacements for unmapped common fields
+                if value is None:
+                    value = fallback_values.get(template_field, "")
+
+                html_content = html_content.replace(f"{{{{{template_field}}}}}", str(value))
+
+            # Convenience replacements
             html_content = html_content.replace("{{first_name}}", first_name)
             html_content = html_content.replace("{{email}}", email)
             html_content = html_content.replace("{{subject}}", subject)
 
-            # Any remaining custom fields
+            # Remaining custom fields not covered by field_map
             for k, v in custom_fields.items():
                 html_content = html_content.replace(f"{{{{{k}}}}}", str(v))
 
         # Fallback body if still empty
         if not html_content:
+            first_name = subscriber.get("standard_fields", {}).get("first_name", "there")
             html_content = (
                 f"<html><body>"
-                f"<p>Hello {subscriber.get('first_name', 'there')},</p>"
+                f"<p>Hello {first_name},</p>"
                 f"<p>{subject}</p>"
                 f"</body></html>"
             )
 
-        # ── Inject open pixel + rewrite links ────────────────────────────────
+        # ── Inject open pixel + rewrite links ─────────────────────────────────
         if _open_token and html_content:
             try:
-                from routes.tracking import (
-                    rewrite_links_for_tracking,
-                    build_open_pixel_url,
-                )
+                from routes.tracking import rewrite_links_for_tracking, build_open_pixel_url
                 if _click_enabled:
                     html_content = rewrite_links_for_tracking(html_content, _open_token)
                 if _open_enabled:
@@ -305,9 +298,10 @@ def send_ab_test_single_email(
             except Exception as _pe:
                 logger.warning(f"AB test pixel injection failed: {_pe}")
 
-        # ── Send ─────────────────────────────────────────────────────────────
-        email_service = get_email_service_sync(col_settings)
-        result = email_service.send_email(
+        # ── Send via provider manager ─────────────────────────────────────────
+        # FIX: use _pm.send_email_with_failover() — EmailProviderManager does NOT
+        # have a .send_email() method. Result is a plain dict, not an object.
+        result = _pm.send_email_with_failover(
             sender_email=sender_email,
             recipient_email=subscriber["email"],
             subject=subject,
@@ -316,18 +310,14 @@ def send_ab_test_single_email(
             reply_to=reply_to,
         )
 
-        message_id = getattr(result, "message_id", None) or getattr(
-            result, "MessageId", None
-        )
+        message_id = result.get("message_id")
 
-        if getattr(result, "success", False):
+        if result.get("success", False):
             ab_test_results_collection.insert_one(
                 {
                     "test_id": test_id,
                     "variant": variant,
-                    "subscriber_id": str(
-                        subscriber.get("_id") or subscriber.get("id", "")
-                    ),
+                    "subscriber_id": str(subscriber.get("_id") or subscriber.get("id", "")),
                     "subscriber_email": subscriber["email"],
                     "open_token": _open_token,
                     "email_sent": True,
@@ -344,7 +334,8 @@ def send_ab_test_single_email(
             )
             logger.info(f"A/B email sent: {test_id} {variant} {subscriber['email']}")
         else:
-            raise Exception(getattr(result, "error", "Send failed"))
+            error_msg = result.get("error", "Provider returned failure")
+            raise Exception(error_msg)
 
     except Exception as e:
         ab_test_results_collection.insert_one(
@@ -430,10 +421,9 @@ def auto_complete_ab_test(self, test_id: str):
 
         col = get_sync_ab_tests_collection()
         test = col.find_one({"_id": ObjectId(test_id)})
-        if not test or test.get("status") != "running":
+        if not test or test.get("status") not in ("running",):
             return {"skipped": True, "reason": "not_running"}
 
-        # Calculate results synchronously
         loop = asyncio.new_event_loop()
         try:
             results = loop.run_until_complete(calculate_test_results(test_id))
@@ -455,8 +445,6 @@ def auto_complete_ab_test(self, test_id: str):
 
         logger.info(f"[AB AutoComplete] Test {test_id} completed. Winner: {winner}")
 
-        # Send winning variant to remaining subscribers if flag is set and
-        # there is a clear winner (not a TIE).
         winner_variant = winner.get("winner") if isinstance(winner, dict) else winner
         if (
             test.get("auto_send_winner", True)

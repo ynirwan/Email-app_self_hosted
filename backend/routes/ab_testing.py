@@ -1,3 +1,4 @@
+# backend/routes/ab_testing.py
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict
@@ -35,6 +36,7 @@ class TestStatus(str, Enum):
     DRAFT = "draft"
     RUNNING = "running"
     COMPLETED = "completed"
+    STOPPED = "stopped"
     PAUSED = "paused"
     FAILED = "failed"
 
@@ -75,7 +77,6 @@ class ABTestCreate(BaseModel):
     auto_send_winner: bool = Field(
         default=True, description="Auto-send winning variant to remaining subscribers"
     )
-    # ── personalisation ──────────────────────────────────────
     field_map: Optional[Dict[str, str]] = Field(
         default_factory=dict,
         description="Maps template {{variables}} to subscriber data columns",
@@ -206,6 +207,7 @@ async def get_test_subscribers(
 
     query = {"$and": [{"status": "active"}, {"$or": match_conditions}]}
     subscribers = []
+    # FIX: always cast sample_size to int — MongoDB may store as float
     async for doc in subscribers_collection.find(query).limit(int(sample_size)):
         doc["_id"] = str(doc["_id"])
         subscribers.append(doc)
@@ -213,16 +215,29 @@ async def get_test_subscribers(
 
 
 def assign_variants(subscribers: List[dict], split_percentage: int) -> Dict:
+    """
+    Assign subscribers to variants deterministically using MD5-based hashing.
+    Python's built-in hash() is not stable across processes (PYTHONHASHSEED).
+    Using hashlib.md5 ensures the same subscriber always gets the same variant.
+    """
+    import hashlib
+
     assignments: Dict[str, list] = {"A": [], "B": []}
     for sub in subscribers:
-        bucket = hash(sub["_id"]) % 100
+        # Stable hash using subscriber _id string
+        digest = hashlib.md5(str(sub["_id"]).encode()).hexdigest()
+        bucket = int(digest[:8], 16) % 100
         variant = "A" if bucket < split_percentage else "B"
         assignments[variant].append(
             {
                 "id": sub["_id"],
                 "email": sub["email"],
-                "first_name": sub.get("standard_fields", {}).get("first_name", ""),
+                # FIX: include full standard_fields and custom_fields so
+                # field mapping works in send_ab_test_single_email
+                "standard_fields": sub.get("standard_fields", {}),
                 "custom_fields": sub.get("custom_fields", {}),
+                # Keep first_name at top level for convenience
+                "first_name": sub.get("standard_fields", {}).get("first_name", ""),
             }
         )
     return assignments
@@ -353,11 +368,6 @@ def calculate_statistical_significance(results: Dict) -> Dict:
 
 
 # ============================================================
-# HELPER: apply winner to campaign (sync, used by Celery)
-# ============================================================
-
-
-# ============================================================
 # ROUTES
 # ============================================================
 
@@ -380,8 +390,6 @@ async def get_all_ab_tests():
 async def get_available_lists():
     try:
         col = get_subscribers_collection()
-        # Support subscribers that store list membership as a single string field
-        # ("list") OR as an array field ("lists") — unify with $facet then merge.
         pipeline = [
             {"$match": {"status": "active"}},
             {
@@ -491,10 +499,8 @@ async def create_ab_test(test: ABTestCreate):
             "winner_criteria": test.winner_criteria,
             "test_duration_hours": test.test_duration_hours,
             "auto_send_winner": test.auto_send_winner,
-            # ── personalisation ─────────────────────────────
             "field_map": test.field_map or {},
             "fallback_values": test.fallback_values or {},
-            # ────────────────────────────────────────────────
             "status": TestStatus.DRAFT,
             "total_target_subscribers": total_subscribers,
             "created_at": datetime.utcnow(),
@@ -505,10 +511,7 @@ async def create_ab_test(test: ABTestCreate):
         test_id_str = str(result.inserted_id)
         test_doc["_id"] = test_id_str
 
-        logger.info(
-            f"A/B test created: {result.inserted_id} "
-            f"lists={test.target_lists} segments={test.target_segments or []}"
-        )
+        logger.info(f"A/B test created: {result.inserted_id}")
         return {
             "message": "A/B test created successfully",
             "test_id": test_id_str,
@@ -543,9 +546,6 @@ async def get_ab_test(test_id: str):
         )
 
 
-# FIX C-01: start_ab_test was nested inside get_ab_test after a return statement.
-# FastAPI never registered it — POST /ab-tests/{id}/start returned 405.
-# Extracted here as a proper top-level route.
 @router.post("/ab-tests/{test_id}/start")
 async def start_ab_test(test_id: str):
     try:
@@ -561,43 +561,33 @@ async def start_ab_test(test_id: str):
                 status_code=400, detail="Test must be in draft status to start"
             )
 
-        # ── 1. Build content snapshot before changing status ─────────────────
+        # Build content snapshot
         template_id = test.get("template_id")
         if not template_id:
-            raise HTTPException(
-                status_code=400,
-                detail="A/B test has no template_id — cannot start",
-            )
+            raise HTTPException(status_code=400, detail="A/B test has no template_id")
 
         if not ObjectId.is_valid(template_id):
-            raise HTTPException(
-                status_code=400,
-                detail=f"Invalid template_id '{template_id}' stored on test",
-            )
+            raise HTTPException(status_code=400, detail=f"Invalid template_id '{template_id}'")
 
         templates_col = get_templates_collection()
         template = await templates_col.find_one({"_id": ObjectId(template_id)})
         if not template:
             raise HTTPException(
                 status_code=404,
-                detail=(
-                    f"Template '{template_id}' not found — "
-                    "it may have been deleted. Update the A/B test before starting."
-                ),
+                detail=f"Template '{template_id}' not found — it may have been deleted.",
             )
 
-        # Reuse the same snapshot builder used by campaigns.
         try:
             from tasks.campaign.snapshot_utils import build_snapshot
-
             snapshot = build_snapshot(template, test)
         except ValueError as ve:
             raise HTTPException(status_code=422, detail=str(ve))
 
-        # ── 2. Get subscribers and assign variants ────────────────────────────
+        # Get subscribers and assign variants
+        # FIX: cast sample_size to int (may be stored as float in MongoDB)
         subscribers = await get_test_subscribers(
             test.get("target_lists", []),
-            int(test["sample_size"]),  # MongoDB may return as float
+            int(test["sample_size"]),
             test.get("target_segments", []),
         )
         if not subscribers:
@@ -607,7 +597,7 @@ async def start_ab_test(test_id: str):
 
         variant_assignments = assign_variants(subscribers, test["split_percentage"])
 
-        # ── 3. Persist snapshot + status=running atomically ──────────────────
+        # Persist snapshot + status=running atomically
         await col.update_one(
             {"_id": ObjectId(test_id)},
             {
@@ -622,7 +612,6 @@ async def start_ab_test(test_id: str):
             },
         )
 
-        # ── 4. Trigger Celery batch AFTER snapshot is persisted ───────────────
         task = send_ab_test_batch.delay(test_id, variant_assignments)
         logger.info(f"A/B test started: {test_id}, task={task.id}")
 
@@ -669,14 +658,13 @@ async def get_ab_test_results(test_id: str):
             "sender_name": test.get("sender_name", ""),
             "results": results,
             "winner": winner,
-            "winner_info": winner,  # alias for frontend compat
+            "winner_info": winner,
             "statistical_significance": significance,
             "start_date": test.get("start_date"),
             "end_date": test.get("end_date"),
             "sample_size": test.get("sample_size"),
             "split_percentage": test.get("split_percentage"),
             "winner_criteria": test.get("winner_criteria", "open_rate"),
-            # ── new fields ──────────────────────────────────
             "test_duration_hours": test.get("test_duration_hours"),
             "auto_send_winner": test.get("auto_send_winner", True),
             "winner_variant": test.get("winner_variant"),
@@ -712,10 +700,11 @@ async def complete_ab_test(test_id: str, request: CompleteTestRequest):
         if test["status"] == TestStatus.COMPLETED:
             raise HTTPException(status_code=400, detail="Test is already completed")
 
-        if test["status"] != TestStatus.RUNNING:
+        # Allow completing from running OR stopped state
+        if test["status"] not in (TestStatus.RUNNING, TestStatus.STOPPED):
             raise HTTPException(
                 status_code=400,
-                detail=f"Test must be running to complete (current: {test['status']})",
+                detail=f"Test must be running or stopped to complete (current: {test['status']})",
             )
 
         results = await calculate_test_results(test_id)
@@ -749,9 +738,7 @@ async def complete_ab_test(test_id: str, request: CompleteTestRequest):
         if campaign_applied:
             msg += " Sending winning variant to remaining subscribers."
 
-        logger.info(
-            f"A/B test manually completed: {test_id}, winner={winner.get('winner')}"
-        )
+        logger.info(f"A/B test completed: {test_id}, winner={winner.get('winner')}")
         return {
             "message": msg,
             "test_id": test_id,
@@ -770,17 +757,31 @@ async def complete_ab_test(test_id: str, request: CompleteTestRequest):
 
 @router.post("/ab-tests/{test_id}/stop")
 async def stop_ab_test(test_id: str):
+    """
+    Stop a running test without completing it or declaring a winner.
+    The test can later be completed via the complete endpoint.
+    """
     try:
         col = get_ab_tests_collection()
         if not ObjectId.is_valid(test_id):
             raise HTTPException(status_code=400, detail="Invalid test ID")
 
+        test = await col.find_one({"_id": ObjectId(test_id)})
+        if not test:
+            raise HTTPException(status_code=404, detail="A/B test not found")
+
+        if test["status"] != TestStatus.RUNNING:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Only running tests can be stopped (current: {test['status']})",
+            )
+
         result = await col.update_one(
             {"_id": ObjectId(test_id)},
             {
                 "$set": {
-                    "status": TestStatus.COMPLETED,
-                    "end_date": datetime.utcnow(),
+                    "status": TestStatus.STOPPED,
+                    "stopped_at": datetime.utcnow(),
                     "updated_at": datetime.utcnow(),
                 }
             },
@@ -789,7 +790,11 @@ async def stop_ab_test(test_id: str):
             raise HTTPException(status_code=404, detail="A/B test not found")
 
         logger.info(f"A/B test stopped: {test_id}")
-        return {"message": "A/B test stopped successfully", "test_id": test_id}
+        return {
+            "message": "A/B test stopped. You can still complete it and declare a winner.",
+            "test_id": test_id,
+            "status": "stopped",
+        }
 
     except HTTPException:
         raise
