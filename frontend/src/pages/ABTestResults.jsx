@@ -1,26 +1,30 @@
-import { useState, useEffect, useCallback } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useState, useEffect, useRef, useCallback } from "react";
+import { Link } from "react-router-dom";
 import API from "../api";
 
 function useToast() {
   const [toasts, setToasts] = useState([]);
   const show = useCallback((message, type = "info") => {
     const id = Date.now();
-    setToasts(p => [...p, { id, message, type }]);
-    setTimeout(() => setToasts(p => p.filter(t => t.id !== id)), 4000);
+    setToasts((p) => [...p, { id, message, type }]);
+    setTimeout(() => setToasts((p) => p.filter((t) => t.id !== id)), 4000);
   }, []);
-  const dismiss = (id) => setToasts(p => p.filter(t => t.id !== id));
+  const dismiss = (id) => setToasts((p) => p.filter((t) => t.id !== id));
   return { toasts, show, dismiss };
 }
 
 function ToastContainer({ toasts, dismiss }) {
   return (
     <div className="fixed top-4 right-4 z-50 space-y-2 pointer-events-none">
-      {toasts.map(t => (
-        <div key={t.id} onClick={() => dismiss(t.id)}
+      {toasts.map((t) => (
+        <div
+          key={t.id}
+          onClick={() => dismiss(t.id)}
           className={`pointer-events-auto flex items-center gap-2 px-4 py-3 rounded-lg shadow-lg text-sm font-medium cursor-pointer max-w-sm
-            ${t.type === "success" ? "bg-green-600 text-white" : t.type === "error" ? "bg-red-600 text-white" : "bg-gray-800 text-white"}`}>
-          {t.type === "success" ? "✓" : t.type === "error" ? "✕" : "ℹ"} {t.message}
+            ${t.type === "success" ? "bg-green-600 text-white" : t.type === "error" ? "bg-red-600 text-white" : "bg-gray-800 text-white"}`}
+        >
+          {t.type === "success" ? "✓" : t.type === "error" ? "✕" : "ℹ"}{" "}
+          {t.message}
         </div>
       ))}
     </div>
@@ -51,6 +55,7 @@ const ABTestResults = () => {
   const [sending, setSending] = useState(false);
   const [timeLeft, setTimeLeft] = useState(null);
 
+
   const fetchResults = useCallback(async () => {
     try {
       const response = await API.get(`/ab-tests/${testId}/results`);
@@ -62,6 +67,7 @@ const ABTestResults = () => {
       setLoading(false);
     }
   }, [testId]);
+   
 
   // Auto-refresh every 30 s while running
   useEffect(() => {
@@ -127,14 +133,62 @@ const ABTestResults = () => {
     }
   };
 
+  const [winnerSendProgress, setWinnerSendProgress] = useState(null);
+  const [stoppingWinnerSend, setStoppingWinnerSend] = useState(false);
+
+  // Poll winner send progress when test is completed and send is running
+  useEffect(() => {
+    if (!results) return;
+    const sendStatus = results.winner_send_status;
+    if (sendStatus !== "running") {
+      // Use whatever progress is embedded in results
+      if (results.winner_send_progress)
+        setWinnerSendProgress(results.winner_send_progress);
+      return;
+    }
+    const poll = async () => {
+      try {
+        const res = await API.get(`/ab-tests/${testId}/winner-send-progress`);
+        setWinnerSendProgress(res.data);
+      } catch {
+        // ignore polling errors
+      }
+    };
+    poll();
+    const id = setInterval(poll, 5000);
+    return () => clearInterval(id);
+  }, [results?.winner_send_status, testId]);
+
+  const handleStopWinnerSend = async () => {
+    if (
+      !window.confirm(
+        "Stop sending the winner variant to remaining subscribers?",
+      )
+    )
+      return;
+    setStoppingWinnerSend(true);
+    try {
+      await API.post(`/ab-tests/${testId}/stop-winner-send`);
+      toast("Winner send stopped.", "success");
+      fetchResults();
+    } catch (err) {
+      toast(
+        err.response?.data?.detail || "Failed to stop winner send",
+        "error",
+      );
+    } finally {
+      setStoppingWinnerSend(false);
+    }
+  };
+
   // ── Render guards ──────────────────────────────────────────
 
   if (loading) {
     return (
       <div className="flex items-center justify-center py-24 gap-3 text-gray-400">
-    <div className="animate-spin h-5 w-5 border-2 border-gray-300 border-t-blue-500 rounded-full" />
-    Loading results…
-  </div>
+        <div className="animate-spin h-5 w-5 border-2 border-gray-300 border-t-blue-500 rounded-full" />
+        Loading results…
+      </div>
     );
   }
 
@@ -191,8 +245,12 @@ const ABTestResults = () => {
       {/* ── Header ── */}
       <div className="flex items-center justify-between">
         <div>
-          <p className="text-base font-semibold text-gray-900">{results.test_name}</p>
-          <p className="text-xs text-gray-400 mt-0.5">{results.test_type?.replace("_", " ")} test</p>
+          <p className="text-base font-semibold text-gray-900">
+            {results.test_name}
+          </p>
+          <p className="text-xs text-gray-400 mt-0.5">
+            {results.test_type?.replace("_", " ")} test
+          </p>
         </div>
         <button
           onClick={() => navigate("/ab-testing")}
@@ -655,6 +713,7 @@ const ABTestResults = () => {
       <div className="bg-white shadow rounded-lg p-6">
         <h3 className="text-lg font-semibold mb-4">Actions</h3>
 
+        {/* Running test */}
         {isRunning && (
           <div className="space-y-3">
             <div className="flex flex-col sm:flex-row gap-3">
@@ -667,51 +726,184 @@ const ABTestResults = () => {
               >
                 {completing
                   ? "Completing..."
-                  : "✅ Complete Test & Apply Winner"}
+                  : "✅ Complete Test & Send Winner"}
               </button>
               <button
                 onClick={() => handleCompleteTest(false)}
                 disabled={completing}
                 className="flex-1 bg-gray-600 hover:bg-gray-700 disabled:opacity-50 text-white py-3 px-6 rounded-lg font-semibold transition-colors"
               >
-                Complete Without Applying
+                Complete Without Sending
               </button>
             </div>
             {(!winner.winner || winner.winner === "TIE") && (
               <p className="text-xs text-amber-600">
-                ⚠️ A clear winner is needed to apply the variant. You can still
-                complete the test without applying.
+                ⚠️ A clear winner is needed to send the variant. You can still
+                complete without sending.
               </p>
             )}
             <p className="text-xs text-gray-400">
-              ℹ️ The test will also be auto-completed by the system after the
-              configured duration.
+              ℹ️ The test will also auto-complete after the configured duration.
             </p>
           </div>
         )}
 
-        {isCompleted && results.campaign_id && (
+        {/* Stopped test — can still complete */}
+        {results.status === "stopped" && (
           <div className="space-y-3">
-            <button
-              onClick={handleSendCampaign}
-              disabled={sending}
-              className="w-full sm:w-auto bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white py-3 px-6 rounded-lg font-semibold transition-colors"
-            >
-              {sending
-                ? "Initiating..."
-                : "📤 Send Campaign to Remaining Subscribers"}
-            </button>
-            <p className="text-sm text-gray-500">
-              A/B test participants will be automatically excluded from this
-              send.
-            </p>
+            <div className="flex items-center gap-3 bg-orange-50 border border-orange-200 rounded-lg px-4 py-3 mb-3">
+              <span className="text-orange-600 text-lg">🛑</span>
+              <p className="text-sm text-orange-800">
+                Test is stopped. Emails were halted. You can still complete it
+                to declare a winner and send to remaining subscribers.
+              </p>
+            </div>
+            <div className="flex flex-col sm:flex-row gap-3">
+              <button
+                onClick={() => handleCompleteTest(true)}
+                disabled={
+                  completing || !winner.winner || winner.winner === "TIE"
+                }
+                className="flex-1 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white py-3 px-6 rounded-lg font-semibold transition-colors"
+              >
+                {completing ? "Completing..." : "✅ Complete & Send Winner"}
+              </button>
+              <button
+                onClick={() => handleCompleteTest(false)}
+                disabled={completing}
+                className="flex-1 bg-gray-600 hover:bg-gray-700 disabled:opacity-50 text-white py-3 px-6 rounded-lg font-semibold transition-colors"
+              >
+                Complete Without Sending
+              </button>
+            </div>
           </div>
         )}
 
-        {isCompleted && !results.campaign_id && (
-          <p className="text-gray-500 text-sm">
-            Test completed. No linked campaign found for sending.
-          </p>
+        {/* Completed — show winner send status */}
+        {isCompleted && (
+          <div className="space-y-4">
+            {/* Winner send progress panel */}
+            {(results.winner_send_status === "running" ||
+              winnerSendProgress?.status === "running") && (
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <div className="animate-spin h-4 w-4 border-2 border-blue-300 border-t-blue-600 rounded-full" />
+                    <span className="text-sm font-semibold text-blue-800">
+                      Sending Variant {results.winner_variant} to remaining
+                      subscribers…
+                    </span>
+                  </div>
+                  <button
+                    onClick={handleStopWinnerSend}
+                    disabled={stoppingWinnerSend}
+                    className="px-3 py-1.5 text-xs font-semibold bg-red-600 hover:bg-red-700 text-white rounded-lg disabled:opacity-50"
+                  >
+                    {stoppingWinnerSend ? "Stopping…" : "🛑 Stop Send"}
+                  </button>
+                </div>
+
+                {winnerSendProgress && (
+                  <>
+                    <div className="flex justify-between text-xs text-blue-700 mb-1.5">
+                      <span>
+                        {Number(winnerSendProgress.sent || 0).toLocaleString()}{" "}
+                        sent
+                        {winnerSendProgress.total
+                          ? ` of ${Number(winnerSendProgress.total).toLocaleString()}`
+                          : ""}
+                      </span>
+                      {winnerSendProgress.progress_pct != null && (
+                        <span>{winnerSendProgress.progress_pct}%</span>
+                      )}
+                    </div>
+                    {winnerSendProgress.progress_pct != null && (
+                      <div className="bg-blue-200 rounded-full h-2">
+                        <div
+                          className="bg-blue-600 h-2 rounded-full transition-all duration-500"
+                          style={{
+                            width: `${Math.min(winnerSendProgress.progress_pct, 100)}%`,
+                          }}
+                        />
+                      </div>
+                    )}
+                  </>
+                )}
+                <p className="text-xs text-blue-600 mt-2">
+                  Refreshes every 5 seconds. You can stop the send at any time.
+                </p>
+              </div>
+            )}
+
+            {/* Winner send stopped mid-way */}
+            {(results.winner_send_status === "stopped" ||
+              winnerSendProgress?.status === "stopped") && (
+              <div className="flex items-center gap-3 bg-orange-50 border border-orange-200 rounded-lg px-4 py-3">
+                <span className="text-orange-600 text-xl">🛑</span>
+                <div>
+                  <p className="text-sm font-semibold text-orange-800">
+                    Winner send was stopped
+                  </p>
+                  <p className="text-xs text-orange-600 mt-0.5">
+                    {Number(
+                      winnerSendProgress?.sent ||
+                        results.winner_send_count ||
+                        0,
+                    ).toLocaleString()}{" "}
+                    emails were sent before stopping.
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* Winner send completed */}
+            {(results.winner_send_status === "completed" ||
+              winnerSendProgress?.status === "completed") && (
+              <div className="flex items-center gap-3 bg-green-50 border border-green-200 rounded-lg px-4 py-3">
+                <span className="text-green-600 text-xl">✅</span>
+                <div>
+                  <p className="text-sm font-semibold text-green-800">
+                    Winner send complete — Variant {results.winner_variant}
+                  </p>
+                  <p className="text-xs text-green-600 mt-0.5">
+                    {Number(
+                      winnerSendProgress?.sent ||
+                        results.winner_send_count ||
+                        0,
+                    ).toLocaleString()}{" "}
+                    emails sent to remaining subscribers
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* No winner send yet — dispatched but not started */}
+            {results.winner_send_status === "dispatched" &&
+              !winnerSendProgress && (
+                <div className="flex items-center gap-3 bg-blue-50 border border-blue-200 rounded-lg px-4 py-3">
+                  <div className="animate-spin h-4 w-4 border-2 border-blue-300 border-t-blue-600 rounded-full" />
+                  <p className="text-sm text-blue-800">
+                    Winner send is queued — starting soon…
+                  </p>
+                </div>
+              )}
+
+            {/* Test completed but no winner to send (TIE or auto_send disabled) */}
+            {!results.winner_send_status && (
+              <div className="flex items-center gap-3 bg-gray-50 border border-gray-200 rounded-lg px-4 py-3">
+                <span className="text-gray-400 text-xl">
+                  {results.winner_variant === "TIE" ? "🤝" : "ℹ️"}
+                </span>
+                <p className="text-sm text-gray-600">
+                  {results.winner_variant === "TIE"
+                    ? "Test resulted in a tie — no winner was sent to remaining subscribers."
+                    : results.auto_send_winner === false
+                      ? "Auto-send was disabled for this test."
+                      : "Test completed."}
+                </p>
+              </div>
+            )}
+          </div>
         )}
       </div>
 
