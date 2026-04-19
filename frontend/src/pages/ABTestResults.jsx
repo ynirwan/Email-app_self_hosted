@@ -1,5 +1,5 @@
-import { useState, useEffect, useRef, useCallback } from "react";
-import { Link } from "react-router-dom";
+import { useState, useEffect, useCallback } from "react";
+import { useParams, useNavigate } from "react-router-dom";
 import API from "../api";
 
 function useToast() {
@@ -55,7 +55,6 @@ const ABTestResults = () => {
   const [sending, setSending] = useState(false);
   const [timeLeft, setTimeLeft] = useState(null);
 
-
   const fetchResults = useCallback(async () => {
     try {
       const response = await API.get(`/ab-tests/${testId}/results`);
@@ -67,7 +66,6 @@ const ABTestResults = () => {
       setLoading(false);
     }
   }, [testId]);
-   
 
   // Auto-refresh every 30 s while running
   useEffect(() => {
