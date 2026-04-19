@@ -21,6 +21,7 @@ import Segmentation from "./pages/Segmentation";
 import ABTestingDashboard from "./pages/ABTestingDashboard";
 import ABTestCreator from "./pages/ABTestCreator";
 import ABTestResults from "./pages/ABTestResults";
+import ABTestWinnerReport from "./pages/ABTestWinnerReport";
 
 // ✅ Default imports - NO curly braces
 import AutomationDashboard from "./pages/AutomationDashboard";
@@ -67,6 +68,10 @@ const App = () => {
             <Route
               path="ab-tests/:testId/results"
               element={<ABTestResults />}
+            />
+            <Route
+              path="ab-tests/:testId/winner-report"
+              element={<ABTestWinnerReport />}
             />
 
             {/* New Automation Routes */}
