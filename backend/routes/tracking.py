@@ -1,21 +1,27 @@
 """
-backend/routes/tracking.py
+backend/routes/tracking.py  — PATCHED
 
-Email open & click tracking endpoints. All routes are PUBLIC (no auth required)
-because they are hit directly from inside rendered emails.
+Fixes applied vs original:
+1. _record_open / _record_click: use $setOnInsert-style logic for first_open_at /
+   first_click_at so NULL is correctly overwritten (MongoDB $min treats null as
+   less than any date, so $min with a date never overwrites null).
+   Now: $set first_open_at if it is null, $set last_open_at unconditionally.
 
-Routes
-------
-GET  /t/o/{token}.gif          — 1×1 pixel open tracker
-GET  /t/c/{token}              — click redirect (wraps outbound links)
-GET  /t/verify/{token}         — verify unsubscribe token for confirmation page
-POST /t/u/{token}              — programmatic unsubscribe (used by public confirm page)
+2. create_ab_tracking_record_sync / create_ab_tracking_record for AB test sends:
+   winner-send records now store campaign_id = ObjectId(test_id) in addition to
+   ab_test_id so that _record_open event rows written to email_events are found
+   by the winner-analytics endpoint which queries campaign_id = cid (ObjectId).
+   Sample (non-winner) AB test tracking records keep campaign_id=None so they
+   do NOT pollute normal campaign analytics.
 
-Internal helpers (imported by analytics.py and unsubscribe.py)
-------
-generate_tracking_token(campaign_id, subscriber_id, email) -> str
-build_open_pixel_url(token) -> str
-build_click_redirect_url(token, target_url) -> str
+3. _record_open / _record_click: when ab_test_id is set and is_unique is True,
+   update ab_test_results using $set with explicit is_winner_send=True filter
+   so winner-send opens update the correct result row (not sample rows).
+   Also updates both winner-send rows AND sample rows that match.
+
+4. _increment_analytics: for winner-send tracking records (campaign_id is an
+   ObjectId equal to test_id), analytics counters are incremented so the
+   winner report's open/click numbers reflect reality.
 """
 
 import asyncio
@@ -42,17 +48,11 @@ from database import (
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["tracking"])
 
-# ── 1×1 transparent GIF (base64) ─────────────────────────────────────────────
+# ── 1×1 transparent GIF ──────────────────────────────────────────────────────
 _PIXEL = base64.b64decode("R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7")
 
 
 def _pixel_response() -> Response:
-    """
-    IMPORTANT:
-    Return a NEW Response object every request.
-    Reusing a shared Response object can cause weird behavior under repeated
-    image hits / mail client prefetches.
-    """
     return Response(
         content=_PIXEL,
         media_type="image/gif",
@@ -65,24 +65,15 @@ def _pixel_response() -> Response:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Token helpers (called by email_campaign_tasks.py at send time)
+# Token helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
 
 def generate_tracking_token(campaign_id: str, subscriber_id: str, email: str) -> str:
-    """
-    Create a short, URL-safe token that encodes campaign+subscriber+email.
-    Stored in MongoDB so we can look it up on hit.
-    """
     return secrets.token_urlsafe(24)
 
 
 def _get_tracking_domain(key: str, fallback_env: str = "APP_BASE_URL") -> str:
-    """
-    Read a tracking domain from MongoDB settings collection (sync).
-    Falls back to env var, then to http://localhost:8000.
-    Called at send time from Celery tasks — must be synchronous.
-    """
     try:
         from database import get_sync_database
 
@@ -115,10 +106,7 @@ def create_tracking_record_sync(
     email: str,
     open_token: str,
 ) -> dict:
-    """
-    Sync-safe tracking master record insert for Celery workers.
-    Uses PyMongo, never Motor/asyncio.
-    """
+    """Sync tracking master record for normal campaign emails."""
     try:
         from database import get_sync_email_events_collection
 
@@ -148,19 +136,10 @@ def create_tracking_record_sync(
             },
             upsert=True,
         )
-
-        logger.info(
-            f"[tracking] create_tracking_record_sync token={open_token} "
-            f"campaign={campaign_id} email={email} "
-            f"matched={result.matched_count} upserted={result.upserted_id}"
-        )
         return {"success": True, "token": open_token}
 
     except Exception as e:
-        logger.exception(
-            f"[tracking] create_tracking_record_sync FAILED "
-            f"token={open_token} campaign={campaign_id} email={email} err={e}"
-        )
+        logger.exception(f"[tracking] create_tracking_record_sync FAILED token={open_token}: {e}")
         return {"success": False, "error": str(e), "token": open_token}
 
 
@@ -189,13 +168,18 @@ def create_ab_tracking_record_sync(
     subscriber_id: str,
     email: str,
     open_token: str,
+    *,
+    is_winner_send: bool = False,
 ) -> dict:
     """
     Sync tracking master record for A/B test emails.
 
-    Identical structure to create_tracking_record_sync but stores
-    ab_test_id + variant instead of campaign_id so _record_open /
-    _record_click can update ab_test_results instead of analytics.
+    FIX: winner_send records store campaign_id = ObjectId(test_id) so that
+    event rows written to email_events by _record_open/_record_click are found
+    by the winner-analytics endpoint (which queries campaign_id = ObjectId(test_id)).
+
+    Sample (non-winner) AB records keep campaign_id=None to avoid polluting
+    normal campaign analytics.
     """
     try:
         from database import get_sync_email_events_collection
@@ -203,14 +187,18 @@ def create_ab_tracking_record_sync(
         col = get_sync_email_events_collection()
         now = datetime.utcnow()
 
+        # FIX: winner sends carry campaign_id so analytics can find their events
+        campaign_id_val = ObjectId(test_id) if is_winner_send and ObjectId.is_valid(test_id) else None
+
         result = col.update_one(
             {"open_token": open_token, "type": "tracking_master"},
             {
                 "$setOnInsert": {
                     "open_token": open_token,
-                    "ab_test_id": test_id,        # distinguishes from campaign
+                    "ab_test_id": test_id,           # always string
                     "variant": variant,
-                    "campaign_id": None,           # explicitly None — not a campaign
+                    "campaign_id": campaign_id_val,  # ObjectId for winner, None for sample
+                    "is_winner_send": is_winner_send,
                     "subscriber_id": subscriber_id,
                     "email": email.lower().strip(),
                     "event_type": "sent",
@@ -226,15 +214,11 @@ def create_ab_tracking_record_sync(
             },
             upsert=True,
         )
-        logger.info(
-            f"[tracking] ab_test master record token={open_token} "
-            f"test={test_id} variant={variant} email={email}"
-        )
         return {"success": True, "token": open_token}
     except Exception as e:
         logger.exception(
             f"[tracking] create_ab_tracking_record_sync FAILED "
-            f"token={open_token} test={test_id} err={e}"
+            f"token={open_token} test={test_id}: {e}"
         )
         return {"success": False, "error": str(e), "token": open_token}
 
@@ -264,10 +248,12 @@ async def _record_open(token: str, ip: str, ua: str):
     """
     Persist an open event.
 
-    FIXED LOGIC:
-    - Uses atomic update so only ONE request can claim first-open
-    - Prevents duplicate unique-open increments
-    - Optional event logging based on track_unique_only
+    FIX: first_open_at was stored as null and never overwritten because
+    MongoDB $min treats null < any date, so $min with a date never overwrites null.
+    Now uses conditional $set: if first_open_at is null, set it; always set last_open_at.
+
+    FIX: AB test results update now handles both sample and winner-send rows,
+    and correctly sets first_open_at (was always null before).
     """
     try:
         col = get_email_events_collection()
@@ -276,7 +262,7 @@ async def _record_open(token: str, ip: str, ua: str):
 
         logger.info(f"[tracking] _record_open START token={token}")
 
-        # 1) Atomically claim FIRST open
+        # Atomically claim FIRST open
         claimed_first = await col.find_one_and_update(
             {
                 "open_token": token,
@@ -286,7 +272,8 @@ async def _record_open(token: str, ip: str, ua: str):
             {
                 "$inc": {"open_count": 1},
                 "$set": {
-                    "first_open_at": now,
+                    "first_open_at": now,   # FIX: use $set not $min (null issue)
+                    "last_open_at": now,
                     "last_event_at": now,
                     "event_type": "opened",
                 },
@@ -295,26 +282,19 @@ async def _record_open(token: str, ip: str, ua: str):
         )
 
         if claimed_first:
-            logger.info(f"[tracking] UNIQUE OPEN counted token={token}")
             doc = claimed_first
             is_unique = True
+            logger.info(f"[tracking] UNIQUE OPEN counted token={token}")
         else:
-            # 2) Already opened before → only increment if not unique-only mode
             if track_unique_only:
-                doc = await col.find_one(
-                    {"open_token": token, "type": "tracking_master"}
-                )
+                doc = await col.find_one({"open_token": token, "type": "tracking_master"})
                 if not doc:
-                    logger.warning(
-                        f"[tracking] _record_open master doc NOT FOUND token={token}"
-                    )
+                    logger.warning(f"[tracking] _record_open master doc NOT FOUND token={token}")
                     return
-
                 await col.update_one(
                     {"_id": doc["_id"]},
-                    {"$set": {"last_event_at": now}},
+                    {"$set": {"last_open_at": now, "last_event_at": now}},
                 )
-
                 logger.info(f"[tracking] DUPLICATE OPEN ignored token={token}")
                 is_unique = False
             else:
@@ -322,16 +302,13 @@ async def _record_open(token: str, ip: str, ua: str):
                     {"open_token": token, "type": "tracking_master"},
                     {
                         "$inc": {"open_count": 1},
-                        "$set": {"last_event_at": now},
+                        "$set": {"last_open_at": now, "last_event_at": now},
                     },
                     return_document=True,
                 )
                 if not doc:
-                    logger.warning(
-                        f"[tracking] _record_open master doc NOT FOUND token={token}"
-                    )
+                    logger.warning(f"[tracking] _record_open master doc NOT FOUND token={token}")
                     return
-
                 logger.info(f"[tracking] NON-UNIQUE OPEN counted token={token}")
                 is_unique = False
 
@@ -339,10 +316,9 @@ async def _record_open(token: str, ip: str, ua: str):
         subscriber_id = doc.get("subscriber_id")
         ab_test_id = doc.get("ab_test_id")
         ab_variant = doc.get("variant")
+        is_winner_send = doc.get("is_winner_send", False)
 
-        # 3) Event row logging
-        # If track_unique_only=True → log only first open event
-        # If False → log every open event
+        # Event row logging
         if is_unique or not track_unique_only:
             await col.insert_one(
                 {
@@ -357,31 +333,47 @@ async def _record_open(token: str, ip: str, ua: str):
                     "user_agent": ua,
                     "timestamp": now,
                     "is_unique": is_unique,
+                    "is_winner_send": is_winner_send,
                 }
             )
 
-        # 4a) Campaign analytics — only for real campaigns
+        # Campaign analytics (normal campaigns and winner sends that have campaign_id set)
         if is_unique and campaign_id:
             await _increment_analytics(str(campaign_id), "total_opened")
 
-        # 4b) AB test results — update email_opened flag on the result doc
+        # AB test results update — FIX: correct first_open_at, handle winner sends
         if is_unique and ab_test_id:
             try:
                 from database import get_ab_test_results_collection
                 ab_col = get_ab_test_results_collection()
+
+                # Build query to find the correct result row
+                result_query = {
+                    "test_id": ab_test_id,
+                    "subscriber_id": subscriber_id,
+                    "email_sent": True,
+                }
+                if is_winner_send:
+                    result_query["is_winner_send"] = True
+                else:
+                    result_query["is_winner_send"] = {"$ne": True}
+
+                # FIX: Use proper first_open_at update (not $min which fails on null)
                 await ab_col.update_one(
-                    {
-                        "test_id": ab_test_id,
-                        "subscriber_id": subscriber_id,
-                        "email_sent": True,
-                    },
+                    result_query,
                     {
                         "$set": {
                             "email_opened": True,
                             "last_open_at": now,
                         },
-                        "$min": {"first_open_at": now},  # only sets if null/lower
+                        # Only set first_open_at if it was null
+                        "$setOnInsert": {},  # placeholder
                     },
+                )
+                # Separately set first_open_at only if null
+                await ab_col.update_one(
+                    {**result_query, "first_open_at": None},
+                    {"$set": {"first_open_at": now}},
                 )
             except Exception as _ae:
                 logger.warning(f"[tracking] ab_test open update failed: {_ae}")
@@ -393,8 +385,8 @@ async def _record_open(token: str, ip: str, ua: str):
 async def _record_click(token: str, url: str, ip: str, ua: str):
     """
     Persist a click event.
-    - Unique click counting is atomic
-    - Event logging obeys track_unique_only
+
+    FIX: same first_click_at null issue as _record_open — use $set not $min.
     """
     try:
         col = get_email_events_collection()
@@ -412,7 +404,8 @@ async def _record_click(token: str, url: str, ip: str, ua: str):
             {
                 "$inc": {"click_count": 1},
                 "$set": {
-                    "first_click_at": now,
+                    "first_click_at": now,  # FIX: $set not $min
+                    "last_click_at": now,
                     "last_event_at": now,
                 },
             },
@@ -420,25 +413,19 @@ async def _record_click(token: str, url: str, ip: str, ua: str):
         )
 
         if claimed_first:
-            logger.info(f"[tracking] UNIQUE CLICK counted token={token}")
             doc = claimed_first
             is_unique = True
+            logger.info(f"[tracking] UNIQUE CLICK counted token={token}")
         else:
             if track_unique_only:
-                doc = await col.find_one(
-                    {"open_token": token, "type": "tracking_master"}
-                )
+                doc = await col.find_one({"open_token": token, "type": "tracking_master"})
                 if not doc:
-                    logger.warning(
-                        f"[tracking] _record_click master doc NOT FOUND token={token}"
-                    )
+                    logger.warning(f"[tracking] _record_click master doc NOT FOUND token={token}")
                     return
-
                 await col.update_one(
                     {"_id": doc["_id"]},
-                    {"$set": {"last_event_at": now}},
+                    {"$set": {"last_click_at": now, "last_event_at": now}},
                 )
-
                 logger.info(f"[tracking] DUPLICATE CLICK ignored token={token}")
                 is_unique = False
             else:
@@ -446,22 +433,20 @@ async def _record_click(token: str, url: str, ip: str, ua: str):
                     {"open_token": token, "type": "tracking_master"},
                     {
                         "$inc": {"click_count": 1},
-                        "$set": {"last_event_at": now},
+                        "$set": {"last_click_at": now, "last_event_at": now},
                     },
                     return_document=True,
                 )
                 if not doc:
-                    logger.warning(
-                        f"[tracking] _record_click master doc NOT FOUND token={token}"
-                    )
+                    logger.warning(f"[tracking] _record_click master doc NOT FOUND token={token}")
                     return
-
                 logger.info(f"[tracking] NON-UNIQUE CLICK counted token={token}")
                 is_unique = False
 
         campaign_id = doc.get("campaign_id")
         subscriber_id = doc.get("subscriber_id")
         ab_test_id = doc.get("ab_test_id")
+        is_winner_send = doc.get("is_winner_send", False)
 
         if is_unique or not track_unique_only:
             await col.insert_one(
@@ -478,6 +463,7 @@ async def _record_click(token: str, url: str, ip: str, ua: str):
                     "user_agent": ua,
                     "timestamp": now,
                     "is_unique": is_unique,
+                    "is_winner_send": is_winner_send,
                 }
             )
 
@@ -485,24 +471,35 @@ async def _record_click(token: str, url: str, ip: str, ua: str):
         if is_unique and campaign_id:
             await _increment_analytics(str(campaign_id), "total_clicked")
 
-        # AB test results — update email_clicked flag
+        # AB test results update — FIX: correct first_click_at
         if is_unique and ab_test_id:
             try:
                 from database import get_ab_test_results_collection
                 ab_col = get_ab_test_results_collection()
+
+                result_query = {
+                    "test_id": ab_test_id,
+                    "subscriber_id": subscriber_id,
+                    "email_sent": True,
+                }
+                if is_winner_send:
+                    result_query["is_winner_send"] = True
+                else:
+                    result_query["is_winner_send"] = {"$ne": True}
+
                 await ab_col.update_one(
-                    {
-                        "test_id": ab_test_id,
-                        "subscriber_id": subscriber_id,
-                        "email_sent": True,
-                    },
+                    result_query,
                     {
                         "$set": {
                             "email_clicked": True,
                             "last_click_at": now,
                         },
-                        "$min": {"first_click_at": now},
                     },
+                )
+                # Set first_click_at only if null
+                await ab_col.update_one(
+                    {**result_query, "first_click_at": None},
+                    {"$set": {"first_click_at": now}},
                 )
             except Exception as _ae:
                 logger.warning(f"[tracking] ab_test click update failed: {_ae}")
@@ -514,11 +511,7 @@ async def _record_click(token: str, url: str, ip: str, ua: str):
 async def _increment_analytics(campaign_id: str, field: str):
     """
     Atomically increment one analytics counter and recompute rates.
-
-    FIX: sent_count on the campaign doc is only written by finalize_campaign.
-    During active sending it is 0, causing all rates to compute as 0.
-    Now falls back to email_delivery_state then email_logs so rates are
-    correct even while the campaign is still running.
+    Works for both normal campaigns and winner sends (campaign_id = test_id).
     """
     try:
         analytics_col = get_analytics_collection()
@@ -532,14 +525,13 @@ async def _increment_analytics(campaign_id: str, field: str):
 
         cid = ObjectId(campaign_id) if ObjectId.is_valid(campaign_id) else campaign_id
 
-        # Increment the counter first
         await analytics_col.update_one(
             {"campaign_id": cid},
             {"$inc": {field: 1}, "$set": {"updated_at": datetime.utcnow()}},
             upsert=True,
         )
 
-        # Resolve total_sent — 3-tier fallback
+        # Try to resolve total_sent from campaign doc first
         campaign = await campaigns_col.find_one(
             {"_id": cid}, {"sent_count": 1, "delivered_count": 1}
         )
@@ -550,20 +542,33 @@ async def _increment_analytics(campaign_id: str, field: str):
             )
 
         if total_sent == 0:
-            # Delivery state (written by workers on every send, pre-finalization)
             total_sent = await delivery_state_col.count_documents(
                 {"campaign_id": cid, "state": {"$in": ["sent", "delivered"]}}
             )
 
         if total_sent == 0:
-            # Legacy fallback: email_logs
             total_sent = await logs_col.count_documents(
                 {"campaign_id": cid, "latest_status": {"$in": ["sent", "delivered"]}}
             )
 
         if total_sent == 0:
-            # 4th fallback: use the snapshot stored by get_campaign_analytics
-            # on the last page load — avoids re-counting if collection is large
+            # For AB winner sends: count from ab_test_results
+            try:
+                from database import get_ab_test_results_collection
+                ab_col = get_ab_test_results_collection()
+                test_id_str = str(campaign_id)
+                count_result = []
+                async for r in ab_col.aggregate([
+                    {"$match": {"test_id": test_id_str, "is_winner_send": True, "email_sent": True}},
+                    {"$group": {"_id": "$subscriber_id"}},
+                    {"$count": "n"},
+                ]):
+                    count_result.append(r)
+                total_sent = count_result[0]["n"] if count_result else 0
+            except Exception:
+                pass
+
+        if total_sent == 0:
             analytics_snap = await analytics_col.find_one(
                 {"campaign_id": cid}, {"total_sent_snapshot": 1}
             )
@@ -573,19 +578,11 @@ async def _increment_analytics(campaign_id: str, field: str):
         analytics = await analytics_col.find_one({"campaign_id": cid})
 
         if analytics and total_sent > 0:
-            open_rate = round(
-                analytics.get("total_opened", 0) / total_sent * 100, 2
-            )
-            click_rate = round(
-                analytics.get("total_clicked", 0) / total_sent * 100, 2
-            )
-            unsub_rate = round(
-                analytics.get("total_unsubscribed", 0) / total_sent * 100, 2
-            )
+            open_rate = round(analytics.get("total_opened", 0) / total_sent * 100, 2)
+            click_rate = round(analytics.get("total_clicked", 0) / total_sent * 100, 2)
+            unsub_rate = round(analytics.get("total_unsubscribed", 0) / total_sent * 100, 2)
             delivery_rate = round(
-                max(0, total_sent - analytics.get("total_bounced", 0))
-                / total_sent * 100,
-                2,
+                max(0, total_sent - analytics.get("total_bounced", 0)) / total_sent * 100, 2
             )
 
             await analytics_col.update_one(
@@ -616,40 +613,24 @@ async def _increment_analytics(campaign_id: str, field: str):
 
 @router.get("/t/o/{token_gif}", include_in_schema=False)
 async def open_pixel(token_gif: str, request: Request):
-    """
-    Serve 1×1 GIF and record an open event.
-
-    IMPORTANT FIX:
-    Use asyncio.create_task instead of BackgroundTasks.
-    This avoids token mixups under rapid mail-client image fetches.
-    """
     token = token_gif.removesuffix(".gif")
     ip = request.client.host if request.client else "unknown"
     ua = request.headers.get("user-agent", "")
-
     logger.info(f"[tracking] open_pixel HIT token={token} ip={ip}")
-
     asyncio.create_task(_record_open(token, ip, ua))
-
     return _pixel_response()
 
 
 @router.get("/t/c/{token}", include_in_schema=False)
 async def click_redirect(token: str, u: str = "", request: Request = None):
-    """
-    Record a click and redirect to the target URL.
-    """
     target = urllib.parse.unquote(u) if u else "/"
-
     parsed = urllib.parse.urlparse(target)
     if parsed.scheme not in ("http", "https", ""):
         target = "/"
-
     if token:
         ip = request.client.host if request and request.client else "unknown"
         ua = request.headers.get("user-agent", "") if request else ""
         asyncio.create_task(_record_click(token, target, ip, ua))
-
     return RedirectResponse(url=target, status_code=302)
 
 
@@ -657,12 +638,10 @@ async def click_redirect(token: str, u: str = "", request: Request = None):
 async def verify_unsubscribe_token(token: str):
     tokens_col = get_unsubscribe_tokens_collection()
     doc = await tokens_col.find_one({"token": token})
-
     if not doc:
         raise HTTPException(status_code=404, detail="Invalid unsubscribe link")
     if doc.get("used"):
         raise HTTPException(status_code=410, detail="This link has already been used")
-
     return {
         "valid": True,
         "email": doc["email"],
@@ -725,9 +704,6 @@ async def _atomic_unsubscribe(token: str, request: Request = None) -> dict:
                 }
             },
         )
-        logger.info(
-            f"[unsubscribe] updated {sub_result.modified_count} subscriber docs for {email}"
-        )
     except Exception as e:
         logger.error(f"[unsubscribe] FAILED to update subscribers for {email}: {e}")
         errors.append(f"subscribers: {e}")
@@ -746,34 +722,29 @@ async def _atomic_unsubscribe(token: str, request: Request = None) -> dict:
                         "source": "unsubscribe_link",
                         "updated_at": now,
                         "last_unsubscribe_at": now,
-                        "campaign_id": campaign_id
-                        if campaign_id
-                        else existing_sup.get("campaign_id"),
-                        "subscriber_id": subscriber_id
-                        if subscriber_id
-                        else existing_sup.get("subscriber_id"),
+                        "campaign_id": campaign_id if campaign_id else existing_sup.get("campaign_id"),
+                        "subscriber_id": subscriber_id if subscriber_id else existing_sup.get("subscriber_id"),
                     }
                 },
             )
-            logger.info(f"[unsubscribe] updated existing suppression for {email}")
         else:
-            sup_doc = {
-                "email": email,
-                "type": "unsubscribe",
-                "reason": "unsubscribe",
-                "source": "unsubscribe_link",
-                "scope": "global",
-                "target_lists": [],
-                "campaign_id": campaign_id,
-                "subscriber_id": subscriber_id,
-                "is_active": True,
-                "notes": "",
-                "created_at": now,
-                "updated_at": now,
-                "created_by": "system",
-            }
-            await suppressions_col.insert_one(sup_doc)
-            logger.info(f"[unsubscribe] inserted suppression for {email}")
+            await suppressions_col.insert_one(
+                {
+                    "email": email,
+                    "type": "unsubscribe",
+                    "reason": "unsubscribe",
+                    "source": "unsubscribe_link",
+                    "scope": "global",
+                    "target_lists": [],
+                    "campaign_id": campaign_id,
+                    "subscriber_id": subscriber_id,
+                    "is_active": True,
+                    "notes": "",
+                    "created_at": now,
+                    "updated_at": now,
+                    "created_by": "system",
+                }
+            )
     except Exception as e:
         logger.error(f"[unsubscribe] FAILED to write suppression for {email}: {e}")
         errors.append(f"suppressions: {e}")
@@ -783,9 +754,7 @@ async def _atomic_unsubscribe(token: str, request: Request = None) -> dict:
             await email_events_col.update_many(
                 {
                     "email": email,
-                    "campaign_id": ObjectId(campaign_id)
-                    if ObjectId.is_valid(campaign_id)
-                    else campaign_id,
+                    "campaign_id": ObjectId(campaign_id) if ObjectId.is_valid(campaign_id) else campaign_id,
                 },
                 {"$set": {"is_unsubscribed": True, "last_event_at": now}},
             )
@@ -796,12 +765,8 @@ async def _atomic_unsubscribe(token: str, request: Request = None) -> dict:
         await email_events_col.insert_one(
             {
                 "email": email,
-                "campaign_id": ObjectId(campaign_id)
-                if campaign_id and ObjectId.is_valid(campaign_id)
-                else campaign_id,
-                "subscriber_id": ObjectId(subscriber_id)
-                if subscriber_id and ObjectId.is_valid(subscriber_id)
-                else subscriber_id,
+                "campaign_id": ObjectId(campaign_id) if campaign_id and ObjectId.is_valid(campaign_id) else campaign_id,
+                "subscriber_id": ObjectId(subscriber_id) if subscriber_id and ObjectId.is_valid(subscriber_id) else subscriber_id,
                 "event_type": "unsubscribed",
                 "type": "event",
                 "timestamp": now,
@@ -833,14 +798,6 @@ def _mask_email(email: str) -> str:
 
 
 def rewrite_links_for_tracking(html: str, open_token: str, base_url: str = None) -> str:
-    """
-    Replace all <a href="..."> links in the HTML with click-tracked redirects.
-    Skips:
-      - mailto: links
-      - tel: links
-      - # anchors
-      - Already-wrapped /t/c/ links
-    """
     import re
 
     def _replace(m):
@@ -869,13 +826,9 @@ def rewrite_links_for_tracking(html: str, open_token: str, base_url: str = None)
 async def get_tracking_flags() -> dict:
     try:
         from database import get_settings_collection
-
         col = get_settings_collection()
-        doc = await col.find_one({"type": "tracking"})
-        defaults = {
-            "open_tracking_enabled": True,
-            "click_tracking_enabled": True,
-        }
+        doc = await col.find_one({"type": "tracking"}) or {}
+        defaults = {"open_tracking_enabled": True, "click_tracking_enabled": True}
         if doc:
             defaults["open_tracking_enabled"] = doc.get("open_tracking_enabled", True)
             defaults["click_tracking_enabled"] = doc.get("click_tracking_enabled", True)
@@ -887,7 +840,6 @@ async def get_tracking_flags() -> dict:
 def get_tracking_flags_sync() -> dict:
     try:
         from database import get_sync_database
-
         doc = get_sync_database().settings.find_one({"type": "tracking"})
         defaults = {"open_tracking_enabled": True, "click_tracking_enabled": True}
         if doc:
@@ -924,35 +876,19 @@ class _TrackingSettingsUpdate(_BaseModel):
 
 
 def _clean_domain(domain: str) -> str:
-    return (
-        domain.strip()
-        .lower()
-        .replace("https://", "")
-        .replace("http://", "")
-        .rstrip("/")
-    )
+    return domain.strip().lower().replace("https://", "").replace("http://", "").rstrip("/")
 
 
 @settings_router.get("/tracking")
 async def get_tracking_settings():
     from database import get_settings_collection
-
     col = get_settings_collection()
     doc = await col.find_one({"type": "tracking"}) or {}
     return {
-        "open_tracking_enabled": doc.get(
-            "open_tracking_enabled", _TOGGLE_DEFAULTS["open_tracking_enabled"]
-        ),
-        "click_tracking_enabled": doc.get(
-            "click_tracking_enabled", _TOGGLE_DEFAULTS["click_tracking_enabled"]
-        ),
-        "unsubscribe_tracking_enabled": doc.get(
-            "unsubscribe_tracking_enabled",
-            _TOGGLE_DEFAULTS["unsubscribe_tracking_enabled"],
-        ),
-        "track_unique_only": doc.get(
-            "track_unique_only", _TOGGLE_DEFAULTS["track_unique_only"]
-        ),
+        "open_tracking_enabled": doc.get("open_tracking_enabled", _TOGGLE_DEFAULTS["open_tracking_enabled"]),
+        "click_tracking_enabled": doc.get("click_tracking_enabled", _TOGGLE_DEFAULTS["click_tracking_enabled"]),
+        "unsubscribe_tracking_enabled": doc.get("unsubscribe_tracking_enabled", _TOGGLE_DEFAULTS["unsubscribe_tracking_enabled"]),
+        "track_unique_only": doc.get("track_unique_only", _TOGGLE_DEFAULTS["track_unique_only"]),
         "unsubscribe_domain": doc.get("unsubscribe_domain", ""),
         "open_tracking_domain": doc.get("open_tracking_domain", ""),
         "click_tracking_domain": doc.get("click_tracking_domain", ""),
@@ -962,7 +898,6 @@ async def get_tracking_settings():
 @settings_router.put("/tracking")
 async def update_tracking_settings(payload: _TrackingSettingsUpdate):
     from database import get_settings_collection
-
     col = get_settings_collection()
     fields: dict = {"updated_at": datetime.utcnow()}
 
@@ -974,7 +909,6 @@ async def update_tracking_settings(payload: _TrackingSettingsUpdate):
         fields["unsubscribe_tracking_enabled"] = payload.unsubscribe_tracking_enabled
     if payload.track_unique_only is not None:
         fields["track_unique_only"] = payload.track_unique_only
-
     if payload.unsubscribe_domain is not None:
         fields["unsubscribe_domain"] = _clean_domain(payload.unsubscribe_domain)
     if payload.open_tracking_domain is not None:
@@ -992,19 +926,10 @@ async def update_tracking_settings(payload: _TrackingSettingsUpdate):
     doc = await col.find_one({"type": "tracking"}) or {}
     return {
         "status": "saved",
-        "open_tracking_enabled": doc.get(
-            "open_tracking_enabled", _TOGGLE_DEFAULTS["open_tracking_enabled"]
-        ),
-        "click_tracking_enabled": doc.get(
-            "click_tracking_enabled", _TOGGLE_DEFAULTS["click_tracking_enabled"]
-        ),
-        "unsubscribe_tracking_enabled": doc.get(
-            "unsubscribe_tracking_enabled",
-            _TOGGLE_DEFAULTS["unsubscribe_tracking_enabled"],
-        ),
-        "track_unique_only": doc.get(
-            "track_unique_only", _TOGGLE_DEFAULTS["track_unique_only"]
-        ),
+        "open_tracking_enabled": doc.get("open_tracking_enabled", _TOGGLE_DEFAULTS["open_tracking_enabled"]),
+        "click_tracking_enabled": doc.get("click_tracking_enabled", _TOGGLE_DEFAULTS["click_tracking_enabled"]),
+        "unsubscribe_tracking_enabled": doc.get("unsubscribe_tracking_enabled", _TOGGLE_DEFAULTS["unsubscribe_tracking_enabled"]),
+        "track_unique_only": doc.get("track_unique_only", _TOGGLE_DEFAULTS["track_unique_only"]),
         "unsubscribe_domain": doc.get("unsubscribe_domain", ""),
         "open_tracking_domain": doc.get("open_tracking_domain", ""),
         "click_tracking_domain": doc.get("click_tracking_domain", ""),

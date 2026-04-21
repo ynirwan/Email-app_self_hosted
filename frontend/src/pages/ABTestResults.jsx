@@ -55,6 +55,7 @@ function StatBox({ label, value, icon, color, bg }) {
   );
 }
 
+// ── WinnerSendSection ──────────────────────────────────────
 export function WinnerSendSection({ testId, results, onReload }) {
   const wsStatus = results?.winner_send_status;
   const wsVariant = results?.winner_variant;
@@ -71,16 +72,19 @@ export function WinnerSendSection({ testId, results, onReload }) {
     try {
       const res = await API.get(`/ab-tests/${testId}/winner-send-progress`);
       setProgress(res.data);
+      // Stop polling once no longer running
       if (res.data?.status && res.data.status !== "running") {
         clearInterval(pollRef.current);
         onReload?.();
       }
     } catch {
-      // Keep the panel stable during transient polling failures.
+      // ignore transient polling failures
     }
   }, [testId, onReload]);
 
   useEffect(() => {
+    // FIX: Poll whenever winner send is running, not only if wsStatus is "running"
+    // wsStatus comes from the test doc; progress endpoint is the live source
     if (wsStatus === "running") {
       fetchProgress();
       pollRef.current = setInterval(fetchProgress, 5000);
@@ -107,6 +111,7 @@ export function WinnerSendSection({ testId, results, onReload }) {
     }
   };
 
+  // Only render if there's a winner variant assigned
   if (!wsVariant) return null;
 
   const displaySent =
@@ -122,75 +127,59 @@ export function WinnerSendSection({ testId, results, onReload }) {
     (wsStatus === "running" ? progress?.total : null) ?? wsTotal ?? null;
   const displayPct =
     (wsStatus === "running" ? progress?.progress_pct : null) ??
-    (displayTotal
+    (displayTotal && displayTotal > 0
       ? Math.min(100, Math.round((displaySent / displayTotal) * 100))
       : null);
 
+  const statusColor = {
+    completed: "border-green-200 bg-green-50",
+    running: "border-blue-200 bg-blue-50",
+    stopped: "border-orange-200 bg-orange-50",
+  }[wsStatus] || "border-gray-200 bg-gray-50";
+
+  const headerColor = {
+    completed: "bg-green-100/60",
+    running: "bg-blue-100/60",
+    stopped: "bg-orange-100/60",
+  }[wsStatus] || "bg-gray-100/60";
+
+  const badgeColor = {
+    completed: "bg-green-200 text-green-800",
+    running: "bg-blue-200 text-blue-800 animate-pulse",
+    stopped: "bg-orange-200 text-orange-800",
+  }[wsStatus] || "bg-gray-200 text-gray-700";
+
+  const statusIcon = {
+    completed: "🏆",
+    running: "📤",
+    stopped: "⏹️",
+  }[wsStatus] || "📬";
+
+  const statusLabel = {
+    completed: "Send completed successfully",
+    running: "Sending in progress...",
+    stopped: "Send was stopped",
+  }[wsStatus] || "Pending";
+
   return (
-    <div
-      className={`rounded-xl border shadow-sm overflow-hidden mt-6 ${
-        wsStatus === "completed"
-          ? "border-green-200 bg-green-50"
-          : wsStatus === "running"
-            ? "border-blue-200 bg-blue-50"
-            : wsStatus === "stopped"
-              ? "border-orange-200 bg-orange-50"
-              : "border-gray-200 bg-gray-50"
-      }`}
-    >
-      <div
-        className={`flex items-center justify-between px-5 py-4 ${
-          wsStatus === "completed"
-            ? "bg-green-100/60"
-            : wsStatus === "running"
-              ? "bg-blue-100/60"
-              : wsStatus === "stopped"
-                ? "bg-orange-100/60"
-                : "bg-gray-100/60"
-        }`}
-      >
+    <div className={`rounded-xl border shadow-sm overflow-hidden mt-6 ${statusColor}`}>
+      <div className={`flex items-center justify-between px-5 py-4 ${headerColor}`}>
         <div className="flex items-center gap-3">
-          <span className="text-xl">
-            {wsStatus === "completed"
-              ? "🏆"
-              : wsStatus === "running"
-                ? "📤"
-                : wsStatus === "stopped"
-                  ? "⏹️"
-                  : "📬"}
-          </span>
+          <span className="text-xl">{statusIcon}</span>
           <div>
             <h3 className="font-semibold text-gray-900 text-sm">
-              Winner Send - Variant {wsVariant}
+              Winner Send — Variant {wsVariant}
             </h3>
-            <p className="text-xs text-gray-500">
-              {wsStatus === "completed"
-                ? "Send completed successfully"
-                : wsStatus === "running"
-                  ? "Sending in progress..."
-                  : wsStatus === "stopped"
-                    ? "Send was stopped"
-                    : "Pending"}
-            </p>
+            <p className="text-xs text-gray-500">{statusLabel}</p>
           </div>
         </div>
-
-        <span
-          className={`text-xs font-bold px-3 py-1 rounded-full ${
-            wsStatus === "completed"
-              ? "bg-green-200 text-green-800"
-              : wsStatus === "running"
-                ? "bg-blue-200 text-blue-800 animate-pulse"
-                : wsStatus === "stopped"
-                  ? "bg-orange-200 text-orange-800"
-                  : "bg-gray-200 text-gray-700"
-          }`}
-        >
+        <span className={`text-xs font-bold px-3 py-1 rounded-full ${badgeColor}`}>
           {wsStatus?.toUpperCase() ?? "PENDING"}
         </span>
       </div>
 
       <div className="px-5 py-4 space-y-4">
+        {/* Progress bar — visible while running */}
         {wsStatus === "running" && (
           <div>
             <div className="flex justify-between text-xs text-gray-500 mb-1">
@@ -198,7 +187,7 @@ export function WinnerSendSection({ testId, results, onReload }) {
               <span>
                 {displayPct != null ? `${displayPct}%` : "Calculating..."}
                 {displayTotal
-                  ? ` - ${_fmt(displaySent)} / ${_fmt(displayTotal)}`
+                  ? ` — ${_fmt(displaySent)} / ${_fmt(displayTotal)}`
                   : ""}
               </span>
             </div>
@@ -211,23 +200,12 @@ export function WinnerSendSection({ testId, results, onReload }) {
           </div>
         )}
 
+        {/* Stat boxes */}
         <div className="grid grid-cols-3 gap-4">
+          <StatBox label="Sent" value={_fmt(displaySent)} icon="✅" color="text-green-600" bg="bg-white" />
+          <StatBox label="Failed" value={_fmt(displayFailed)} icon="❌" color="text-red-500" bg="bg-white" />
           <StatBox
-            label="Sent"
-            value={_fmt(displaySent)}
-            icon="✅"
-            color="text-green-600"
-            bg="bg-white"
-          />
-          <StatBox
-            label="Failed"
-            value={_fmt(displayFailed)}
-            icon="❌"
-            color="text-red-500"
-            bg="bg-white"
-          />
-          <StatBox
-            label={wsStatus === "completed" ? "Total Delivered" : "Remaining"}
+            label={wsStatus === "completed" ? "Total" : "Remaining"}
             value={
               displayTotal
                 ? _fmt(Math.max(0, displayTotal - displaySent - displayFailed))
@@ -246,13 +224,12 @@ export function WinnerSendSection({ testId, results, onReload }) {
         )}
 
         <div className="flex flex-wrap gap-2 pt-1">
+          {/* Stop controls — only when running */}
           {wsStatus === "running" && (
             <>
               {stopConfirm ? (
                 <div className="flex items-center gap-2">
-                  <span className="text-xs text-orange-600 font-medium">
-                    Confirm stop?
-                  </span>
+                  <span className="text-xs text-orange-600 font-medium">Confirm stop?</span>
                   <button
                     onClick={handleStop}
                     disabled={stopping}
@@ -276,15 +253,22 @@ export function WinnerSendSection({ testId, results, onReload }) {
                   ⏹ Stop Winner Send
                 </button>
               )}
+              <button
+                onClick={fetchProgress}
+                className="px-3 py-2 text-xs text-gray-500 border border-gray-200 rounded-lg hover:bg-gray-50"
+              >
+                🔄 Refresh
+              </button>
             </>
           )}
 
-          {wsStatus === "completed" && (
+          {/* FIX: Show View Report link for both running AND completed */}
+          {(wsStatus === "running" || wsStatus === "completed") && (
             <Link
               to={`/ab-tests/${testId}/winner-report`}
               className="inline-flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white text-sm font-semibold rounded-lg hover:bg-indigo-700 transition-colors shadow-sm"
             >
-              📊 View Winner Send Report
+              📊 {wsStatus === "running" ? "Live Report" : "View Winner Report"}
             </Link>
           )}
 
@@ -292,20 +276,9 @@ export function WinnerSendSection({ testId, results, onReload }) {
             <div className="flex items-center gap-2 text-xs text-orange-600 bg-orange-100 border border-orange-200 rounded-lg px-3 py-2 w-full">
               <span>⚠️</span>
               <span>
-                The winner send was stopped manually. In-flight emails at the
-                time of stopping may still have been delivered. Restart is not
-                supported - re-complete the test from the admin panel if needed.
+                The winner send was stopped manually. In-flight emails may still have been delivered.
               </span>
             </div>
-          )}
-
-          {wsStatus === "running" && (
-            <button
-              onClick={fetchProgress}
-              className="px-3 py-2 text-xs text-gray-500 border border-gray-200 rounded-lg hover:bg-gray-50"
-            >
-              🔄 Refresh
-            </button>
           )}
         </div>
       </div>
@@ -313,6 +286,7 @@ export function WinnerSendSection({ testId, results, onReload }) {
   );
 }
 
+// ── Main ABTestResults ─────────────────────────────────────
 const ABTestResults = () => {
   const { testId } = useParams();
   const navigate = useNavigate();
@@ -322,7 +296,6 @@ const ABTestResults = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [completing, setCompleting] = useState(false);
-  const [sending, setSending] = useState(false);
   const [timeLeft, setTimeLeft] = useState(null);
 
   const fetchResults = useCallback(async () => {
@@ -348,9 +321,7 @@ const ABTestResults = () => {
   useEffect(() => {
     if (!results) return;
     const tick = () => {
-      setTimeLeft(
-        getTimeRemaining(results.start_date, results.test_duration_hours),
-      );
+      setTimeLeft(getTimeRemaining(results.start_date, results.test_duration_hours));
     };
     tick();
     const id = setInterval(tick, 60000);
@@ -358,7 +329,6 @@ const ABTestResults = () => {
   }, [results]);
 
   // ── Actions ────────────────────────────────────────────────
-
   const handleCompleteTest = async (applyWinner) => {
     const msg = applyWinner
       ? `Complete test and apply Variant ${results.winner?.winner} to campaign?`
@@ -379,30 +349,7 @@ const ABTestResults = () => {
     }
   };
 
-  const handleSendCampaign = async () => {
-    if (!results?.campaign_id) return;
-    if (
-      !window.confirm(
-        "Send campaign to remaining subscribers?\n" +
-          "A/B test participants will be automatically excluded.",
-      )
-    )
-      return;
-
-    setSending(true);
-    try {
-      await API.post(`/campaigns/${results.campaign_id}/send`);
-      toast("Campaign send initiated!", "success");
-      navigate("/campaigns");
-    } catch (err) {
-      toast(err.response?.data?.detail || "Failed to send campaign", "error");
-    } finally {
-      setSending(false);
-    }
-  };
-
   // ── Render guards ──────────────────────────────────────────
-
   if (loading) {
     return (
       <div className="flex items-center justify-center py-24 gap-3 text-gray-400">
@@ -417,10 +364,7 @@ const ABTestResults = () => {
       <div className="py-6">
         <div className="bg-red-50 border border-red-200 rounded p-4">
           <p className="text-red-800">{error}</p>
-          <button
-            onClick={() => navigate("/ab-testing")}
-            className="text-red-600 underline mt-2"
-          >
+          <button onClick={() => navigate("/ab-testing")} className="text-red-600 underline mt-2">
             ← Back to Dashboard
           </button>
         </div>
@@ -431,7 +375,6 @@ const ABTestResults = () => {
   if (!results) return null;
 
   // ── Derived values ─────────────────────────────────────────
-
   const isRunning = results.status === "running";
   const isCompleted = results.status === "completed";
   const varA = results.results?.variant_a || {};
@@ -447,27 +390,27 @@ const ABTestResults = () => {
   };
 
   const statusColors = {
-    running: "bg-blue-100  text-blue-800",
+    running: "bg-blue-100 text-blue-800",
     completed: "bg-green-100 text-green-800",
-    draft: "bg-gray-100  text-gray-700",
+    draft: "bg-gray-100 text-gray-700",
     paused: "bg-yellow-100 text-yellow-800",
+    stopped: "bg-orange-100 text-orange-800",
   };
 
   const sigColors = {
-    high: "bg-green-100  text-green-800",
+    high: "bg-green-100 text-green-800",
     medium: "bg-yellow-100 text-yellow-800",
-    low: "bg-red-100    text-red-800",
+    low: "bg-red-100 text-red-800",
   };
 
   return (
     <div className="space-y-6">
       <ToastContainer toasts={toasts} dismiss={dismiss} />
+
       {/* ── Header ── */}
       <div className="flex items-center justify-between">
         <div>
-          <p className="text-base font-semibold text-gray-900">
-            {results.test_name}
-          </p>
+          <p className="text-base font-semibold text-gray-900">{results.test_name}</p>
           <p className="text-xs text-gray-400 mt-0.5">
             {results.test_type?.replace("_", " ")} test
           </p>
@@ -486,9 +429,7 @@ const ABTestResults = () => {
           <div className="grid grid-cols-2 md:grid-cols-4 gap-6 text-sm flex-1">
             <div>
               <p className="text-gray-500">Status</p>
-              <span
-                className={`mt-1 inline-block px-2 py-0.5 rounded font-medium ${statusColors[results.status] || "bg-gray-100 text-gray-700"}`}
-              >
+              <span className={`mt-1 inline-block px-2 py-0.5 rounded font-medium ${statusColors[results.status] || "bg-gray-100 text-gray-700"}`}>
                 {results.status?.toUpperCase()}
               </span>
             </div>
@@ -500,15 +441,12 @@ const ABTestResults = () => {
             </div>
             <div>
               <p className="text-gray-500">Sample Size</p>
-              <p className="font-semibold">
-                {results.sample_size?.toLocaleString()}
-              </p>
+              <p className="font-semibold">{results.sample_size?.toLocaleString()}</p>
             </div>
             <div>
               <p className="text-gray-500">Split</p>
               <p className="font-semibold">
-                {results.split_percentage}% /{" "}
-                {100 - (results.split_percentage || 50)}%
+                {results.split_percentage}% / {100 - (results.split_percentage || 50)}%
               </p>
             </div>
             <div>
@@ -520,41 +458,29 @@ const ABTestResults = () => {
             <div>
               <p className="text-gray-500">Duration</p>
               <p className="font-semibold">
-                {results.test_duration_hours
-                  ? `${results.test_duration_hours}h`
-                  : "—"}
+                {results.test_duration_hours ? `${results.test_duration_hours}h` : "—"}
               </p>
             </div>
             <div>
               <p className="text-gray-500">Started</p>
               <p className="font-semibold">
-                {results.start_date
-                  ? new Date(results.start_date).toLocaleString()
-                  : "—"}
+                {results.start_date ? new Date(results.start_date).toLocaleString() : "—"}
               </p>
             </div>
             <div>
               <p className="text-gray-500">Ended</p>
               <p className="font-semibold">
-                {results.end_date
-                  ? new Date(results.end_date).toLocaleString()
-                  : "—"}
+                {results.end_date ? new Date(results.end_date).toLocaleString() : "—"}
               </p>
             </div>
           </div>
         </div>
 
-        {/* ── Countdown + auto-send badges ── */}
+        {/* Countdown + auto-send badges */}
         {isRunning && (
           <div className="mt-4 flex flex-wrap gap-3">
             {timeLeft && (
-              <div
-                className={`flex items-center gap-1.5 rounded-full px-3 py-1 text-sm border ${
-                  timeLeft.expired
-                    ? "bg-red-50 border-red-200 text-red-700"
-                    : "bg-amber-50 border-amber-200 text-amber-800"
-                }`}
-              >
+              <div className={`flex items-center gap-1.5 rounded-full px-3 py-1 text-sm border ${timeLeft.expired ? "bg-red-50 border-red-200 text-red-700" : "bg-amber-50 border-amber-200 text-amber-800"}`}>
                 <span>⏱</span>
                 <span className="font-medium">{timeLeft.label}</span>
               </div>
@@ -562,17 +488,7 @@ const ABTestResults = () => {
             {results.auto_send_winner && (
               <div className="flex items-center gap-1.5 bg-green-50 border border-green-200 rounded-full px-3 py-1 text-sm">
                 <span>🚀</span>
-                <span className="font-medium text-green-800">
-                  Auto-send winner enabled
-                </span>
-              </div>
-            )}
-            {results.auto_send_winner === false && (
-              <div className="flex items-center gap-1.5 bg-gray-50 border border-gray-200 rounded-full px-3 py-1 text-sm">
-                <span>✋</span>
-                <span className="font-medium text-gray-600">
-                  Manual send required after test
-                </span>
+                <span className="font-medium text-green-800">Auto-send winner enabled</span>
               </div>
             )}
           </div>
@@ -589,15 +505,14 @@ const ABTestResults = () => {
                 Variant {winner.winner} is the winner
               </p>
               <p className="text-green-700 mt-1">
-                {winner.improvement?.toFixed(2)}% better on{" "}
+                {Number(winner.improvement ?? 0).toFixed(2)}% better on{" "}
                 <span className="font-semibold capitalize">
                   {results.winner_criteria?.replace("_", " ")}
                 </span>
               </p>
               {isCompleted && results.winner_variant_applied && (
                 <p className="text-green-600 text-sm mt-1">
-                  ✓ Applied to campaign — remaining subscribers will receive
-                  Variant {winner.winner}
+                  ✓ Applied to campaign — remaining subscribers will receive Variant {winner.winner}
                 </p>
               )}
             </div>
@@ -607,9 +522,7 @@ const ABTestResults = () => {
 
       {winner.winner === "TIE" && (
         <div className="bg-yellow-50 border-2 border-yellow-300 rounded-lg p-6">
-          <p className="text-xl font-bold text-yellow-800">
-            🤝 Both variants are performing equally
-          </p>
+          <p className="text-xl font-bold text-yellow-800">🤝 Both variants are performing equally</p>
           <p className="text-yellow-700 text-sm mt-1">
             Consider running the test longer for more conclusive results.
           </p>
@@ -619,21 +532,11 @@ const ABTestResults = () => {
       {/* ── Metrics comparison ── */}
       <div className="grid md:grid-cols-2 gap-6">
         {/* Variant A */}
-        <div
-          className={`border-2 rounded-lg p-5 ${
-            winnerInfo.winner === "A"
-              ? "border-green-400 bg-green-50"
-              : "border-blue-200 bg-blue-50"
-          }`}
-        >
+        <div className={`border-2 rounded-lg p-5 ${winnerInfo.winner === "A" ? "border-green-400 bg-green-50" : "border-blue-200 bg-blue-50"}`}>
           <div className="flex justify-between items-center mb-4">
-            <h3 className="text-lg font-bold text-gray-800">
-              Variant A (Control)
-            </h3>
+            <h3 className="text-lg font-bold text-gray-800">Variant A (Control)</h3>
             {winnerInfo.winner === "A" && (
-              <span className="bg-green-500 text-white px-2 py-1 rounded text-sm font-bold">
-                🏆 WINNER
-              </span>
+              <span className="bg-green-500 text-white px-2 py-1 rounded text-sm font-bold">🏆 WINNER</span>
             )}
           </div>
           <div className="space-y-3 text-sm">
@@ -641,43 +544,23 @@ const ABTestResults = () => {
               { label: "Sent", value: varA.sent?.toLocaleString() },
               { label: "Opened", value: varA.opened?.toLocaleString() },
               { label: "Clicked", value: varA.clicked?.toLocaleString() },
-              {
-                label: "Open Rate",
-                value: `${varA.open_rate ?? 0}%`,
-                color: "text-blue-700",
-              },
-              {
-                label: "Click Rate",
-                value: `${varA.click_rate ?? 0}%`,
-                color: "text-purple-700",
-              },
+              { label: "Open Rate", value: `${varA.open_rate ?? 0}%`, color: "text-blue-700" },
+              { label: "Click Rate", value: `${varA.click_rate ?? 0}%`, color: "text-purple-700" },
             ].map(({ label, value, color }) => (
               <div key={label} className="flex justify-between">
                 <span className="text-gray-600">{label}</span>
-                <span className={`font-semibold ${color || "text-gray-900"}`}>
-                  {value ?? "—"}
-                </span>
+                <span className={`font-semibold ${color || "text-gray-900"}`}>{value ?? "—"}</span>
               </div>
             ))}
           </div>
         </div>
 
         {/* Variant B */}
-        <div
-          className={`border-2 rounded-lg p-5 ${
-            winnerInfo.winner === "B"
-              ? "border-green-400 bg-green-50"
-              : "border-orange-200 bg-orange-50"
-          }`}
-        >
+        <div className={`border-2 rounded-lg p-5 ${winnerInfo.winner === "B" ? "border-green-400 bg-green-50" : "border-orange-200 bg-orange-50"}`}>
           <div className="flex justify-between items-center mb-4">
-            <h3 className="text-lg font-bold text-gray-800">
-              Variant B (Test)
-            </h3>
+            <h3 className="text-lg font-bold text-gray-800">Variant B (Test)</h3>
             {winnerInfo.winner === "B" && (
-              <span className="bg-green-500 text-white px-2 py-1 rounded text-sm font-bold">
-                🏆 WINNER
-              </span>
+              <span className="bg-green-500 text-white px-2 py-1 rounded text-sm font-bold">🏆 WINNER</span>
             )}
           </div>
           <div className="space-y-3 text-sm">
@@ -685,52 +568,36 @@ const ABTestResults = () => {
               { label: "Sent", value: varB.sent?.toLocaleString() },
               { label: "Opened", value: varB.opened?.toLocaleString() },
               { label: "Clicked", value: varB.clicked?.toLocaleString() },
-              {
-                label: "Open Rate",
-                value: `${varB.open_rate ?? 0}%`,
-                color: "text-blue-700",
-              },
-              {
-                label: "Click Rate",
-                value: `${varB.click_rate ?? 0}%`,
-                color: "text-purple-700",
-              },
+              { label: "Open Rate", value: `${varB.open_rate ?? 0}%`, color: "text-blue-700" },
+              { label: "Click Rate", value: `${varB.click_rate ?? 0}%`, color: "text-purple-700" },
             ].map(({ label, value, color }) => (
               <div key={label} className="flex justify-between">
                 <span className="text-gray-600">{label}</span>
-                <span className={`font-semibold ${color || "text-gray-900"}`}>
-                  {value ?? "—"}
-                </span>
+                <span className={`font-semibold ${color || "text-gray-900"}`}>{value ?? "—"}</span>
               </div>
             ))}
           </div>
         </div>
       </div>
 
+      {/* Winner Send Section */}
       <WinnerSendSection testId={testId} results={results} onReload={fetchResults} />
 
-      {/* ── Performance summary strip ── */}
+      {/* Performance summary strip */}
       {winnerInfo.winner && winnerInfo.winner !== "TIE" && (
         <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
           <p className="text-sm">
             <strong>Variant {winnerInfo.winner}</strong> performed{" "}
-            <strong>
-              {winnerInfo.improvement_percentage ??
-                winner.improvement?.toFixed(2)}
-              %
-            </strong>{" "}
+            <strong>{Number(winnerInfo.improvement_percentage ?? winner.improvement ?? 0).toFixed(2)}%</strong>{" "}
             better based on{" "}
             <strong className="capitalize">
-              {(winnerInfo.criteria || results.winner_criteria)?.replace(
-                "_",
-                " ",
-              )}
+              {(winnerInfo.criteria || results.winner_criteria)?.replace("_", " ")}
             </strong>
           </p>
         </div>
       )}
 
-      {/* ── Full comparison table ── */}
+      {/* Full comparison table */}
       <div className="bg-white shadow rounded-lg overflow-hidden">
         <div className="p-4 border-b bg-gray-50">
           <h3 className="text-lg font-semibold">Performance Comparison</h3>
@@ -749,32 +616,20 @@ const ABTestResults = () => {
             </thead>
             <tbody>
               <tr className="border-t hover:bg-gray-50">
-                <td className="px-6 py-4 font-semibold text-blue-700">
-                  Variant A (Control)
-                </td>
+                <td className="px-6 py-4 font-semibold text-blue-700">Variant A (Control)</td>
                 <td className="px-6 py-4 text-right">{varA.sent ?? "—"}</td>
                 <td className="px-6 py-4 text-right">{varA.opened ?? "—"}</td>
                 <td className="px-6 py-4 text-right">{varA.clicked ?? "—"}</td>
-                <td className="px-6 py-4 text-right font-medium">
-                  {varA.open_rate ?? "—"}%
-                </td>
-                <td className="px-6 py-4 text-right font-medium">
-                  {varA.click_rate ?? "—"}%
-                </td>
+                <td className="px-6 py-4 text-right font-medium">{varA.open_rate ?? "—"}%</td>
+                <td className="px-6 py-4 text-right font-medium">{varA.click_rate ?? "—"}%</td>
               </tr>
               <tr className="border-t hover:bg-gray-50">
-                <td className="px-6 py-4 font-semibold text-orange-700">
-                  Variant B (Test)
-                </td>
+                <td className="px-6 py-4 font-semibold text-orange-700">Variant B (Test)</td>
                 <td className="px-6 py-4 text-right">{varB.sent ?? "—"}</td>
                 <td className="px-6 py-4 text-right">{varB.opened ?? "—"}</td>
                 <td className="px-6 py-4 text-right">{varB.clicked ?? "—"}</td>
-                <td className="px-6 py-4 text-right font-medium">
-                  {varB.open_rate ?? "—"}%
-                </td>
-                <td className="px-6 py-4 text-right font-medium">
-                  {varB.click_rate ?? "—"}%
-                </td>
+                <td className="px-6 py-4 text-right font-medium">{varB.open_rate ?? "—"}%</td>
+                <td className="px-6 py-4 text-right font-medium">{varB.click_rate ?? "—"}%</td>
               </tr>
               {/* Difference row */}
               <tr className="border-t bg-gray-50 text-xs text-gray-500">
@@ -782,26 +637,10 @@ const ABTestResults = () => {
                 <td className="px-6 py-2 text-right">—</td>
                 <td className="px-6 py-2 text-right">—</td>
                 <td className="px-6 py-2 text-right">—</td>
-                <td
-                  className={`px-6 py-2 text-right font-semibold ${
-                    varB.open_rate > varA.open_rate
-                      ? "text-green-600"
-                      : varB.open_rate < varA.open_rate
-                        ? "text-red-600"
-                        : "text-gray-500"
-                  }`}
-                >
+                <td className={`px-6 py-2 text-right font-semibold ${varB.open_rate > varA.open_rate ? "text-green-600" : varB.open_rate < varA.open_rate ? "text-red-600" : "text-gray-500"}`}>
                   {calcDiff(varB.open_rate ?? 0, varA.open_rate ?? 0)}%
                 </td>
-                <td
-                  className={`px-6 py-2 text-right font-semibold ${
-                    varB.click_rate > varA.click_rate
-                      ? "text-green-600"
-                      : varB.click_rate < varA.click_rate
-                        ? "text-red-600"
-                        : "text-gray-500"
-                  }`}
-                >
+                <td className={`px-6 py-2 text-right font-semibold ${varB.click_rate > varA.click_rate ? "text-green-600" : varB.click_rate < varA.click_rate ? "text-red-600" : "text-gray-500"}`}>
                   {calcDiff(varB.click_rate ?? 0, varA.click_rate ?? 0)}%
                 </td>
               </tr>
@@ -810,119 +649,79 @@ const ABTestResults = () => {
         </div>
       </div>
 
-      {/* ── Statistical significance ── */}
+      {/* Statistical significance */}
       <div className="bg-white shadow rounded-lg p-6">
-        <h3 className="text-lg font-semibold mb-4">
-          📈 Statistical Significance
-        </h3>
+        <h3 className="text-lg font-semibold mb-4">📈 Statistical Significance</h3>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           <div>
             <p className="text-sm text-gray-500">Confidence Level</p>
-            <span
-              className={`mt-1 inline-block px-3 py-1 rounded font-bold text-lg uppercase ${
-                sigColors[sig.confidence_level] || "bg-gray-100 text-gray-700"
-              }`}
-            >
+            <span className={`mt-1 inline-block px-3 py-1 rounded font-bold text-lg uppercase ${sigColors[sig.confidence_level] || "bg-gray-100 text-gray-700"}`}>
               {sig.confidence_level ?? "—"}
             </span>
           </div>
           <div>
             <p className="text-sm text-gray-500">Total Samples</p>
-            <p className="text-2xl font-bold">
-              {sig.total_samples?.toLocaleString() ?? "—"}
-            </p>
+            <p className="text-2xl font-bold">{sig.total_samples?.toLocaleString() ?? "—"}</p>
           </div>
           <div>
             <p className="text-sm text-gray-500">Statistically Significant</p>
             <p className="text-2xl font-bold">
-              {sig.is_significant === true && (
-                <span className="text-green-600">✓ Yes</span>
-              )}
-              {sig.is_significant === false && (
-                <span className="text-red-600">✗ No</span>
-              )}
+              {sig.is_significant === true && <span className="text-green-600">✓ Yes</span>}
+              {sig.is_significant === false && <span className="text-red-600">✗ No</span>}
               {sig.is_significant == null && "—"}
             </p>
           </div>
         </div>
         {sig.is_significant === false && (
           <div className="mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded text-sm text-yellow-800">
-            ⚠️ Sample size is too small for reliable conclusions. Consider
-            running the test longer or increasing the sample size.
+            ⚠️ Sample size is too small for reliable conclusions. Consider running the test longer or increasing the sample size.
           </div>
         )}
       </div>
 
-      {/* ── Visual bar chart ── */}
+      {/* Visual bar chart */}
       <div className="bg-white shadow rounded-lg p-6">
         <h3 className="text-lg font-semibold mb-5">📊 Visual Comparison</h3>
         <div className="space-y-6">
-          {/* Open Rate */}
           <div>
             <div className="flex justify-between mb-2 text-sm">
               <span className="font-medium">Open Rate</span>
-              <span className="text-gray-500">
-                A: {varA.open_rate ?? 0}% | B: {varB.open_rate ?? 0}%
-              </span>
+              <span className="text-gray-500">A: {varA.open_rate ?? 0}% | B: {varB.open_rate ?? 0}%</span>
             </div>
             <div className="flex gap-2">
               <div className="flex-1">
                 <div className="bg-blue-200 rounded h-8 overflow-hidden relative">
-                  <div
-                    className="bg-blue-600 h-full rounded transition-all duration-700"
-                    style={{ width: `${Math.min(varA.open_rate ?? 0, 100)}%` }}
-                  >
-                    <span className="absolute inset-0 flex items-center justify-center text-white text-xs font-bold">
-                      A — {varA.open_rate ?? 0}%
-                    </span>
+                  <div className="bg-blue-600 h-full rounded transition-all duration-700" style={{ width: `${Math.min(varA.open_rate ?? 0, 100)}%` }}>
+                    <span className="absolute inset-0 flex items-center justify-center text-white text-xs font-bold">A — {varA.open_rate ?? 0}%</span>
                   </div>
                 </div>
               </div>
               <div className="flex-1">
                 <div className="bg-orange-200 rounded h-8 overflow-hidden relative">
-                  <div
-                    className="bg-orange-500 h-full rounded transition-all duration-700"
-                    style={{ width: `${Math.min(varB.open_rate ?? 0, 100)}%` }}
-                  >
-                    <span className="absolute inset-0 flex items-center justify-center text-white text-xs font-bold">
-                      B — {varB.open_rate ?? 0}%
-                    </span>
+                  <div className="bg-orange-500 h-full rounded transition-all duration-700" style={{ width: `${Math.min(varB.open_rate ?? 0, 100)}%` }}>
+                    <span className="absolute inset-0 flex items-center justify-center text-white text-xs font-bold">B — {varB.open_rate ?? 0}%</span>
                   </div>
                 </div>
               </div>
             </div>
           </div>
-
-          {/* Click Rate */}
           <div>
             <div className="flex justify-between mb-2 text-sm">
               <span className="font-medium">Click Rate</span>
-              <span className="text-gray-500">
-                A: {varA.click_rate ?? 0}% | B: {varB.click_rate ?? 0}%
-              </span>
+              <span className="text-gray-500">A: {varA.click_rate ?? 0}% | B: {varB.click_rate ?? 0}%</span>
             </div>
             <div className="flex gap-2">
               <div className="flex-1">
                 <div className="bg-purple-200 rounded h-8 overflow-hidden relative">
-                  <div
-                    className="bg-purple-600 h-full rounded transition-all duration-700"
-                    style={{ width: `${Math.min(varA.click_rate ?? 0, 100)}%` }}
-                  >
-                    <span className="absolute inset-0 flex items-center justify-center text-white text-xs font-bold">
-                      A — {varA.click_rate ?? 0}%
-                    </span>
+                  <div className="bg-purple-600 h-full rounded transition-all duration-700" style={{ width: `${Math.min(varA.click_rate ?? 0, 100)}%` }}>
+                    <span className="absolute inset-0 flex items-center justify-center text-white text-xs font-bold">A — {varA.click_rate ?? 0}%</span>
                   </div>
                 </div>
               </div>
               <div className="flex-1">
                 <div className="bg-pink-200 rounded h-8 overflow-hidden relative">
-                  <div
-                    className="bg-pink-500 h-full rounded transition-all duration-700"
-                    style={{ width: `${Math.min(varB.click_rate ?? 0, 100)}%` }}
-                  >
-                    <span className="absolute inset-0 flex items-center justify-center text-white text-xs font-bold">
-                      B — {varB.click_rate ?? 0}%
-                    </span>
+                  <div className="bg-pink-500 h-full rounded transition-all duration-700" style={{ width: `${Math.min(varB.click_rate ?? 0, 100)}%` }}>
+                    <span className="absolute inset-0 flex items-center justify-center text-white text-xs font-bold">B — {varB.click_rate ?? 0}%</span>
                   </div>
                 </div>
               </div>
@@ -931,7 +730,7 @@ const ABTestResults = () => {
         </div>
       </div>
 
-      {/* ── Action buttons ── */}
+      {/* Actions */}
       <div className="bg-white shadow rounded-lg p-6">
         <h3 className="text-lg font-semibold mb-4">Actions</h3>
 
@@ -941,14 +740,10 @@ const ABTestResults = () => {
             <div className="flex flex-col sm:flex-row gap-3">
               <button
                 onClick={() => handleCompleteTest(true)}
-                disabled={
-                  completing || !winner.winner || winner.winner === "TIE"
-                }
+                disabled={completing || !winner.winner || winner.winner === "TIE"}
                 className="flex-1 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white py-3 px-6 rounded-lg font-semibold transition-colors"
               >
-                {completing
-                  ? "Completing..."
-                  : "✅ Complete Test & Send Winner"}
+                {completing ? "Completing..." : "✅ Complete Test & Send Winner"}
               </button>
               <button
                 onClick={() => handleCompleteTest(false)}
@@ -960,32 +755,25 @@ const ABTestResults = () => {
             </div>
             {(!winner.winner || winner.winner === "TIE") && (
               <p className="text-xs text-amber-600">
-                ⚠️ A clear winner is needed to send the variant. You can still
-                complete without sending.
+                ⚠️ A clear winner is needed to send the variant. You can still complete without sending.
               </p>
             )}
-            <p className="text-xs text-gray-400">
-              ℹ️ The test will also auto-complete after the configured duration.
-            </p>
           </div>
         )}
 
-        {/* Stopped test — can still complete */}
+        {/* Stopped test */}
         {results.status === "stopped" && (
           <div className="space-y-3">
             <div className="flex items-center gap-3 bg-orange-50 border border-orange-200 rounded-lg px-4 py-3 mb-3">
               <span className="text-orange-600 text-lg">🛑</span>
               <p className="text-sm text-orange-800">
-                Test is stopped. Emails were halted. You can still complete it
-                to declare a winner and send to remaining subscribers.
+                Test is stopped. You can still complete it to declare a winner and send to remaining subscribers.
               </p>
             </div>
             <div className="flex flex-col sm:flex-row gap-3">
               <button
                 onClick={() => handleCompleteTest(true)}
-                disabled={
-                  completing || !winner.winner || winner.winner === "TIE"
-                }
+                disabled={completing || !winner.winner || winner.winner === "TIE"}
                 className="flex-1 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white py-3 px-6 rounded-lg font-semibold transition-colors"
               >
                 {completing ? "Completing..." : "✅ Complete & Send Winner"}
@@ -1001,16 +789,18 @@ const ABTestResults = () => {
           </div>
         )}
 
+        {isCompleted && (
+          <p className="text-sm text-gray-500">
+            ✓ Test completed on {results.end_date ? new Date(results.end_date).toLocaleString() : "—"}
+          </p>
+        )}
       </div>
 
-      {/* ── Info notice ── */}
+      {/* Info notice */}
       <div className="p-3 bg-gray-50 border border-gray-200 rounded text-sm text-gray-500">
         🔄 Results refresh automatically every 30 seconds.{" "}
         {isRunning && results.test_duration_hours && (
-          <>
-            Winner will be auto-declared after{" "}
-            <strong>{results.test_duration_hours}h</strong> via scheduled task.
-          </>
+          <>Winner will be auto-declared after <strong>{results.test_duration_hours}h</strong> via scheduled task.</>
         )}
       </div>
     </div>

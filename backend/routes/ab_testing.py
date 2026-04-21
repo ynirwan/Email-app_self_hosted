@@ -207,7 +207,6 @@ async def get_test_subscribers(
 
     query = {"$and": [{"status": "active"}, {"$or": match_conditions}]}
     subscribers = []
-    # FIX: always cast sample_size to int — MongoDB may store as float
     async for doc in subscribers_collection.find(query).limit(int(sample_size)):
         doc["_id"] = str(doc["_id"])
         subscribers.append(doc)
@@ -217,14 +216,11 @@ async def get_test_subscribers(
 def assign_variants(subscribers: List[dict], split_percentage: int) -> Dict:
     """
     Assign subscribers to variants deterministically using MD5-based hashing.
-    Python's built-in hash() is not stable across processes (PYTHONHASHSEED).
-    Using hashlib.md5 ensures the same subscriber always gets the same variant.
     """
     import hashlib
 
     assignments: Dict[str, list] = {"A": [], "B": []}
     for sub in subscribers:
-        # Stable hash using subscriber _id string
         digest = hashlib.md5(str(sub["_id"]).encode()).hexdigest()
         bucket = int(digest[:8], 16) % 100
         variant = "A" if bucket < split_percentage else "B"
@@ -232,11 +228,8 @@ def assign_variants(subscribers: List[dict], split_percentage: int) -> Dict:
             {
                 "id": sub["_id"],
                 "email": sub["email"],
-                # FIX: include full standard_fields and custom_fields so
-                # field mapping works in send_ab_test_single_email
                 "standard_fields": sub.get("standard_fields", {}),
                 "custom_fields": sub.get("custom_fields", {}),
-                # Keep first_name at top level for convenience
                 "first_name": sub.get("standard_fields", {}).get("first_name", ""),
             }
         )
@@ -245,18 +238,22 @@ def assign_variants(subscribers: List[dict], split_percentage: int) -> Dict:
 
 # ============================================================
 # HELPER: metrics calculation (async)
+# FIX: Only count SAMPLE sends (is_winner_send != True)
 # ============================================================
 
 
 async def calculate_test_results(test_id: str) -> Dict:
     ab_test_results_collection = get_ab_test_results_collection()
 
+    # FIX: Exclude winner send records from sample metrics
+    sample_filter = {"is_winner_send": {"$ne": True}}
+
     results_a = await ab_test_results_collection.find(
-        {"test_id": test_id, "variant": "A"}
+        {"test_id": test_id, "variant": "A", **sample_filter}
     ).to_list(None)
 
     results_b = await ab_test_results_collection.find(
-        {"test_id": test_id, "variant": "B"}
+        {"test_id": test_id, "variant": "B", **sample_filter}
     ).to_list(None)
 
     def metrics(results):
@@ -287,8 +284,10 @@ async def calculate_test_results(test_id: str) -> Dict:
 # SYNC version used by Celery tasks
 def calculate_test_results_sync(test_id: str) -> Dict:
     col = get_sync_ab_test_results_collection()
-    results_a = list(col.find({"test_id": test_id, "variant": "A"}))
-    results_b = list(col.find({"test_id": test_id, "variant": "B"}))
+    # FIX: Exclude winner send records
+    sample_filter = {"is_winner_send": {"$ne": True}}
+    results_a = list(col.find({"test_id": test_id, "variant": "A", **sample_filter}))
+    results_b = list(col.find({"test_id": test_id, "variant": "B", **sample_filter}))
 
     def metrics(results):
         if not results:
@@ -525,6 +524,92 @@ async def create_ab_test(test: ABTestCreate):
         raise HTTPException(
             status_code=500, detail=f"Failed to create A/B test: {str(e)}"
         )
+@router.put("/ab-tests/{test_id}")
+async def update_ab_test(test_id: str, test: ABTestCreate):
+    """
+    Update a draft A/B test. Only allowed while status == 'draft'.
+    All fields from creation are editable at this stage.
+    """
+    try:
+        col = get_ab_tests_collection()
+        if not ObjectId.is_valid(test_id):
+            raise HTTPException(status_code=400, detail="Invalid test ID format")
+
+        existing = await col.find_one({"_id": ObjectId(test_id)})
+        if not existing:
+            raise HTTPException(status_code=404, detail="A/B test not found")
+
+        if existing.get("status") != TestStatus.DRAFT:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Only draft tests can be edited. This test is '{existing.get('status')}'.",
+            )
+
+        if not test.target_lists and not test.target_segments:
+            raise HTTPException(status_code=400, detail="At least one target list or segment is required")
+        if not test.template_id:
+            raise HTTPException(status_code=400, detail="Template is required")
+        if not test.subject.strip():
+            raise HTTPException(status_code=400, detail="Subject line is required")
+        if not test.sender_email.strip():
+            raise HTTPException(status_code=400, detail="Sender email is required")
+
+        total_subscribers = await get_ab_test_target_count(
+            test.target_lists, test.target_segments
+        )
+        if total_subscribers == 0:
+            raise HTTPException(
+                status_code=400,
+                detail="No active subscribers found in the selected audience",
+            )
+
+        # Recalculate sample_size bounds against new audience
+        min_sample = min(1000, max(100, int(total_subscribers * 0.1)))
+        if test.sample_size > total_subscribers:
+            test.sample_size = int(total_subscribers)
+        elif test.sample_size < min_sample:
+            test.sample_size = int(min_sample)
+        else:
+            test.sample_size = int(test.sample_size)
+
+        update_doc = {
+            "test_name": test.test_name,
+            "target_lists": test.target_lists,
+            "target_segments": test.target_segments or [],
+            "template_id": test.template_id,
+            "subject": test.subject,
+            "sender_name": test.sender_name,
+            "sender_email": test.sender_email,
+            "reply_to": test.reply_to or test.sender_email,
+            "test_type": test.test_type,
+            "variants": [v.dict() for v in test.variants],
+            "split_percentage": test.split_percentage,
+            "sample_size": test.sample_size,
+            "winner_criteria": test.winner_criteria,
+            "test_duration_hours": test.test_duration_hours,
+            "auto_send_winner": test.auto_send_winner,
+            "field_map": test.field_map or {},
+            "fallback_values": test.fallback_values or {},
+            "total_target_subscribers": total_subscribers,
+            "updated_at": datetime.utcnow(),
+        }
+
+        await col.update_one({"_id": ObjectId(test_id)}, {"$set": update_doc})
+
+        updated = await col.find_one({"_id": ObjectId(test_id)})
+        logger.info(f"A/B test updated: {test_id}")
+        return {
+            "message": "A/B test updated successfully",
+            "test_id": test_id,
+            "test": convert_objectid_to_str(updated),
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to update A/B test {test_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to update A/B test: {str(e)}")
+
 
 
 @router.get("/ab-tests/{test_id}")
@@ -584,7 +669,6 @@ async def start_ab_test(test_id: str):
             raise HTTPException(status_code=422, detail=str(ve))
 
         # Get subscribers and assign variants
-        # FIX: cast sample_size to int (may be stored as float in MongoDB)
         subscribers = await get_test_subscribers(
             test.get("target_lists", []),
             int(test["sample_size"]),
@@ -643,8 +727,19 @@ async def get_ab_test_results(test_id: str):
         if not test:
             raise HTTPException(status_code=404, detail="A/B test not found")
 
-        results = await calculate_test_results(test_id)
-        winner = determine_winner(results, test.get("winner_criteria", "open_rate"))
+        # FIX: If test is completed and winner was snapshotted, use stored values.
+        # This prevents the winner % from changing after completion.
+        stored_results = test.get("final_results")
+        stored_winner = test.get("final_winner")
+
+        if test["status"] == TestStatus.COMPLETED and stored_results and stored_winner:
+            results = stored_results
+            winner = stored_winner
+        else:
+            # Live calculation for running/stopped tests
+            results = await calculate_test_results(test_id)
+            winner = determine_winner(results, test.get("winner_criteria", "open_rate"))
+
         significance = calculate_statistical_significance(results)
 
         response_data = {
@@ -656,6 +751,8 @@ async def get_ab_test_results(test_id: str):
             "target_segments": test.get("target_segments", []),
             "subject": test.get("subject", ""),
             "sender_name": test.get("sender_name", ""),
+            "sender_email": test.get("sender_email", ""),
+            "reply_to": test.get("reply_to", ""),
             "results": results,
             "winner": winner,
             "winner_info": winner,
@@ -671,6 +768,11 @@ async def get_ab_test_results(test_id: str):
             "winner_variant_applied": test.get("winner_variant_applied"),
             "winner_send_status": test.get("winner_send_status"),
             "winner_send_count": test.get("winner_send_count"),
+            "winner_send_sent": test.get("winner_send_sent", 0),
+            "winner_send_failed": test.get("winner_send_failed", 0),
+            "winner_send_total": test.get("winner_send_total"),
+            "winner_send_started_at": test.get("winner_send_started_at"),
+            "winner_send_completed_at": test.get("winner_send_completed_at"),
         }
 
         return convert_objectid_to_str(response_data)
@@ -682,11 +784,92 @@ async def get_ab_test_results(test_id: str):
         raise HTTPException(status_code=500, detail=f"Failed to get results: {str(e)}")
 
 
+@router.get("/ab-tests/{test_id}/winner-send-progress")
+async def get_winner_send_progress(test_id: str):
+    """
+    Return current winner send progress for polling.
+    Reads from Redis if available, falls back to DB.
+    """
+    try:
+        # Try Redis first (written by send_winner_batch)
+        try:
+            from core.redis_client import get_redis
+            r = get_redis()
+            progress_key = f"ab_winner_send_progress:{test_id}"
+            import json
+            raw = r.get(progress_key)
+            if raw:
+                data = json.loads(raw)
+                return data
+        except Exception:
+            pass
+
+        # Fallback to DB
+        col = get_ab_tests_collection()
+        if not ObjectId.is_valid(test_id):
+            raise HTTPException(status_code=400, detail="Invalid test ID")
+        test = await col.find_one(
+            {"_id": ObjectId(test_id)},
+            {
+                "winner_send_sent": 1,
+                "winner_send_failed": 1,
+                "winner_send_total": 1,
+                "winner_send_queued": 1,
+                "winner_send_status": 1,
+            },
+        )
+        if not test:
+            raise HTTPException(status_code=404, detail="A/B test not found")
+
+        sent = test.get("winner_send_sent", 0)
+        failed = test.get("winner_send_failed", 0)
+        total = test.get("winner_send_total")
+        status = test.get("winner_send_status", "pending")
+
+        return {
+            "sent": sent,
+            "failed": failed,
+            "total": total,
+            "progress_pct": round(sent / total * 100, 1) if total else None,
+            "status": status,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get winner send progress: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get progress")
+
+
+@router.post("/ab-tests/{test_id}/stop-winner-send")
+async def stop_winner_send(test_id: str):
+    """Set a stop flag so send_winner_batch halts after the current batch."""
+    try:
+        from core.redis_client import get_redis
+        r = get_redis()
+        r.setex(f"ab_winner_send_stop:{test_id}", 86400, "1")
+
+        col = get_ab_tests_collection()
+        if not ObjectId.is_valid(test_id):
+            raise HTTPException(status_code=400, detail="Invalid test ID")
+        await col.update_one(
+            {"_id": ObjectId(test_id)},
+            {"$set": {"winner_send_status": "stopped", "updated_at": datetime.utcnow()}},
+        )
+        return {"message": "Winner send stop signal sent", "test_id": test_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to stop winner send: {e}")
+        raise HTTPException(status_code=500, detail="Failed to stop winner send")
+
+
 @router.post("/ab-tests/{test_id}/complete")
 async def complete_ab_test(test_id: str, request: CompleteTestRequest):
     """
     Manually complete a running A/B test, declare the winner,
-    and optionally send the winning variant to remaining subscribers.
+    snapshot the final results so they don't drift, and optionally
+    send the winning variant to remaining subscribers.
     """
     try:
         col = get_ab_tests_collection()
@@ -700,13 +883,13 @@ async def complete_ab_test(test_id: str, request: CompleteTestRequest):
         if test["status"] == TestStatus.COMPLETED:
             raise HTTPException(status_code=400, detail="Test is already completed")
 
-        # Allow completing from running OR stopped state
         if test["status"] not in (TestStatus.RUNNING, TestStatus.STOPPED):
             raise HTTPException(
                 status_code=400,
                 detail=f"Test must be running or stopped to complete (current: {test['status']})",
             )
 
+        # Calculate and SNAPSHOT results so they never change again
         results = await calculate_test_results(test_id)
         winner = determine_winner(results, test.get("winner_criteria", "open_rate"))
 
@@ -718,6 +901,9 @@ async def complete_ab_test(test_id: str, request: CompleteTestRequest):
                     "end_date": datetime.utcnow(),
                     "winner_variant": winner.get("winner"),
                     "winner_improvement": winner.get("improvement", 0),
+                    # FIX: Snapshot final results so they don't drift
+                    "final_results": results,
+                    "final_winner": winner,
                     "updated_at": datetime.utcnow(),
                 }
             },
@@ -757,10 +943,7 @@ async def complete_ab_test(test_id: str, request: CompleteTestRequest):
 
 @router.post("/ab-tests/{test_id}/stop")
 async def stop_ab_test(test_id: str):
-    """
-    Stop a running test without completing it or declaring a winner.
-    The test can later be completed via the complete endpoint.
-    """
+    """Stop a running test without completing it or declaring a winner."""
     try:
         col = get_ab_tests_collection()
         if not ObjectId.is_valid(test_id):

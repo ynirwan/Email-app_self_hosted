@@ -74,6 +74,9 @@ const App = () => {
               element={<ABTestWinnerReport />}
             />
 
+            <Route path="/ab-testing/edit/:testId" element={<ABTestCreator editMode />} />
+
+
             {/* New Automation Routes */}
             <Route path="/automation" element={<AutomationDashboard />} />
             <Route path="/automation/create" element={<AutomationBuilder />} />

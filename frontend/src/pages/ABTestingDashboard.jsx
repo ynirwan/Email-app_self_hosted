@@ -261,6 +261,14 @@ export default function ABTestingDashboard() {
                       </td>
                       <td className="px-4 py-3.5">
                         <div className="flex items-center justify-end gap-1.5 flex-wrap">
+                          {test.status === "draft" && (
+                            <button
+                              onClick={() => navigate(`/ab-testing/edit/${test._id}`)}
+                              className="px-3 py-1.5 text-xs font-medium text-indigo-600 bg-indigo-50 border border-indigo-200 rounded-lg hover:bg-indigo-100"
+                            >
+                              ✏️ Edit
+                            </button>
+                          )}
                           {test.status === 'draft' && (
                             <button onClick={() => startTest(test._id, test.test_name)} disabled={!!busy}
                               className="px-2.5 py-1.5 text-xs font-medium border border-green-200 rounded-lg hover:bg-green-50 text-green-700 disabled:opacity-50">

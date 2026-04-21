@@ -113,6 +113,7 @@ from routes import (
     suppressions,
     segments,
     ab_testing,
+    ab_winner_analytics,
     automation,
     events,
     automation_analytics,
@@ -776,6 +777,12 @@ app.include_router(
     ab_testing.router, prefix="/api", tags=["A/B Testing"], dependencies=_auth_dep
 )
 
+app.include_router(
+    ab_winner_analytics.router,
+    prefix="/api",
+    tags=["A/B Testing"],
+    dependencies=_auth_dep,
+)
 app.include_router(
     automation.router, prefix="/api", tags=["Automation"], dependencies=_auth_dep
 )
