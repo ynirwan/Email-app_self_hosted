@@ -1,23 +1,61 @@
 import React, { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import { Monitor, Smartphone, Tablet } from "lucide-react";
 import API from "../api";
 
-const ABTestCreator = () => {
+const mapTestToConfig = (test) => ({
+  test_name: test.test_name || "",
+  target_lists: test.target_lists || [],
+  target_segments: test.target_segments || [],
+  audience_mode: test.audience_mode || "lists",
+  template_id: test.template_id || "",
+  subject: test.subject || "",
+  sender_name: test.sender_name || "",
+  sender_email: test.sender_email || "",
+  reply_to: test.reply_to || "",
+  test_type: test.test_type || "subject_line",
+  variants: [
+    {
+      name: test.variants?.[0]?.name || "Variant A (Control)",
+      subject: test.variants?.[0]?.subject || "",
+      sender_name: test.variants?.[0]?.sender_name || "",
+      sender_email: test.variants?.[0]?.sender_email || "",
+      reply_to: test.variants?.[0]?.reply_to || "",
+    },
+    {
+      name: test.variants?.[1]?.name || "Variant B (Test)",
+      subject: test.variants?.[1]?.subject || "",
+      sender_name: test.variants?.[1]?.sender_name || "",
+      sender_email: test.variants?.[1]?.sender_email || "",
+      reply_to: test.variants?.[1]?.reply_to || "",
+    },
+  ],
+  split_percentage: test.split_percentage ?? 50,
+  sample_size: test.sample_size ?? 1000,
+  winner_criteria: test.winner_criteria || "open_rate",
+  test_duration_hours: test.test_duration_hours ?? 24,
+  auto_send_winner: test.auto_send_winner ?? true,
+});
+
+const ABTestCreator = ({ editMode = false }) => {
   const navigate = useNavigate();
+  const { testId } = useParams();
 
   const [step, setStep] = useState(1); // 1=Content, 2=Audience+Template+Mapping, 3=Preview+Config
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [loadingEdit, setLoadingEdit] = useState(editMode);
 
   const [lists, setLists] = useState([]);
   const [segments, setSegments] = useState([]);
   const [templates, setTemplates] = useState([]);
+  const [senderProfiles, setSenderProfiles] = useState([]);
 
   const [loadingLists, setLoadingLists] = useState(false);
   const [loadingSegments, setLoadingSegments] = useState(false);
   const [loadingTemplates, setLoadingTemplates] = useState(false);
+  const [loadingSenderProfiles, setLoadingSenderProfiles] = useState(false);
   const [fieldsLoading, setFieldsLoading] = useState(false);
 
   const [previewHtml, setPreviewHtml] = useState("");
@@ -144,19 +182,25 @@ const ABTestCreator = () => {
       setLoadingLists(true);
       setLoadingSegments(true);
       setLoadingTemplates(true);
+      setLoadingSenderProfiles(true);
       setError("");
 
       try {
-        const [listsRes, segmentsRes, templatesRes] = await Promise.all([
+        const [listsRes, segmentsRes, templatesRes, senderProfilesRes] =
+          await Promise.all([
           API.get("/subscribers/lists"),
           API.get("/segments"),
           API.get("/templates"),
+          API.get("/settings/sender-profiles").catch(() => ({ data: [] })),
         ]);
 
         setLists(Array.isArray(listsRes.data) ? listsRes.data : []);
         const segmentData = segmentsRes.data?.segments || segmentsRes.data || [];
         setSegments(Array.isArray(segmentData) ? segmentData : []);
         setTemplates(Array.isArray(templatesRes.data) ? templatesRes.data : []);
+        setSenderProfiles(
+          Array.isArray(senderProfilesRes.data) ? senderProfilesRes.data : [],
+        );
       } catch (err) {
         console.error("Failed to load A/B test setup data:", err);
         setError("Failed to load lists, segments, or templates");
@@ -164,11 +208,44 @@ const ABTestCreator = () => {
         setLoadingLists(false);
         setLoadingSegments(false);
         setLoadingTemplates(false);
+        setLoadingSenderProfiles(false);
       }
     };
 
     loadInitialData();
   }, []);
+
+  useEffect(() => {
+    if (!editMode || !testId) {
+      setLoadingEdit(false);
+      return;
+    }
+
+    const loadTestForEdit = async () => {
+      setLoadingEdit(true);
+      setError("");
+      try {
+        const res = await API.get(`/ab-tests/${testId}`);
+        const test = res.data?.test || res.data;
+        if (test?.status && test.status !== "draft") {
+          setError(
+            `Cannot edit a test with status "${test.status}". Only draft tests are editable.`,
+          );
+          return;
+        }
+
+        setTestConfig(mapTestToConfig(test || {}));
+        setFieldMap(test?.field_map || {});
+        setFallbackValues(test?.fallback_values || {});
+      } catch (err) {
+        setError(err.response?.data?.detail || "Failed to load A/B test");
+      } finally {
+        setLoadingEdit(false);
+      }
+    };
+
+    loadTestForEdit();
+  }, [editMode, testId]);
 
   useEffect(() => {
     if (!selectedTemplate) {
@@ -382,7 +459,28 @@ const ABTestCreator = () => {
     return null;
   };
 
-  const handleCreateTest = async () => {
+  const applySenderProfile = (profileId) => {
+    const profile = senderProfiles.find(
+      (sp) => (sp._id || sp.id) === profileId,
+    );
+    if (!profile) return;
+
+    const senderName = profile.name || profile.sender_name || "";
+    const senderEmail = profile.email || profile.sender_email || "";
+    const replyTo = profile.reply_to || senderEmail;
+    setTestConfig((prev) => ({
+      ...prev,
+      sender_name: senderName,
+      sender_email: senderEmail,
+      reply_to: replyTo,
+      variants: [
+        { ...prev.variants[0], sender_name: senderName, sender_email: senderEmail },
+        prev.variants[1],
+      ],
+    }));
+  };
+
+  const handleSaveTest = async () => {
     setError("");
 
     if (!validateStep1()) {
@@ -414,15 +512,25 @@ const ABTestCreator = () => {
         Object.entries(fallbackValues).map(([k, v]) => [k.trim(), v]),
       );
 
-      await API.post("/ab-tests", {
+      const payload = {
         ...testConfig,
         field_map: cleanFieldMap,
         fallback_values: cleanFallback,
-      });
+        reply_to: testConfig.reply_to || testConfig.sender_email,
+      };
 
-      navigate("/ab-testing");
+      if (editMode && testId) {
+        await API.put(`/ab-tests/${testId}`, payload);
+        navigate(`/ab-testing?updated=${testId}`);
+      } else {
+        await API.post("/ab-tests", payload);
+        navigate("/ab-testing");
+      }
     } catch (err) {
-      setError(err.response?.data?.detail || "Failed to create A/B test");
+      setError(
+        err.response?.data?.detail ||
+          (editMode ? "Failed to update A/B test" : "Failed to create A/B test"),
+      );
     } finally {
       setLoading(false);
     }
@@ -757,6 +865,23 @@ const ABTestCreator = () => {
           )}
         </select>
       </div>
+      {senderProfiles.length > 0 && (
+        <div>
+          <label className="block font-medium mb-1">Quick-fill Sender Profile</label>
+          <select
+            defaultValue=""
+            onChange={(e) => applySenderProfile(e.target.value)}
+            className="w-full px-3 py-2 border border-gray-300 rounded"
+          >
+            <option value="">-- Select sender profile --</option>
+            {senderProfiles.map((profile) => (
+              <option key={profile._id || profile.id} value={profile._id || profile.id}>
+                {profile.name || profile.sender_name}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
 
       {testConfig.template_id && (
         <div className="bg-white border rounded-lg p-6">
@@ -1164,7 +1289,37 @@ const ABTestCreator = () => {
     </div>
   );
 
-  const isInitialLoading = loadingLists || loadingSegments || loadingTemplates;
+  const isInitialLoading =
+    loadingLists || loadingSegments || loadingTemplates || loadingSenderProfiles;
+
+  if (loadingEdit) {
+    return (
+      <div className="max-w-5xl mx-auto p-6">
+        <div className="text-center py-12">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+          <p className="mt-4 text-gray-600">Loading A/B test builder...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (error && editMode && !testConfig.test_name) {
+    return (
+      <div className="max-w-3xl mx-auto p-6">
+        <div className="text-center py-12 border rounded-lg bg-white shadow">
+          <p className="text-4xl mb-3">⚠️</p>
+          <p className="font-semibold text-gray-800 mb-1">Cannot Edit Test</p>
+          <p className="text-sm text-gray-500 mb-4">{error}</p>
+          <button
+            onClick={() => navigate("/ab-testing")}
+            className="px-5 py-2 bg-blue-600 text-white text-sm font-semibold rounded-lg hover:bg-blue-700"
+          >
+            ← Back to Tests
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   if (isInitialLoading && !lists.length && !templates.length) {
     return (
@@ -1180,7 +1335,9 @@ const ABTestCreator = () => {
   return (
     <div className="max-w-5xl mx-auto p-6 bg-white rounded shadow">
       <div className="flex justify-between items-center mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">Create A/B Test</h1>
+        <h1 className="text-2xl font-bold text-gray-900">
+          {editMode ? "✏️ Edit A/B Test" : "🧪 Create A/B Test"}
+        </h1>
         <button
           onClick={() => navigate("/ab-testing")}
           className="text-gray-600 hover:text-gray-800 px-4 py-2 border rounded-lg"
@@ -1229,12 +1386,14 @@ const ABTestCreator = () => {
               setError("");
               setStep(3);
             } else {
-              setError(getAudienceError() || "Please complete Step 2 before continuing.");
+              setError(
+                getAudienceError() || "Please complete Step 2 before continuing.",
+              );
             }
             return;
           }
 
-          handleCreateTest();
+          handleSaveTest();
         }}
       >
         {step === 1 && renderStep1()}
@@ -1263,7 +1422,15 @@ const ABTestCreator = () => {
             }
             className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded disabled:opacity-50"
           >
-            {step < 3 ? "Next" : loading ? "Creating..." : "Create A/B Test"}
+            {step < 3
+              ? "Next"
+              : loading
+                ? editMode
+                  ? "Saving..."
+                  : "Creating..."
+                : editMode
+                  ? "Save Changes"
+                  : "Create A/B Test"}
           </button>
         </div>
       </form>
