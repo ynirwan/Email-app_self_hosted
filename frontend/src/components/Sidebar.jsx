@@ -193,11 +193,9 @@ export default function Sidebar() {
         <div
           className={`flex items-center ${collapsed ? "justify-center w-full" : "flex-1 min-w-0"}`}
         >
-          <ZeniPostLogo size={28} variant="animated" />
+          <ZeniPostLogo size={28} variant="animated" showText={!collapsed} />
           {!collapsed && (
-            <span className="ml-2 text-white font-bold text-sm truncate">
-              
-            </span>
+            <span className="ml-2 text-white font-bold text-sm truncate"></span>
           )}
         </div>
         {/* Collapse toggle — desktop only */}

@@ -1,8 +1,7 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Link } from "react-router-dom";
 import API from "../api";
 
-// ─── helpers ─────────────────────────────────────────────────
 const fmt = (n) => Number(n ?? 0).toLocaleString();
 const pct = (n) => `${Number(n ?? 0).toFixed(1)}%`;
 const fmtD = (iso) =>
@@ -14,561 +13,646 @@ const fmtD = (iso) =>
       })
     : "—";
 
-const STATUS_STYLE = {
-  completed: "bg-green-100 text-green-700",
-  sending: "bg-blue-100  text-blue-700",
-  scheduled: "bg-purple-100 text-purple-700",
-  paused: "bg-orange-100 text-orange-700",
-  stopped: "bg-gray-100  text-gray-600",
-  failed: "bg-red-100   text-red-700",
-  draft: "bg-yellow-100 text-yellow-700",
-};
-
-// ─── RateBar ─────────────────────────────────────────────────
-function RateBar({ value, max = 60, colorClass = "bg-blue-500" }) {
-  const w = Math.min(Math.max((value / max) * 100, 0), 100);
+function StatCard({ label, value, sub, color, icon }) {
+  const colors = {
+    blue: "bg-blue-50   border-blue-200   text-blue-700",
+    green: "bg-green-50  border-green-200  text-green-700",
+    purple: "bg-purple-50 border-purple-200 text-purple-700",
+    rose: "bg-rose-50   border-rose-200   text-rose-700",
+    gray: "bg-gray-50   border-gray-200   text-gray-600",
+  };
   return (
-    <div className="flex items-center gap-2 min-w-[90px]">
-      <div className="flex-1 bg-gray-100 rounded-full h-1.5 overflow-hidden">
-        <div
-          className={`h-1.5 rounded-full ${colorClass}`}
-          style={{ width: `${w}%` }}
-        />
-      </div>
-      <span className="text-xs tabular-nums font-medium w-10 text-right">
-        {pct(value)}
-      </span>
-    </div>
-  );
-}
-
-// ─── SummaryCard ─────────────────────────────────────────────
-function SummaryCard({
-  label,
-  value,
-  sub,
-  icon,
-  valueColor = "text-gray-900",
-}) {
-  return (
-    <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
+    <div className={`rounded-xl border p-5 ${colors[color] || colors.gray}`}>
       <div className="flex items-center justify-between mb-3">
-        <p className="text-sm font-medium text-gray-500">{label}</p>
         <span className="text-xl">{icon}</span>
       </div>
-      <p className={`text-2xl font-bold tabular-nums ${valueColor}`}>{value}</p>
-      {sub && <p className="text-xs text-gray-400 mt-1">{sub}</p>}
+      <p className="text-2xl font-bold tabular-nums">{value}</p>
+      <p className="text-xs font-semibold mt-0.5 opacity-75">{label}</p>
+      {sub && <p className="text-xs mt-1 opacity-60">{sub}</p>}
     </div>
   );
 }
 
-// ─── SortButton ──────────────────────────────────────────────
-function SortButton({ col, sortCol, sortDir, onSort, children }) {
-  const active = sortCol === col;
+function CampaignRow({ campaign }) {
+  const analytics = campaign.analytics || {};
+  const sent = analytics.total_sent || 0;
+  const openRate = analytics.open_rate || 0;
+  const clickRate = analytics.click_rate || 0;
+  const status = campaign.status || "draft";
+  const statusStyles = {
+    sent: "bg-green-100 text-green-800",
+    completed: "bg-green-100 text-green-800",
+    sending: "bg-blue-100 text-blue-800",
+    draft: "bg-gray-100 text-gray-700",
+    paused: "bg-amber-100 text-amber-800",
+    failed: "bg-red-100 text-red-700",
+    stopped: "bg-gray-100 text-gray-600",
+    scheduled: "bg-purple-100 text-purple-800",
+  };
   return (
-    <button
-      onClick={() => onSort(col)}
-      className="flex items-center gap-1 text-xs font-medium text-gray-500 uppercase tracking-wider hover:text-gray-800 transition-colors group"
-    >
-      {children}
-      <span
-        className={`text-gray-300 group-hover:text-gray-500 ${active ? "text-gray-700" : ""}`}
-      >
-        {active ? (sortDir === "asc" ? "↑" : "↓") : "↕"}
-      </span>
-    </button>
+    <tr className="hover:bg-gray-50 transition-colors border-b border-gray-50 last:border-0">
+      <td className="px-5 py-3.5">
+        <Link to={`/analytics/campaign/${campaign._id}`} className="group">
+          <p className="text-sm font-semibold text-gray-900 group-hover:text-blue-600 truncate max-w-[200px]">
+            {campaign.title || "Untitled"}
+          </p>
+          <p className="text-xs text-gray-400 truncate max-w-[200px] mt-0.5">
+            {campaign.subject}
+          </p>
+        </Link>
+      </td>
+      <td className="px-4 py-3.5">
+        <span
+          className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium ${statusStyles[status] || statusStyles.draft}`}
+        >
+          {status}
+        </span>
+      </td>
+      <td className="px-4 py-3.5 text-right tabular-nums text-sm text-gray-700 font-medium">
+        {sent > 0 ? fmt(sent) : <span className="text-gray-300">—</span>}
+      </td>
+      <td className="px-4 py-3.5 w-40">
+        <div className="flex items-center gap-2">
+          <div className="flex-1 bg-blue-100 rounded-full h-1.5 overflow-hidden">
+            <div
+              className="bg-blue-500 h-1.5 rounded-full"
+              style={{ width: `${Math.min(openRate, 100)}%` }}
+            />
+          </div>
+          <span className="text-xs font-semibold text-blue-600 w-12 text-right">
+            {pct(openRate)}
+          </span>
+        </div>
+      </td>
+      <td className="px-4 py-3.5 w-40">
+        <div className="flex items-center gap-2">
+          <div className="flex-1 bg-purple-100 rounded-full h-1.5 overflow-hidden">
+            <div
+              className="bg-purple-500 h-1.5 rounded-full"
+              style={{ width: `${Math.min(clickRate * 4, 100)}%` }}
+            />
+          </div>
+          <span className="text-xs font-semibold text-purple-600 w-12 text-right">
+            {pct(clickRate)}
+          </span>
+        </div>
+      </td>
+      <td className="px-4 py-3.5 text-right text-xs text-gray-400 whitespace-nowrap">
+        {fmtD(
+          campaign.completed_at || campaign.started_at || campaign.created_at,
+        )}
+      </td>
+      <td className="px-4 py-3.5 text-right">
+        <Link
+          to={`/analytics/campaign/${campaign._id}`}
+          className="text-xs font-medium text-blue-600 hover:underline"
+        >
+          Report →
+        </Link>
+      </td>
+    </tr>
   );
 }
 
-// ─── Main ────────────────────────────────────────────────────
+function ABStatusBadge({ status }) {
+  const cfg = {
+    completed: { cls: "bg-green-100 text-green-800", label: "Completed" },
+    running: { cls: "bg-blue-100 text-blue-800", label: "Sending" },
+    stopped: { cls: "bg-amber-100 text-amber-800", label: "Stopped" },
+    not_sent: { cls: "bg-gray-100 text-gray-500", label: "Not sent" },
+  }[status || "not_sent"] || {
+    cls: "bg-gray-100 text-gray-600",
+    label: status || "—",
+  };
+  return (
+    <span
+      className={`text-xs px-2 py-0.5 rounded-full font-semibold ${cfg.cls}`}
+    >
+      {cfg.label}
+    </span>
+  );
+}
+
+function ABWinnerRow({ test }) {
+  // winnerSent / winnerOpenRate / winnerClickRate are pre-computed from winner-analytics
+  const sent = test.winnerSent ?? 0;
+  const openRate = test.winnerOpenRate ?? 0;
+  const clickRate = test.winnerClickRate ?? 0;
+  const wsStatus = test.winner_send_status;
+  return (
+    <tr className="hover:bg-gray-50 transition-colors border-b border-gray-50 last:border-0">
+      <td className="px-5 py-3.5">
+        <p className="text-sm font-semibold text-gray-900 truncate max-w-[200px]">
+          {test.test_name || "Untitled"}
+        </p>
+        <p className="text-xs text-gray-400 mt-0.5 truncate max-w-[200px]">
+          {test.subject}
+        </p>
+      </td>
+      <td className="px-4 py-3.5">
+        {test.winner_variant ? (
+          <span className="inline-flex items-center gap-1 text-xs font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-800">
+            🏆 Variant {test.winner_variant}
+          </span>
+        ) : (
+          <span className="text-xs text-gray-400 italic">—</span>
+        )}
+      </td>
+      <td className="px-4 py-3.5">
+        <ABStatusBadge status={wsStatus} />
+      </td>
+      <td className="px-4 py-3.5 text-right tabular-nums text-sm text-gray-700 font-medium">
+        {sent > 0 ? fmt(sent) : <span className="text-gray-300">—</span>}
+      </td>
+      <td className="px-4 py-3.5 w-40">
+        {sent > 0 ? (
+          <div className="flex items-center gap-2">
+            <div className="flex-1 bg-violet-100 rounded-full h-1.5 overflow-hidden">
+              <div
+                className="bg-violet-500 h-1.5 rounded-full"
+                style={{ width: `${Math.min(openRate, 100)}%` }}
+              />
+            </div>
+            <span className="text-xs font-semibold text-violet-600 w-12 text-right">
+              {pct(openRate)}
+            </span>
+          </div>
+        ) : (
+          <span className="text-xs text-gray-300">—</span>
+        )}
+      </td>
+      <td className="px-4 py-3.5 w-40">
+        {sent > 0 ? (
+          <div className="flex items-center gap-2">
+            <div className="flex-1 bg-pink-100 rounded-full h-1.5 overflow-hidden">
+              <div
+                className="bg-pink-500 h-1.5 rounded-full"
+                style={{ width: `${Math.min(clickRate * 4, 100)}%` }}
+              />
+            </div>
+            <span className="text-xs font-semibold text-pink-600 w-12 text-right">
+              {pct(clickRate)}
+            </span>
+          </div>
+        ) : (
+          <span className="text-xs text-gray-300">—</span>
+        )}
+      </td>
+      <td className="px-4 py-3.5 text-right">
+        <div className="flex items-center justify-end gap-3">
+          <Link
+            to={`/ab-tests/${test._id}/results`}
+            className="text-xs font-medium text-violet-600 hover:underline"
+          >
+            Results →
+          </Link>
+          {wsStatus && wsStatus !== "not_sent" && (
+            <Link
+              to={`/ab-tests/${test._id}/winner-report`}
+              className="text-xs font-medium text-green-600 hover:underline"
+            >
+              Report →
+            </Link>
+          )}
+        </div>
+      </td>
+    </tr>
+  );
+}
+
 export default function Analytics() {
-  const [dashboardData, setDashboardData] = useState(null);
+  const [days, setDays] = useState(30);
+  const [data, setData] = useState(null);
+  const [abTests, setAbTests] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadingAB, setLoadingAB] = useState(false);
   const [error, setError] = useState(null);
-  const [dateRange, setDateRange] = useState(30);
-  const [search, setSearch] = useState("");
-  const [sortCol, setSortCol] = useState("created_at");
-  const [sortDir, setSortDir] = useState("desc");
-  const [showAllMetrics, setShowAllMetrics] = useState(false);
+  const [activeTab, setActiveTab] = useState("campaigns");
 
-  useEffect(() => {
-    fetchData();
-  }, [dateRange]);
-
-  const fetchData = async () => {
+  const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const res = await API.get(`/analytics/dashboard?days=${dateRange}`);
-      setDashboardData(res.data);
-    } catch (err) {
-      setError(err.response?.data?.detail || "Failed to load analytics");
+      const res = await API.get(`/analytics/dashboard?days=${days}`);
+      setData(res.data);
+    } catch (e) {
+      setError(e.response?.data?.detail || "Failed to load analytics");
     } finally {
       setLoading(false);
     }
-  };
+  }, [days]);
 
-  const handleSort = (col) => {
-    if (sortCol === col) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
-    else {
-      setSortCol(col);
-      setSortDir("desc");
-    }
-  };
-
-  // ── derived data ──────────────────────────────────────────
-  const { summary, campaigns = [], date_range } = dashboardData || {};
-
-  // exclude drafts and failed silently — now we tell the user
-  const allCampaigns = campaigns;
-  const excludedCount = allCampaigns.filter(
-    (c) => c.status === "draft" || c.status === "failed",
-  ).length;
-  const baseCampaigns = allCampaigns.filter(
-    (c) => c.status !== "draft" && c.status !== "failed",
-  );
-
-  const filtered = useMemo(() => {
-    let list = [...baseCampaigns];
-
-    // search
-    if (search.trim()) {
-      const q = search.toLowerCase();
-      list = list.filter(
-        (c) =>
-          (c.title || "").toLowerCase().includes(q) ||
-          (c.subject || "").toLowerCase().includes(q),
+  const loadABTests = useCallback(async () => {
+    setLoadingAB(true);
+    try {
+      const res = await API.get("/ab-tests");
+      const allTests = res.data.tests || res.data || [];
+      const relevant = allTests.filter(
+        (t) => t.status === "completed" || t.winner_send_status === "running",
       );
+
+      // Fetch winner analytics for all in parallel
+      const results = await Promise.allSettled(
+        relevant.map((t) =>
+          API.get(`/ab-tests/${t._id}/winner-analytics`)
+            .then((r) => ({
+              id: t._id,
+              analytics: r.data?.analytics || {},
+              winner_send_status: r.data?.winner_send_status,
+            }))
+            .catch(() => ({
+              id: t._id,
+              analytics: {},
+              winner_send_status: null,
+            })),
+        ),
+      );
+
+      const enriched = relevant.map((t) => {
+        const found = results.find(
+          (r) => r.status === "fulfilled" && r.value.id === t._id,
+        );
+        const wd = found?.value || {};
+        const a = wd.analytics || {};
+        const totalSent = a.total_sent || 0;
+        return {
+          ...t,
+          winnerSent: totalSent,
+          winnerOpenRate:
+            totalSent > 0 ? ((a.total_opened || 0) / totalSent) * 100 : 0,
+          winnerClickRate:
+            totalSent > 0 ? ((a.total_clicked || 0) / totalSent) * 100 : 0,
+          winner_send_status:
+            wd.winner_send_status || t.winner_send_status || null,
+        };
+      });
+      setAbTests(enriched);
+    } catch {
+      setAbTests([]);
+    } finally {
+      setLoadingAB(false);
     }
+  }, []);
 
-    // sort
-    list.sort((a, b) => {
-      let av, bv;
-      switch (sortCol) {
-        case "sent":
-          av = a.analytics?.total_sent || 0;
-          bv = b.analytics?.total_sent || 0;
-          break;
-        case "open_rate":
-          av = a.analytics?.open_rate || 0;
-          bv = b.analytics?.open_rate || 0;
-          break;
-        case "click_rate":
-          av = a.analytics?.click_rate || 0;
-          bv = b.analytics?.click_rate || 0;
-          break;
-        case "bounce_rate":
-          av = a.analytics?.bounce_rate || 0;
-          bv = b.analytics?.bounce_rate || 0;
-          break;
-        case "unsub_rate":
-          av = a.analytics?.unsubscribe_rate || 0;
-          bv = b.analytics?.unsubscribe_rate || 0;
-          break;
-        default:
-          av = new Date(a.created_at || 0);
-          bv = new Date(b.created_at || 0);
-      }
-      return sortDir === "asc" ? (av > bv ? 1 : -1) : av < bv ? 1 : -1;
-    });
+  useEffect(() => {
+    load();
+  }, [load]);
+  useEffect(() => {
+    if (activeTab === "ab_tests") loadABTests();
+  }, [activeTab, loadABTests]);
 
-    return list;
-  }, [baseCampaigns, search, sortCol, sortDir]);
+  const summary = data?.summary || {};
+  const campaigns = data?.campaigns || [];
 
-  // ── loading skeleton ──────────────────────────────────────
-  if (loading)
+  // AB aggregates (only tests with actual sends)
+  const abWithSends = abTests.filter((t) => t.winnerSent > 0);
+  const abTotalSent = abWithSends.reduce((s, t) => s + t.winnerSent, 0);
+  const abTotalOpened = abWithSends.reduce(
+    (s, t) => s + Math.round((t.winnerOpenRate / 100) * t.winnerSent),
+    0,
+  );
+  const abTotalClicked = abWithSends.reduce(
+    (s, t) => s + Math.round((t.winnerClickRate / 100) * t.winnerSent),
+    0,
+  );
+  const abAvgOpen = abTotalSent > 0 ? (abTotalOpened / abTotalSent) * 100 : 0;
+  const abAvgClick = abTotalSent > 0 ? (abTotalClicked / abTotalSent) * 100 : 0;
+
+  if (loading && !data) {
     return (
       <div className="space-y-6 animate-pulse">
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
-          {[...Array(6)].map((_, i) => (
-            <div key={i} className="h-24 bg-gray-200 rounded-xl" />
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          {[...Array(4)].map((_, i) => (
+            <div key={i} className="h-28 bg-gray-200 rounded-xl" />
           ))}
         </div>
-        <div className="h-64 bg-gray-200 rounded-xl" />
+        <div className="h-72 bg-gray-200 rounded-xl" />
       </div>
     );
+  }
 
-  // ── error state ───────────────────────────────────────────
-  if (error)
+  if (error && !data) {
     return (
-      <div className="flex flex-col items-center justify-center py-24 gap-4">
-        <span className="text-4xl">⚠️</span>
-        <p className="font-semibold text-gray-800">Failed to load analytics</p>
-        <p className="text-sm text-gray-500">{error}</p>
-        <button
-          onClick={fetchData}
-          className="px-5 py-2 bg-blue-600 text-white text-sm font-semibold rounded-lg hover:bg-blue-700"
-        >
-          Try Again
-        </button>
+      <div className="flex items-center justify-center min-h-[50vh]">
+        <div className="text-center">
+          <p className="text-3xl mb-2">⚠️</p>
+          <p className="text-gray-700 font-semibold mb-2">
+            Failed to load analytics
+          </p>
+          <p className="text-sm text-gray-500 mb-4">{error}</p>
+          <button
+            onClick={load}
+            className="px-4 py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700"
+          >
+            Retry
+          </button>
+        </div>
       </div>
     );
+  }
 
   return (
-    <div className="space-y-7">
-      {/* ── Controls row ── */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <p className="text-sm text-gray-500">
-            Showing <strong>{baseCampaigns.length}</strong> campaigns
-            {date_range && (
-              <span>
-                {" "}
-                · {fmtD(date_range.start_date)} – {fmtD(date_range.end_date)}
-              </span>
-            )}
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">Analytics</h1>
+          <p className="text-sm text-gray-500 mt-0.5">
+            Performance overview across campaigns & A/B tests
           </p>
-          {excludedCount > 0 && (
-            <span className="text-xs text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full">
-              {excludedCount} draft/failed excluded
-            </span>
-          )}
         </div>
-
         <div className="flex items-center gap-2">
           <select
-            value={dateRange}
-            onChange={(e) => setDateRange(Number(e.target.value))}
-            className="px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white"
+            value={days}
+            onChange={(e) => setDays(Number(e.target.value))}
+            className="px-3 py-2 text-sm border border-gray-200 rounded-lg bg-white focus:ring-2 focus:ring-blue-400"
           >
             <option value={7}>Last 7 days</option>
             <option value={30}>Last 30 days</option>
             <option value={90}>Last 90 days</option>
             <option value={365}>Last year</option>
           </select>
+          <button
+            onClick={load}
+            className="px-4 py-2 text-sm font-medium border border-gray-200 rounded-lg hover:bg-gray-50 text-gray-600"
+          >
+            🔄 Refresh
+          </button>
         </div>
       </div>
 
-      {/* ── 6 summary cards ── */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
-        <SummaryCard
-          label="Campaigns"
-          value={fmt(baseCampaigns.length)}
-          sub={`of ${fmt(allCampaigns.length)} total`}
+      {/* Stat cards */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <StatCard
+          label="Total Campaigns"
+          value={fmt(summary.total_campaigns)}
           icon="📢"
+          color="blue"
+          sub={`Last ${days} days`}
         />
-        <SummaryCard
+        <StatCard
           label="Emails Sent"
-          value={fmt(summary?.total_emails_sent)}
-          icon="📤"
-          valueColor="text-blue-700"
+          value={fmt(summary.total_emails_sent)}
+          icon="📧"
+          color="green"
+          sub="Across all campaigns"
         />
-        <SummaryCard
-          label="Total Opens"
-          value={fmt(summary?.total_opens)}
-          sub="unique opens tracked"
-          icon="👁️"
-          valueColor="text-green-700"
-        />
-        <SummaryCard
-          label="Total Clicks"
-          value={fmt(summary?.total_clicks)}
-          sub="link clicks tracked"
-          icon="👆"
-          valueColor="text-purple-700"
-        />
-        <SummaryCard
+        <StatCard
           label="Avg Open Rate"
-          value={pct(summary?.average_open_rate)}
-          sub="across all campaigns"
-          icon="📬"
-          valueColor={
-            (summary?.average_open_rate || 0) >= 20
-              ? "text-green-600"
-              : (summary?.average_open_rate || 0) >= 10
-                ? "text-yellow-600"
-                : "text-red-600"
-          }
+          value={pct(summary.average_open_rate)}
+          icon="👁️"
+          color="purple"
+          sub={`${fmt(summary.total_opens)} opens`}
         />
-        <SummaryCard
+        <StatCard
           label="Avg Click Rate"
-          value={pct(summary?.average_click_rate)}
-          sub="across all campaigns"
-          icon="🖱️"
-          valueColor={
-            (summary?.average_click_rate || 0) >= 3
-              ? "text-purple-600"
-              : (summary?.average_click_rate || 0) >= 1
-                ? "text-yellow-600"
-                : "text-gray-500"
-          }
+          value={pct(summary.average_click_rate)}
+          icon="👆"
+          color="rose"
+          sub={`${fmt(summary.total_clicks)} clicks`}
         />
       </div>
 
-      {/* ── Table card ── */}
-      <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-        {/* Table toolbar */}
-        <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-4 border-b border-gray-100">
-          <h2 className="text-sm font-semibold text-gray-700">
-            Campaign Performance
-            {filtered.length !== baseCampaigns.length && (
-              <span className="ml-2 text-xs font-normal text-gray-400">
-                ({filtered.length} of {baseCampaigns.length} shown)
-              </span>
-            )}
+      {/* Engagement rates — ONE section only, for campaigns */}
+      {(summary.average_open_rate > 0 || summary.average_click_rate > 0) && (
+        <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
+          <h2 className="text-sm font-semibold text-gray-700 mb-4">
+            Campaign Engagement Rates
           </h2>
-          <div className="flex items-center gap-2">
-            {/* Search */}
-            <div className="relative">
-              <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 text-xs">
-                🔍
+          <div className="space-y-3 max-w-lg">
+            <div className="flex items-center gap-3">
+              <span className="text-xs text-gray-500 w-24 flex-shrink-0">
+                Avg Open Rate
               </span>
-              <input
-                type="text"
-                placeholder="Search campaigns…"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="pl-7 pr-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 w-44"
-              />
+              <div className="flex-1 bg-blue-100 rounded-full h-2 overflow-hidden">
+                <div
+                  className="bg-blue-500 h-2 rounded-full transition-all duration-700"
+                  style={{
+                    width: `${Math.min(summary.average_open_rate || 0, 100)}%`,
+                  }}
+                />
+              </div>
+              <span className="text-sm font-bold text-blue-600 w-14 text-right">
+                {pct(summary.average_open_rate)}
+              </span>
             </div>
-            {/* Toggle extra columns */}
-            <button
-              onClick={() => setShowAllMetrics(!showAllMetrics)}
-              className="px-3 py-1.5 text-xs font-medium border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors text-gray-600"
-              title="Toggle bounce / unsubscribe / delivery columns"
-            >
-              {showAllMetrics ? "Fewer columns" : "More metrics"}
-            </button>
+            <div className="flex items-center gap-3">
+              <span className="text-xs text-gray-500 w-24 flex-shrink-0">
+                Avg Click Rate
+              </span>
+              <div className="flex-1 bg-purple-100 rounded-full h-2 overflow-hidden">
+                <div
+                  className="bg-purple-500 h-2 rounded-full transition-all duration-700"
+                  style={{
+                    width: `${Math.min(summary.average_click_rate || 0, 100)}%`,
+                  }}
+                />
+              </div>
+              <span className="text-sm font-bold text-purple-600 w-14 text-right">
+                {pct(summary.average_click_rate)}
+              </span>
+            </div>
           </div>
+          <p className="text-xs text-gray-400 mt-3">
+            Based on {fmt(summary.total_campaigns)} campaign
+            {summary.total_campaigns !== 1 ? "s" : ""} in the last {days} days.
+          </p>
         </div>
+      )}
 
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="bg-gray-50 border-b border-gray-100">
-                <th className="px-5 py-3 text-left">
-                  <SortButton
-                    col="created_at"
-                    sortCol={sortCol}
-                    sortDir={sortDir}
-                    onSort={handleSort}
-                  >
-                    Campaign
-                  </SortButton>
-                </th>
-                <th className="px-4 py-3 text-left w-24">Status</th>
-                <th className="px-4 py-3 text-right">
-                  <SortButton
-                    col="sent"
-                    sortCol={sortCol}
-                    sortDir={sortDir}
-                    onSort={handleSort}
-                  >
-                    Sent
-                  </SortButton>
-                </th>
-                <th className="px-4 py-3 text-left min-w-[130px]">
-                  <SortButton
-                    col="open_rate"
-                    sortCol={sortCol}
-                    sortDir={sortDir}
-                    onSort={handleSort}
-                  >
-                    Open Rate
-                  </SortButton>
-                </th>
-                <th className="px-4 py-3 text-left min-w-[130px]">
-                  <SortButton
-                    col="click_rate"
-                    sortCol={sortCol}
-                    sortDir={sortDir}
-                    onSort={handleSort}
-                  >
-                    Click Rate
-                  </SortButton>
-                </th>
-                {showAllMetrics && (
-                  <>
-                    <th className="px-4 py-3 text-left min-w-[130px]">
-                      <SortButton
-                        col="bounce_rate"
-                        sortCol={sortCol}
-                        sortDir={sortDir}
-                        onSort={handleSort}
-                      >
-                        Bounce
-                      </SortButton>
-                    </th>
-                    <th className="px-4 py-3 text-left min-w-[130px]">
-                      <SortButton
-                        col="unsub_rate"
-                        sortCol={sortCol}
-                        sortDir={sortDir}
-                        onSort={handleSort}
-                      >
-                        Unsub
-                      </SortButton>
-                    </th>
-                  </>
-                )}
-                <th className="px-4 py-3 text-right w-20 text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Date
-                </th>
-                <th className="px-4 py-3 w-16" />
-              </tr>
-            </thead>
-
-            <tbody className="divide-y divide-gray-50">
-              {filtered.length > 0 ? (
-                filtered.map((c) => {
-                  const a = c.analytics || {};
-                  return (
-                    <tr
-                      key={c._id}
-                      className="hover:bg-gray-50 transition-colors"
-                    >
-                      {/* Campaign name + subject */}
-                      <td className="px-5 py-3.5 max-w-[220px]">
-                        <p className="font-medium text-gray-900 truncate">
-                          {c.title || "Untitled"}
-                        </p>
-                        <p className="text-xs text-gray-400 truncate mt-0.5">
-                          {c.subject || "—"}
-                        </p>
-                      </td>
-
-                      {/* Status badge */}
-                      <td className="px-4 py-3.5">
-                        <span
-                          className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium ${STATUS_STYLE[c.status] || STATUS_STYLE.draft}`}
-                        >
-                          {c.status || "draft"}
-                        </span>
-                      </td>
-
-                      {/* Sent */}
-                      <td className="px-4 py-3.5 text-right tabular-nums text-gray-700 font-medium">
-                        {fmt(a.total_sent || c.sent_count)}
-                      </td>
-
-                      {/* Open rate bar */}
-                      <td className="px-4 py-3.5">
-                        <RateBar
-                          value={a.open_rate || 0}
-                          max={60}
-                          colorClass={
-                            (a.open_rate || 0) >= 20
-                              ? "bg-green-500"
-                              : (a.open_rate || 0) >= 10
-                                ? "bg-yellow-400"
-                                : "bg-red-300"
-                          }
-                        />
-                      </td>
-
-                      {/* Click rate bar */}
-                      <td className="px-4 py-3.5">
-                        <RateBar
-                          value={a.click_rate || 0}
-                          max={20}
-                          colorClass={
-                            (a.click_rate || 0) >= 3
-                              ? "bg-purple-500"
-                              : (a.click_rate || 0) >= 1
-                                ? "bg-blue-400"
-                                : "bg-gray-300"
-                          }
-                        />
-                      </td>
-
-                      {/* Optional columns */}
-                      {showAllMetrics && (
-                        <>
-                          <td className="px-4 py-3.5">
-                            <RateBar
-                              value={a.bounce_rate || 0}
-                              max={10}
-                              colorClass={
-                                (a.bounce_rate || 0) > 2
-                                  ? "bg-red-500"
-                                  : "bg-gray-300"
-                              }
-                            />
-                          </td>
-                          <td className="px-4 py-3.5">
-                            <RateBar
-                              value={a.unsubscribe_rate || 0}
-                              max={5}
-                              colorClass={
-                                (a.unsubscribe_rate || 0) > 0.5
-                                  ? "bg-orange-500"
-                                  : "bg-gray-300"
-                              }
-                            />
-                          </td>
-                        </>
-                      )}
-
-                      {/* Date */}
-                      <td className="px-4 py-3.5 text-xs text-gray-400 text-right whitespace-nowrap">
-                        {fmtD(c.completed_at || c.started_at || c.created_at)}
-                      </td>
-
-                      {/* Action */}
-                      <td className="px-4 py-3.5 text-right">
-                        <Link
-                          to={`/analytics/campaign/${c._id}`}
-                          className="text-xs font-medium text-blue-600 hover:text-blue-800 hover:underline whitespace-nowrap"
-                        >
-                          Report →
-                        </Link>
-                      </td>
-                    </tr>
-                  );
-                })
-              ) : (
-                <tr>
-                  <td
-                    colSpan={showAllMetrics ? 9 : 7}
-                    className="py-16 text-center"
-                  >
-                    {search ? (
-                      <>
-                        <p className="text-2xl mb-2">🔍</p>
-                        <p className="text-sm font-medium text-gray-700">
-                          No campaigns match "{search}"
-                        </p>
-                        <button
-                          onClick={() => setSearch("")}
-                          className="text-xs text-blue-600 mt-1 hover:underline"
-                        >
-                          Clear search
-                        </button>
-                      </>
-                    ) : baseCampaigns.length === 0 &&
-                      allCampaigns.length > 0 ? (
-                      <>
-                        <p className="text-2xl mb-2">📅</p>
-                        <p className="text-sm font-medium text-gray-700">
-                          No campaigns in this date range
-                        </p>
-                        <p className="text-xs text-gray-400 mt-1">
-                          Try extending the date range
-                        </p>
-                      </>
-                    ) : (
-                      <>
-                        <p className="text-3xl mb-2">📊</p>
-                        <p className="text-sm font-medium text-gray-700">
-                          No campaigns yet
-                        </p>
-                        <p className="text-xs text-gray-400 mt-1 mb-4">
-                          Create your first campaign to see analytics here
-                        </p>
-                        <Link
-                          to="/campaigns"
-                          className="inline-block px-4 py-2 bg-blue-600 text-white text-sm font-semibold rounded-lg hover:bg-blue-700"
-                        >
-                          Go to Campaigns
-                        </Link>
-                      </>
-                    )}
-                  </td>
-                </tr>
+      {/* Tab card */}
+      <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+        <div className="flex border-b border-gray-200">
+          {[
+            {
+              key: "campaigns",
+              label: "📢 Campaigns",
+              count: campaigns.length,
+            },
+            {
+              key: "ab_tests",
+              label: "🧪 A/B Winner Sends",
+              count: abTests.length,
+            },
+          ].map((tab) => (
+            <button
+              key={tab.key}
+              onClick={() => setActiveTab(tab.key)}
+              className={`flex items-center gap-2 px-6 py-3.5 text-sm font-semibold border-b-2 -mb-px transition-colors ${
+                activeTab === tab.key
+                  ? "border-blue-600 text-blue-700 bg-blue-50"
+                  : "border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-50"
+              }`}
+            >
+              {tab.label}
+              {tab.count > 0 && (
+                <span
+                  className={`text-xs px-2 py-0.5 rounded-full font-bold ${
+                    activeTab === tab.key
+                      ? "bg-blue-100 text-blue-700"
+                      : "bg-gray-100 text-gray-500"
+                  }`}
+                >
+                  {tab.count}
+                </span>
               )}
-            </tbody>
-          </table>
+            </button>
+          ))}
         </div>
+
+        {/* Campaigns tab */}
+        {activeTab === "campaigns" &&
+          (campaigns.length === 0 ? (
+            <div className="py-16 text-center">
+              <p className="text-3xl mb-2">📭</p>
+              <p className="text-sm text-gray-500 mb-1">
+                No campaigns in the last {days} days
+              </p>
+              <Link
+                to="/campaigns/create"
+                className="text-sm text-blue-600 hover:underline"
+              >
+                Create your first campaign →
+              </Link>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="bg-gray-50 border-b border-gray-100">
+                    <th className="px-5 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Campaign
+                    </th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Status
+                    </th>
+                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Sent
+                    </th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-40">
+                      Open Rate
+                    </th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-40">
+                      Click Rate
+                    </th>
+                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Date
+                    </th>
+                    <th className="px-4 py-3 w-16" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {campaigns.map((c) => (
+                    <CampaignRow key={c._id} campaign={c} />
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ))}
+
+        {/* AB Winner Sends tab */}
+        {activeTab === "ab_tests" &&
+          (loadingAB ? (
+            <div className="py-12 text-center">
+              <div className="inline-flex items-center gap-2 text-gray-400 text-sm">
+                <div className="animate-spin h-4 w-4 border-2 border-gray-300 border-t-violet-500 rounded-full" />
+                Loading A/B test analytics…
+              </div>
+            </div>
+          ) : abTests.length === 0 ? (
+            <div className="py-16 text-center">
+              <p className="text-3xl mb-2">🧪</p>
+              <p className="text-sm text-gray-500 mb-1">
+                No completed A/B tests yet
+              </p>
+              <Link
+                to="/ab-testing"
+                className="text-sm text-violet-600 hover:underline"
+              >
+                Go to A/B Testing →
+              </Link>
+            </div>
+          ) : (
+            <>
+              {/* AB aggregate mini-stats */}
+              <div className="px-5 py-4 border-b border-gray-100 grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div className="text-center">
+                  <p className="text-xl font-bold text-violet-700">
+                    {fmt(abTests.length)}
+                  </p>
+                  <p className="text-xs text-gray-400 mt-0.5">
+                    Completed Tests
+                  </p>
+                </div>
+                <div className="text-center">
+                  <p className="text-xl font-bold text-green-700">
+                    {fmt(abTotalSent)}
+                  </p>
+                  <p className="text-xs text-gray-400 mt-0.5">
+                    Winner Emails Sent
+                  </p>
+                </div>
+                <div className="text-center">
+                  <p className="text-xl font-bold text-blue-700">
+                    {pct(abAvgOpen)}
+                  </p>
+                  <p className="text-xs text-gray-400 mt-0.5">Avg Open Rate</p>
+                </div>
+                <div className="text-center">
+                  <p className="text-xl font-bold text-pink-700">
+                    {pct(abAvgClick)}
+                  </p>
+                  <p className="text-xs text-gray-400 mt-0.5">Avg Click Rate</p>
+                </div>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="bg-gray-50 border-b border-gray-100">
+                      <th className="px-5 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Test Name
+                      </th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Winner
+                      </th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Send Status
+                      </th>
+                      <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Sent
+                      </th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-40">
+                        Open Rate
+                      </th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-40">
+                        Click Rate
+                      </th>
+                      <th className="px-4 py-3 w-24" />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {abTests.map((t) => (
+                      <ABWinnerRow key={t._id} test={t} />
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="px-5 py-3 border-t border-gray-100 bg-gray-50 flex items-center justify-between">
+                <p className="text-xs text-gray-400">
+                  Open/click rates reflect winner send phase only — A/B sample
+                  emails excluded.
+                </p>
+                <Link
+                  to="/ab-testing"
+                  className="text-xs text-violet-600 font-medium hover:underline"
+                >
+                  Manage A/B Tests →
+                </Link>
+              </div>
+            </>
+          ))}
       </div>
     </div>
   );

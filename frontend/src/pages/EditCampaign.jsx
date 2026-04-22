@@ -1,856 +1,1131 @@
-// src/pages/EditCampaign.jsx
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import API from "../api";
-import { Monitor, Smartphone, Tablet } from "lucide-react";
 
+// ── Helpers ───────────────────────────────────────────────────────────────────
+const fmt = (n) => Number(n ?? 0).toLocaleString();
+
+const STEPS = [
+  { id: 1, label: "Details", icon: "✉️", desc: "Name, subject & sender" },
+  { id: 2, label: "Audience", icon: "👥", desc: "Lists & segments" },
+  { id: 3, label: "Template", icon: "🎨", desc: "Pick your template" },
+  { id: 4, label: "Mapping", icon: "🔗", desc: "Field variables" },
+  { id: 5, label: "Review", icon: "💾", desc: "Preview & save" },
+];
+
+// ── StepNav ───────────────────────────────────────────────────────────────────
+function StepNav({ current, steps, onGoto, completedSteps }) {
+  return (
+    <div className="flex items-center gap-0 overflow-x-auto pb-1">
+      {steps.map((step, i) => {
+        const isDone = completedSteps.includes(step.id);
+        const isActive = current === step.id;
+        const isClickable = isDone || isActive;
+        return (
+          <div key={step.id} className="flex items-center">
+            <button
+              onClick={() => isClickable && onGoto(step.id)}
+              disabled={!isClickable}
+              className={`flex flex-col items-center gap-1 px-3 py-2 rounded-xl transition-all duration-200 min-w-[76px] ${
+                isActive
+                  ? "bg-indigo-600 text-white shadow-lg shadow-indigo-200 scale-105"
+                  : isDone
+                    ? "bg-green-50 text-green-700 hover:bg-green-100 border border-green-200"
+                    : "text-gray-300 cursor-not-allowed"
+              }`}
+            >
+              <span className="text-sm">
+                {isDone && !isActive ? "✓" : step.icon}
+              </span>
+              <span className="text-xs font-semibold whitespace-nowrap">
+                {step.label}
+              </span>
+            </button>
+            {i < steps.length - 1 && (
+              <div
+                className={`h-px w-4 md:w-6 mx-1 ${completedSteps.includes(step.id) ? "bg-green-300" : "bg-gray-200"}`}
+              />
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── InputField ────────────────────────────────────────────────────────────────
+function InputField({ label, required, hint, error, children }) {
+  return (
+    <div className="space-y-1.5">
+      <label className="flex items-center gap-1.5 text-sm font-semibold text-gray-700">
+        {label}
+        {required && <span className="text-red-400">*</span>}
+        {hint && (
+          <span className="text-xs font-normal text-gray-400 ml-1">
+            — {hint}
+          </span>
+        )}
+      </label>
+      {children}
+      {error && <p className="text-xs text-red-500">⚠ {error}</p>}
+    </div>
+  );
+}
+
+const inputCls = (error) =>
+  `w-full px-3.5 py-2.5 rounded-xl border text-sm transition-all focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-indigo-400 ${
+    error
+      ? "border-red-300 bg-red-50"
+      : "border-gray-200 bg-white hover:border-gray-300"
+  }`;
+
+// ── TemplateCard ──────────────────────────────────────────────────────────────
+function TemplateCard({ template, selected, onClick }) {
+  const mode = template.content_json?.mode || "legacy";
+  const modeColors = {
+    html: "bg-blue-100 text-blue-700",
+    "drag-drop": "bg-purple-100 text-purple-700",
+    visual: "bg-green-100 text-green-700",
+    legacy: "bg-gray-100 text-gray-600",
+  };
+  return (
+    <button
+      onClick={onClick}
+      className={`w-full text-left p-4 rounded-xl border-2 transition-all hover:shadow-md group ${
+        selected
+          ? "border-indigo-500 bg-indigo-50 shadow-indigo-100 shadow-lg"
+          : "border-gray-200 hover:border-indigo-300 bg-white"
+      }`}
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex-1 min-w-0">
+          <p
+            className={`text-sm font-semibold truncate ${selected ? "text-indigo-800" : "text-gray-800"}`}
+          >
+            {template.name || "Untitled"}
+          </p>
+          {template.subject && (
+            <p className="text-xs text-gray-400 truncate mt-0.5">
+              {template.subject}
+            </p>
+          )}
+        </div>
+        <div className="flex items-center gap-1.5 flex-shrink-0">
+          <span
+            className={`text-xs px-2 py-0.5 rounded-full font-medium ${modeColors[mode]}`}
+          >
+            {mode}
+          </span>
+          {selected && <span className="text-indigo-600">✓</span>}
+        </div>
+      </div>
+    </button>
+  );
+}
+
+// ── AudienceCard ──────────────────────────────────────────────────────────────
+function AudienceCard({
+  name,
+  count,
+  activeCount,
+  selected,
+  onClick,
+  type = "list",
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`flex items-center gap-3 w-full p-3 rounded-xl border-2 text-left transition-all ${
+        selected
+          ? "border-indigo-500 bg-indigo-50"
+          : "border-gray-200 hover:border-gray-300 hover:bg-gray-50 bg-white"
+      }`}
+    >
+      <div
+        className={`w-8 h-8 rounded-lg flex items-center justify-center text-sm flex-shrink-0 ${selected ? "bg-indigo-100" : "bg-gray-100"}`}
+      >
+        {type === "list" ? "📋" : "🎯"}
+      </div>
+      <div className="flex-1 min-w-0">
+        <p
+          className={`text-sm font-semibold truncate ${selected ? "text-indigo-800" : "text-gray-800"}`}
+        >
+          {name}
+        </p>
+        <p className="text-xs text-gray-400">
+          {count != null ? `${fmt(count)} total` : ""}
+          {activeCount != null && count !== activeCount
+            ? ` · ${fmt(activeCount)} active`
+            : ""}
+        </p>
+      </div>
+      <div
+        className={`w-5 h-5 rounded-md border-2 flex items-center justify-center flex-shrink-0 transition-all ${
+          selected ? "bg-indigo-600 border-indigo-600" : "border-gray-300"
+        }`}
+      >
+        {selected && <span className="text-white text-xs">✓</span>}
+      </div>
+    </button>
+  );
+}
+
+// ── Main EditCampaign ─────────────────────────────────────────────────────────
 export default function EditCampaign() {
-  /* ---------- routing & id ---------- */
-  const { id } = useParams();
   const navigate = useNavigate();
+  const { id: campaignId } = useParams();
 
-  // FIX #5: use a ref instead of window global to avoid race condition
-  const pendingTemplateRef = useRef(null);
+  const [step, setStep] = useState(1);
+  const [completedSteps, setCompletedSteps] = useState([]);
+  const [submitting, setSubmitting] = useState(false);
+  const [loadingCampaign, setLoadingCampaign] = useState(true);
+  const [errors, setErrors] = useState({});
+  const [globalError, setGlobalError] = useState("");
+  const [saveSuccess, setSaveSuccess] = useState(false);
+  const [originalStatus, setOriginalStatus] = useState("draft");
 
-  /* ---------- wizard step ---------- */
-  const [step, setStep] = useState(1); // 1=Content 2=Audience+Template 3=Preview
-
-  /* ---------- form fields ---------- */
-  const [title, setTitle] = useState("");
-  const [subject, setSubject] = useState("");
-  const [senderName, setSenderName] = useState("");
-  const [senderEmail, setSenderEmail] = useState("");
-  const [replyTo, setReplyTo] = useState("");
-  const isValidEmail = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e);
-
-  /* ---------- template / preview ---------- */
-  const [templates, setTemplates] = useState([]);
-  const [selectedTemplate, setSelectedTemplate] = useState(null);
-  const [previewHtml, setPreviewHtml] = useState("");
-  const [dynamicFields, setDynamicFields] = useState([]);
-  const [fieldMap, setFieldMap] = useState({});
-  const [fallbackValues, setFallbackValues] = useState({});
-  const [previewMode, setPreviewMode] = useState("desktop"); // desktop | tablet | mobile
-
-  /* ---------- audience (lists & segments) ---------- */
+  // Data
   const [lists, setLists] = useState([]);
-  const [selectedLists, setSelectedLists] = useState([]);
   const [segments, setSegments] = useState([]);
-  const [selectedSegments, setSelectedSegments] = useState([]);
-  const [audienceMode, setAudienceMode] = useState("lists"); // lists | segments | both
-  const [loadingLists, setLoadingLists] = useState(false);
-  const [loadingSegments, setLoadingSegments] = useState(false);
-
-  /* ---------- available fields ---------- */
+  const [templates, setTemplates] = useState([]);
+  const [senderProfiles, setSenderProfiles] = useState([]);
+  const [dynamicFields, setDynamicFields] = useState([]);
   const [availableFields, setAvailableFields] = useState({
-    universal: [],
+    universal: ["email"],
     standard: [],
     custom: [],
   });
+  const [fieldsLoading, setFieldsLoading] = useState(false);
+  const [previewHtml, setPreviewHtml] = useState("");
+  const [previewMode, setPreviewMode] = useState("desktop");
 
-  /* ---------- status / UX ---------- */
-  const [campaignStatus, setCampaignStatus] = useState("draft");
-  const [loadingCampaign, setLoadingCampaign] = useState(true);
-  const [loadingTemplates, setLoadingTemplates] = useState(false);
-  const [error, setError] = useState(null);
-  const [isUpdating, setIsUpdating] = useState(false);
-  const [successMsg, setSuccessMsg] = useState("");
-  const [campaignFound, setCampaignFound] = useState(true);
+  // Form state
+  const [form, setForm] = useState({
+    title: "",
+    subject: "",
+    sender_name: "",
+    sender_email: "",
+    reply_to: "",
+    target_lists: [],
+    target_segments: [],
+    template_id: "",
+    field_map: {},
+    fallback_values: {},
+    status: "draft",
+  });
 
-  /* ---------- test email ---------- */
-  const [testEmail, setTestEmail] = useState("");
-  const [sendingTest, setSendingTest] = useState(false);
-  const [testSent, setTestSent] = useState(false);
+  const set = (key, val) => setForm((f) => ({ ...f, [key]: val }));
+  const setMap = (key, val) =>
+    setForm((f) => ({ ...f, field_map: { ...f.field_map, [key]: val } }));
+  const setFallback = (key, val) =>
+    setForm((f) => ({
+      ...f,
+      fallback_values: { ...f.fallback_values, [key]: val },
+    }));
 
-  /* ------------------------------------------------------------------ */
-  /*                       side-effect: initial fetch                   */
-  /* ------------------------------------------------------------------ */
+  const selectedTemplate = templates.find(
+    (t) => (t._id || t.id) === form.template_id,
+  );
+
+  // ── Load campaign ─────────────────────────────────────────────────────────
   useEffect(() => {
-    // FIX #7: load campaign first so selectedLists/selectedSegments/audienceMode
-    // are set before fetchLists/fetchSegments try to prune them.
-    // FIX #5: pendingTemplateRef is set inside fetchCampaign so fetchTemplates
-    // always reads the correct value regardless of order.
-    const init = async () => {
-      await fetchCampaign(); // sets selectedLists, selectedSegments, audienceMode, pendingTemplateRef
-      await Promise.all([fetchLists(), fetchSegments(), fetchTemplates()]);
-    };
-    init();
-  }, [id]);
+    setLoadingCampaign(true);
+    Promise.all([
+      API.get(`/campaigns/${campaignId}`),
+      API.get("/subscribers/lists"),
+      API.get("/segments").catch(() => ({ data: [] })),
+      API.get("/templates"),
+      API.get("/settings/sender-profiles").catch(() => ({ data: [] })),
+    ])
+      .then(([campRes, listsRes, segRes, tplRes, spRes]) => {
+        const camp = campRes.data;
+        setOriginalStatus(camp.status || "draft");
+        setForm({
+          title: camp.title || "",
+          subject: camp.subject || "",
+          sender_name: camp.sender_name || "",
+          sender_email: camp.sender_email || "",
+          reply_to: camp.reply_to || "",
+          target_lists: camp.target_lists || [],
+          target_segments: camp.target_segments || [],
+          template_id: camp.template_id || "",
+          field_map: camp.field_map || {},
+          fallback_values: camp.fallback_values || {},
+          status: camp.status || "draft",
+        });
+        setLists(Array.isArray(listsRes.data) ? listsRes.data : []);
+        const segData = segRes.data?.segments || segRes.data || [];
+        setSegments(Array.isArray(segData) ? segData : []);
+        setTemplates(Array.isArray(tplRes.data) ? tplRes.data : []);
+        setSenderProfiles(Array.isArray(spRes.data) ? spRes.data : []);
+        // Mark all steps as completed (existing campaign)
+        setCompletedSteps([1, 2, 3, 4]);
+      })
+      .catch((err) =>
+        setGlobalError(err.response?.data?.detail || "Failed to load campaign"),
+      )
+      .finally(() => setLoadingCampaign(false));
+  }, [campaignId]);
 
-  /* ------------------------------------------------------------------ */
-  /*                 side-effect: handle template change                */
-  /* ------------------------------------------------------------------ */
+  // Template preview + fields
   useEffect(() => {
     if (!selectedTemplate) {
       setPreviewHtml("");
       setDynamicFields([]);
       return;
     }
-    setPreviewHtml(extractHtmlFromTemplate(selectedTemplate));
+    const cj = selectedTemplate.content_json || {};
+    let html = selectedTemplate.html_content || "";
+    if (!html) {
+      if (cj.mode === "html" && cj.content) html = cj.content;
+      else if (cj.mode === "drag-drop" && cj.blocks)
+        html = cj.blocks.map((b) => b.content || "").join("\n");
+      else if (cj.mode === "visual" && cj.content) html = cj.content;
+    }
+    setPreviewHtml(html || "<p>No preview available</p>");
 
+    setFieldsLoading(true);
     API.get(`/templates/${selectedTemplate._id || selectedTemplate.id}/fields`)
-      .then((res) => setDynamicFields(res.data))
-      // KEEP fieldMap on edit; do NOT reset here
-      .catch(() => setDynamicFields([]));
+      .then((r) => setDynamicFields(Array.isArray(r.data) ? r.data : []))
+      .catch(() => setDynamicFields([]))
+      .finally(() => setFieldsLoading(false));
   }, [selectedTemplate]);
 
-  /* ------------------------------------------------------------------ */
-  /*            side-effect: refresh available fields on change         */
-  /* ------------------------------------------------------------------ */
+  // Available fields from audience
   useEffect(() => {
-    if (selectedLists.length || selectedSegments.length) {
-      getAllColumns().then(setAvailableFields).catch(console.error);
-    } else {
-      setAvailableFields({ universal: [], standard: [], custom: [] });
+    if (!form.target_lists.length && !form.target_segments.length) {
+      setAvailableFields({ universal: ["email"], standard: [], custom: [] });
+      return;
     }
-  }, [selectedLists, selectedSegments]);
-
-  /* ==================================================================
-     ========================  FETCH HELPERS  =========================
-     ==================================================================*/
-  const fetchCampaign = async () => {
-    try {
-      setLoadingCampaign(true);
-      const res = await API.get(`/campaigns/${id}`);
-      const c = res.data;
-
-      /* ---- hydrate form ---- */
-      setTitle(c.title || "");
-      setSubject(c.subject || "");
-      setSenderName(c.sender_name || "");
-      setSenderEmail(c.sender_email || "");
-      setReplyTo(c.reply_to || "");
-
-      /* audience */
-      setSelectedLists(c.target_lists || []);
-      setSelectedSegments(c.target_segments || []);
-      if ((c.target_lists || []).length && (c.target_segments || []).length)
-        setAudienceMode("both");
-      else if ((c.target_segments || []).length) setAudienceMode("segments");
-
-      /* status & mapping */
-      setCampaignStatus(c.status || "draft");
-      setFieldMap(c.field_map || {});
-      setFallbackValues(c.fallback_values || {});
-
-      /* load template later */
-      if (c.template_id) pendingTemplateRef.current = c.template_id;
-    } catch (err) {
-      if (err.response?.status === 404) {
-        setCampaignFound(false);
-        setError("Campaign not found");
-      } else setError("Failed to load campaign data");
-    } finally {
-      setLoadingCampaign(false);
-    }
-  };
-
-  const fetchLists = async () => {
-    try {
-      setLoadingLists(true);
-      const fresh = (await API.get("/subscribers/lists")).data;
-      setLists(fresh);
-      // FIX #7: prune only IDs that don't exist in the fresh list data;
-      // campaign data is already loaded at this point so selectedLists is populated.
-      setSelectedLists((prev) =>
-        prev.filter((id) => fresh.some((l) => l._id === id)),
-      );
-    } finally {
-      setLoadingLists(false);
-    }
-  };
-
-  const fetchSegments = async () => {
-    try {
-      setLoadingSegments(true);
-      // FIX #7: was calling API.get('/segments') twice on fallback — deduplicate
-      const res = await API.get("/segments");
-      const segData = res.data?.segments || res.data;
-      const segs = Array.isArray(segData) ? segData : [];
-      setSegments(segs);
-      // Campaign data is already loaded; prune only IDs no longer in the DB.
-      setSelectedSegments((prev) =>
-        prev.filter((id) => segs.some((s) => s._id === id)),
-      );
-    } finally {
-      setLoadingSegments(false);
-    }
-  };
-
-  const fetchTemplates = async () => {
-    try {
-      setLoadingTemplates(true);
-      const all = (await API.get("/templates")).data;
-      setTemplates(all);
-      // FIX #5: pendingTemplateRef is set synchronously in fetchCampaign (which
-      // now always completes before fetchTemplates runs), so the ref is always
-      // populated here — no more race condition with window.pendingTemplateId.
-      if (pendingTemplateRef.current) {
-        const t = all.find(
-          (t) => (t._id || t.id) === pendingTemplateRef.current,
-        );
-        if (t) setSelectedTemplate(t);
-        pendingTemplateRef.current = null;
-      }
-    } finally {
-      setLoadingTemplates(false);
-    }
-  };
-
-  /* ==================================================================
-     =====================  LOCAL HELPERS / UTILS  ====================
-     ==================================================================*/
-  const extractHtmlFromTemplate = (t) => {
-    if (!t) return "";
-    const j = t.content_json || {};
-
-    if (j.mode === "html" && j.content) return j.content;
-    if (j.mode === "drag-drop" && j.blocks)
-      return j.blocks.map((b) => b.content || "").join("\n");
-    if (j.mode === "visual" && j.content) return j.content;
-    if (t.html) return t.html;
-
-    /* legacy Unlayer */
-    try {
-      let out = "";
-      j.body?.rows.forEach((r) =>
-        r.columns?.forEach((col) =>
-          col.contents?.forEach((c) => {
-            if (c.type === "html" && c.values?.html)
-              out += c.values.html + "\n";
-          }),
-        ),
-      );
-      return out || "<p>No preview available</p>";
-    } catch {
-      return "<p>No preview available</p>";
-    }
-  };
-
-  const getAllColumns = async () => {
     const payload = {};
-    if (selectedLists.length) payload.listIds = selectedLists;
-    if (selectedSegments.length) payload.segmentIds = selectedSegments;
-
-    try {
-      return (await API.post("/subscribers/analyze-fields", payload)).data;
-    } catch {
-      return { universal: ["email"], standard: [], custom: [] };
-    }
-  };
-
-  /* totals */
-  const getTotalRecipients = () => {
-    const listCount = lists
-      .filter((l) => selectedLists.includes(l._id))
-      .reduce((s, l) => s + (l.count || 0), 0);
-
-    const segCount = segments
-      .filter((s) => selectedSegments.includes(s._id))
-      .reduce((s, g) => s + (g.subscriber_count || 0), 0);
-
-    return listCount + segCount;
-  };
-
-  /* ==================================================================
-     =========================  VALIDATION  ===========================
-     ==================================================================*/
-  const validateStep1 = () =>
-    title.trim() &&
-    subject.trim() &&
-    senderEmail.trim() &&
-    isValidEmail(senderEmail);
-
-  const validateStep2 = () => {
-    if (!selectedTemplate) return false;
-    if (!selectedLists.length && !selectedSegments.length) return false;
-    return dynamicFields.every((f) => fieldMap[f] && fieldMap[f].trim());
-  };
-
-  /* ==================================================================
-     ========================  UI EVENT HANDLERS  =====================
-     ==================================================================*/
-  const handleListToggle = (id) =>
-    setSelectedLists((prev) =>
-      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
-    );
-  const handleSegmentToggle = (id) =>
-    setSelectedSegments((prev) =>
-      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
-    );
-  const handleFieldChange = (f, v) =>
-    setFieldMap((prev) => ({ ...prev, [f]: v }));
-
-  const handleUpdateCampaign = async () => {
-    if (!validateStep1() || !validateStep2()) {
-      alert(
-        "Please complete required fields, select audience/template, map all dynamic fields.",
-      );
-      return;
-    }
-    if (
-      campaignStatus === "sent" &&
-      !window.confirm(
-        "This campaign was already sent. Update anyway? (Sent emails are unaffected)",
+    if (form.target_lists.length) payload.listIds = form.target_lists;
+    if (form.target_segments.length) payload.segmentIds = form.target_segments;
+    API.post("/subscribers/analyze-fields", payload)
+      .then((r) =>
+        setAvailableFields(
+          r.data || { universal: ["email"], standard: [], custom: [] },
+        ),
       )
-    )
-      return;
+      .catch(() => {});
+  }, [form.target_lists, form.target_segments]);
 
-    try {
-      setIsUpdating(true);
-      setError(null);
-      const payload = {
-        title,
-        subject,
-        sender_name: senderName,
-        sender_email: senderEmail,
-        reply_to: replyTo,
-        target_lists: selectedLists,
-        target_segments: selectedSegments,
-        template_id: selectedTemplate._id || selectedTemplate.id,
-        field_map: fieldMap,
-        fallback_values: fallbackValues,
-        status: campaignStatus,
-      };
-      const res = await API.put(`/campaigns/${id}`, payload);
-      setSuccessMsg(
-        `Campaign updated! Targeting ${res.data.computed_target_count} subscribers.`,
-      );
-      setTimeout(() => navigate("/campaigns"), 2000);
-    } catch (e) {
-      setError(e.response?.data?.detail || "Update failed");
-    } finally {
-      setIsUpdating(false);
-    }
-  };
-
-  /* ---------- send test email ---------- */
-  const sendTestEmail = async () => {
-    if (!testEmail.trim()) return alert("Enter destination email.");
-    if (!selectedTemplate) return alert("Select a template first.");
-    setSendingTest(true);
-    setTestSent(false);
-    try {
-      await API.post("/campaigns/send-test", {
-        campaign_id: id,
-        test_email: testEmail,
-        use_custom_data: !!(selectedLists.length || selectedSegments.length),
-        selected_list_id: selectedLists[0] || null,
+  // Auto-map new fields when template changes (keep existing mappings)
+  useEffect(() => {
+    if (!dynamicFields.length) return;
+    const norm = (s) => (s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+    const lookup = {};
+    availableFields.universal.forEach((f) => {
+      lookup[norm(f)] = f;
+    });
+    availableFields.standard.forEach((f) => {
+      lookup[norm(f)] = `standard.${f}`;
+    });
+    availableFields.custom.forEach((f) => {
+      lookup[norm(f)] = `custom.${f}`;
+    });
+    const all = [
+      ...availableFields.universal,
+      ...availableFields.standard.map((f) => `standard.${f}`),
+      ...availableFields.custom.map((f) => `custom.${f}`),
+    ];
+    setForm((prev) => {
+      const next = { ...prev.field_map };
+      dynamicFields.forEach((field) => {
+        if (next[field]?.trim()) return; // keep existing mapping
+        const n = norm(field);
+        if (lookup[n]) {
+          next[field] = lookup[n];
+          return;
+        }
+        const partial = all.find((c) => {
+          const stripped = c.replace(/^(standard|custom)\./, "");
+          const cv = norm(stripped);
+          return cv.includes(n) || n.includes(cv);
+        });
+        if (partial) next[field] = partial;
       });
-      setTestSent(true);
-    } catch (e) {
-      alert(e.response?.data?.detail || "Test failed");
+      return { ...prev, field_map: next };
+    });
+  }, [dynamicFields, availableFields]);
+
+  // ── Validation ────────────────────────────────────────────────────────────
+  const validateStep = (s) => {
+    const errs = {};
+    if (s === 1) {
+      if (!form.title.trim()) errs.title = "Campaign title is required";
+      if (!form.subject.trim()) errs.subject = "Subject line is required";
+      if (!form.sender_name.trim())
+        errs.sender_name = "Sender name is required";
+      if (!form.sender_email.trim())
+        errs.sender_email = "Sender email is required";
+    }
+    if (s === 2) {
+      if (!form.target_lists.length && !form.target_segments.length)
+        errs.audience = "Select at least one list or segment";
+    }
+    if (s === 3) {
+      if (!form.template_id) errs.template_id = "Select a template";
+    }
+    return errs;
+  };
+
+  const handleNext = () => {
+    const errs = validateStep(step);
+    if (Object.keys(errs).length) {
+      setErrors(errs);
+      return;
+    }
+    setErrors({});
+    setCompletedSteps((prev) => [...new Set([...prev, step])]);
+    setStep((s) => s + 1);
+  };
+
+  // ── Save ──────────────────────────────────────────────────────────────────
+  const handleSave = async () => {
+    setGlobalError("");
+    setSaveSuccess(false);
+    setSubmitting(true);
+    try {
+      await API.put(`/campaigns/${campaignId}`, form);
+      setSaveSuccess(true);
+      setTimeout(() => navigate("/campaigns"), 1200);
+    } catch (err) {
+      setGlobalError(err.response?.data?.detail || "Failed to save campaign");
     } finally {
-      setSendingTest(false);
+      setSubmitting(false);
     }
   };
 
-  /* ==================================================================
-     ==========================  RENDERERS  ===========================
-     ==================================================================*/
-  const Step1 = () => (
-    <div className="space-y-6">
-      {campaignStatus === "sent" && (
-        <div className="bg-amber-50 p-3 rounded border border-amber-200 text-amber-800 text-sm">
-          ⚠️ <strong>Note:</strong> This campaign was already sent—updates won’t
-          affect previously sent emails.
+  // ── Computed ──────────────────────────────────────────────────────────────
+  const totalAudienceSize =
+    lists
+      .filter((l) => form.target_lists.includes(l._id || l.name))
+      .reduce((s, l) => s + (l.total_count || l.count || 0), 0) +
+    segments
+      .filter((sg) => form.target_segments.includes(sg._id))
+      .reduce((s, sg) => s + (sg.subscriber_count || 0), 0);
+
+  const unmappedCount = dynamicFields.filter(
+    (f) => !form.field_map[f]?.trim(),
+  ).length;
+
+  const isNonDraft =
+    originalStatus !== "draft" && originalStatus !== "scheduled";
+
+  // ── Loading state ─────────────────────────────────────────────────────────
+  if (loadingCampaign) {
+    return (
+      <div className="max-w-3xl mx-auto space-y-6 animate-pulse">
+        <div className="h-10 bg-gray-200 rounded-xl w-48" />
+        <div className="flex gap-2">
+          {STEPS.map((s) => (
+            <div key={s.id} className="h-14 bg-gray-200 rounded-xl flex-1" />
+          ))}
         </div>
-      )}
-
-      {/* fields */}
-      {[
-        {
-          id: "title",
-          label: "Campaign Name",
-          val: title,
-          set: setTitle,
-          required: true,
-        },
-        {
-          id: "subject",
-          label: "Email Subject",
-          val: subject,
-          set: setSubject,
-          required: true,
-        },
-      ].map((f) => (
-        <div key={f.id}>
-          <label className="block text-sm font-medium mb-1" htmlFor={f.id}>
-            {f.label}
-            {f.required && <span className="text-red-600">*</span>}
-          </label>
-          <input
-            id={f.id}
-            type="text"
-            value={f.val}
-            onChange={(e) => f.set(e.target.value)}
-            className={`w-full px-3 py-2 border rounded ${f.val.trim() ? "border-gray-300" : "border-red-500"}`}
-          />
-        </div>
-      ))}
-
-      {/* sender / reply-to */}
-      <div className="grid md:grid-cols-2 gap-4">
-        <div>
-          <label className="block text-sm font-medium mb-1">Sender Name</label>
-          <input
-            className="w-full px-3 py-2 border rounded border-gray-300"
-            value={senderName}
-            onChange={(e) => setSenderName(e.target.value)}
-          />
-        </div>
-        <div>
-          <label className="block text-sm font-medium mb-1">
-            Sender Email <span className="text-red-600">*</span>
-          </label>
-          <input
-            type="email"
-            className={`w-full px-3 py-2 border rounded ${isValidEmail(senderEmail) ? "border-gray-300" : "border-red-500"}`}
-            value={senderEmail}
-            onChange={(e) => setSenderEmail(e.target.value)}
-          />
-        </div>
-      </div>
-      <div>
-        <label className="block text-sm font-medium mb-1">Reply-To Email</label>
-        <input
-          type="email"
-          className="w-full px-3 py-2 border rounded border-gray-300"
-          value={replyTo}
-          onChange={(e) => setReplyTo(e.target.value)}
-        />
-      </div>
-    </div>
-  );
-
-  const AudienceSummary = () => (
-    <div className="bg-blue-50 p-4 rounded">
-      <h4 className="font-medium text-blue-800 mb-2">📊 Audience Summary</h4>
-      <div className="grid md:grid-cols-3 gap-4">
-        <SummaryCard label="Lists Selected" value={selectedLists.length} />
-        <SummaryCard
-          label="Segments Selected"
-          value={selectedSegments.length}
-        />
-        <SummaryCard
-          label="Total Recipients"
-          value={getTotalRecipients().toLocaleString()}
-        />
-      </div>
-    </div>
-  );
-  const SummaryCard = ({ label, value }) => (
-    <div>
-      <p className="font-semibold text-blue-800">{label}</p>
-      <p className="text-lg">{value}</p>
-    </div>
-  );
-
-  const FieldMapper = () =>
-    dynamicFields.length > 0 && (
-      <div className="mb-4">
-        <h4 className="font-semibold mb-2">Map Template Dynamic Fields</h4>
-        {dynamicFields.map((field) => (
-          <div key={field} className="mb-4 p-4 border rounded bg-gray-50">
-            <label className="block mb-2 font-medium">
-              {field} <span className="text-red-600">*</span>
-            </label>
-            <select
-              value={fieldMap[field] || ""}
-              onChange={(e) => handleFieldChange(field, e.target.value)}
-              className={`w-full px-3 py-2 border rounded mb-2 ${fieldMap[field] ? "border-gray-300" : "border-red-500"}`}
-            >
-              <option value="" disabled>
-                Select field mapping…
-              </option>
-              {["universal", "standard", "custom"].map(
-                (group) =>
-                  availableFields[group].length > 0 && (
-                    <optgroup
-                      key={group}
-                      label={
-                        group === "universal"
-                          ? "🌍 Universal Fields"
-                          : group === "standard"
-                            ? "⭐ Standard Fields"
-                            : "🔧 Custom Fields"
-                      }
-                    >
-                      {availableFields[group].map((f) => (
-                        <option
-                          key={f}
-                          value={group === "universal" ? f : `${group}.${f}`}
-                        >
-                          {f
-                            .replace("_", " ")
-                            .replace(/\b\w/g, (l) => l.toUpperCase())}
-                        </option>
-                      ))}
-                    </optgroup>
-                  ),
-              )}
-              <optgroup label="🔄 Fallback Options">
-                <option value="__EMPTY__">Leave Empty</option>
-                <option value="__DEFAULT__">Use Default Value</option>
-              </optgroup>
-            </select>
-
-            {/* fallback input */}
-            {fieldMap[field] &&
-              fieldMap[field] !== "__EMPTY__" &&
-              (fieldMap[field] === "__DEFAULT__" ||
-                !fieldMap[field].startsWith("__")) && (
-                <input
-                  type="text"
-                  placeholder={
-                    fieldMap[field] === "__DEFAULT__"
-                      ? "Default value"
-                      : `Fallback if subscriber's ${fieldMap[field]} is empty`
-                  }
-                  className="w-full px-3 py-2 border rounded border-blue-300 bg-blue-50"
-                  value={fallbackValues[field] || ""}
-                  onChange={(e) =>
-                    setFallbackValues((p) => ({ ...p, [field]: e.target.value }))
-                  }
-                />
-              )}
-          </div>
-        ))}
+        <div className="h-96 bg-gray-200 rounded-2xl" />
       </div>
     );
+  }
 
-  const Step2 = () => (
-    <>
-      <h3 className="text-xl font-semibold mb-4">
-        🎯 Edit Audience & Template
-      </h3>
-      <AudienceSummary />
-
-      {/* mode selector */}
-      <div className="my-6">
-        <label className="block font-medium mb-3">Target Audience Type</label>
-        {["lists", "segments", "both"].map((mode) => (
-          <label key={mode} className="inline-flex items-center mr-6">
-            <input
-              type="radio"
-              name="audMode"
-              value={mode}
-              className="mr-2"
-              checked={audienceMode === mode}
-              onChange={(e) => setAudienceMode(e.target.value)}
-            />
-            {mode === "lists"
-              ? "📋 Lists Only"
-              : mode === "segments"
-                ? "🎯 Segments Only"
-                : "📋🎯 Both"}
-          </label>
-        ))}
+  // ── Step renderers ────────────────────────────────────────────────────────
+  const renderStep1 = () => (
+    <div className="space-y-6">
+      <div className="flex items-center gap-3 mb-2">
+        <div className="w-10 h-10 bg-indigo-100 rounded-xl flex items-center justify-center text-xl">
+          ✉️
+        </div>
+        <div>
+          <h2 className="text-lg font-bold text-gray-900">Campaign Details</h2>
+          <p className="text-sm text-gray-500">
+            Core identity and sender information
+          </p>
+        </div>
       </div>
 
-      {/* list selection */}
-      {(audienceMode === "lists" || audienceMode === "both") && (
-        <div className="mb-6">
-          <h4 className="font-semibold mb-3">📋 Subscriber Lists</h4>
-          <div className="max-h-64 overflow-auto border rounded p-3">
-            {loadingLists
-              ? "Loading…"
-              : lists.length === 0
-                ? "No subscriber lists"
-                : lists.map((l) => (
-                    <label
-                      key={l._id}
-                      className="flex items-center mb-2 cursor-pointer hover:bg-gray-100 p-2 rounded"
-                    >
-                      <input
-                        type="checkbox"
-                        className="mr-3"
-                        checked={selectedLists.includes(l._id)}
-                        onChange={() => handleListToggle(l._id)}
-                      />
-                      <span className="font-medium">{l.name || l._id}</span>
-                      <span className="ml-2 text-gray-500">
-                        ({l.count || 0})
-                      </span>
-                    </label>
-                  ))}
+      {isNonDraft && (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-start gap-3">
+          <span className="text-amber-500 text-lg flex-shrink-0">⚠️</span>
+          <div>
+            <p className="text-sm font-semibold text-amber-800">
+              Editing a "{originalStatus}" campaign
+            </p>
+            <p className="text-xs text-amber-700 mt-0.5">
+              Changes will update the campaign record. Emails already sent are
+              unaffected.
+            </p>
           </div>
         </div>
       )}
 
-      {/* segment selection */}
-      {(audienceMode === "segments" || audienceMode === "both") && (
-        <div className="mb-6">
-          <h4 className="font-semibold mb-3">🎯 Targeted Segments</h4>
-          <div className="max-h-80 overflow-auto border rounded p-3">
-            {loadingSegments
-              ? "Loading…"
-              : segments.length === 0
-                ? "No segments"
-                : segments.map((s) => (
-                    <label
-                      key={s._id}
-                      className="flex items-start mb-2 cursor-pointer hover:bg-gray-50 p-3 rounded border"
-                    >
-                      <input
-                        type="checkbox"
-                        className="mr-3 mt-1"
-                        checked={selectedSegments.includes(s._id)}
-                        onChange={() => handleSegmentToggle(s._id)}
-                      />
-                      <div className="flex-1">
-                        <div className="flex justify-between">
-                          <span className="font-semibold text-blue-800">
-                            {s.name}
-                          </span>
-                          <span className="text-sm text-gray-700">
-                            {s.subscriber_count?.toLocaleString() || 0}
-                          </span>
-                        </div>
-                        <p className="text-sm text-gray-600">{s.description}</p>
-                      </div>
-                    </label>
-                  ))}
-          </div>
-        </div>
-      )}
-
-      {/* template selector */}
-      <div className="mb-6">
-        <label className="block font-medium mb-1">
-          Select Template <span className="text-red-600">*</span>
-        </label>
-        <select
-          value={
-            selectedTemplate ? selectedTemplate._id || selectedTemplate.id : ""
-          }
-          onChange={(e) =>
-            setSelectedTemplate(
-              templates.find((t) => (t._id || t.id) === e.target.value) || null,
-            )
-          }
-          className={`w-full px-3 py-2 border rounded ${selectedTemplate ? "border-gray-300" : "border-red-500"}`}
-        >
-          <option value="" disabled>
-            -- Select a Template --
-          </option>
-          {loadingTemplates ? (
-            <option>Loading…</option>
-          ) : (
-            templates.map((t) => (
-              <option key={t._id || t.id} value={t._id || t.id}>
-                {t.name} ({t.content_json?.mode || "legacy"})
-              </option>
-            ))
-          )}
-        </select>
-      </div>
-
-      <FieldMapper />
-
-      {/* hybrid warning */}
-      {selectedLists.length && selectedSegments.length && (
-        <div className="p-3 mb-4 bg-amber-50 border border-amber-200 rounded text-amber-700 text-sm">
-          ⚠️ Hybrid Targeting: campaign will reach{" "}
-          {getTotalRecipients().toLocaleString()} recipients.
-        </div>
-      )}
-    </>
-  );
-
-  const Step3 = () => (
-    <>
-      <h3 className="text-xl font-semibold mb-4">
-        👀 Preview & Test Updated Campaign
-      </h3>
-
-      {/* test email */}
-      <div className="mb-6 p-4 bg-green-50 rounded border border-green-300">
-        <label className="block font-medium mb-1">Test Email Address</label>
+      <InputField label="Campaign Title" required error={errors.title}>
         <input
-          type="email"
-          className="w-full px-3 py-2 border rounded border-green-300 mb-3"
-          value={testEmail}
-          onChange={(e) => setTestEmail(e.target.value)}
+          className={inputCls(errors.title)}
+          placeholder="e.g., April Newsletter, Product Launch..."
+          value={form.title}
+          onChange={(e) => set("title", e.target.value)}
+          autoFocus
         />
-        <button
-          onClick={sendTestEmail}
-          disabled={sendingTest || !testEmail.trim()}
-          className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded disabled:opacity-50"
-        >
-          {sendingTest ? "Sending…" : "Send Test Email"}
-        </button>
-        {testSent && <p className="mt-2 text-green-700">Test email sent!</p>}
-      </div>
+      </InputField>
 
-      {/* campaign summary */}
-      <div className="mb-6 p-4 bg-gray-50 rounded">
-        <h4 className="font-semibold mb-3">📊 Campaign Summary</h4>
-        <div className="grid md:grid-cols-2 gap-4 text-sm">
-          <div>
-            <p>
-              <strong>Campaign:</strong> {title}
-            </p>
-            <p>
-              <strong>Subject:</strong> {subject}
-            </p>
-            <p>
-              <strong>Template:</strong> {selectedTemplate?.name || "—"}
-            </p>
-            <p>
-              <strong>Status:</strong> {campaignStatus}
-            </p>
-          </div>
-          <div>
-            <p>
-              <strong>Sender:</strong> {senderName || "—"} &lt;
-              {senderEmail || "—"}&gt;
-            </p>
-            <p>
-              <strong>Reply-To:</strong> {replyTo || "—"}
-            </p>
-            <p>
-              <strong>Recipients:</strong>{" "}
-              {getTotalRecipients().toLocaleString()}
-            </p>
-            <p>
-              <strong>Targeting:</strong>{" "}
-              {selectedLists.length && selectedSegments.length
-                ? "Lists + Segments"
-                : selectedLists.length
-                  ? "Lists"
-                  : selectedSegments.length
-                    ? "Segments"
-                    : "None"}
-            </p>
-          </div>
-        </div>
-      </div>
+      <InputField
+        label="Subject Line"
+        required
+        hint="what subscribers see in their inbox"
+        error={errors.subject}
+      >
+        <input
+          className={inputCls(errors.subject)}
+          placeholder="e.g., 🚀 Big news — you're going to love this"
+          value={form.subject}
+          onChange={(e) => set("subject", e.target.value)}
+        />
+        <p className="text-xs text-gray-400">
+          {form.subject.length} chars
+          {form.subject.length > 60 && " · may truncate on mobile"}
+        </p>
+      </InputField>
 
-      {/* HTML preview w/ device toggle */}
-      <div className="mb-6 p-4 border rounded bg-white">
-        <div className="flex justify-between items-center mb-4">
-          <h4 className="font-semibold">📧 Email Preview</h4>
-          <div className="flex gap-2">
-            {[
-              { m: "desktop", icon: <Monitor size={16} /> },
-              { m: "tablet", icon: <Tablet size={16} /> },
-              { m: "mobile", icon: <Smartphone size={16} /> },
-            ].map((b) => (
+      {senderProfiles.length > 0 && (
+        <div className="bg-gray-50 rounded-xl p-4 border border-gray-200">
+          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
+            Quick fill from sender profile
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {senderProfiles.map((sp) => (
               <button
-                key={b.m}
-                onClick={() => setPreviewMode(b.m)}
-                className={`p-2 rounded ${previewMode === b.m ? "bg-blue-600 text-white" : "hover:bg-gray-200"}`}
+                key={sp._id || sp.id}
+                onClick={() => {
+                  set("sender_name", sp.name || sp.sender_name || "");
+                  set("sender_email", sp.email || sp.sender_email || "");
+                  set(
+                    "reply_to",
+                    sp.reply_to || sp.email || sp.sender_email || "",
+                  );
+                }}
+                className="px-3 py-1.5 text-xs font-medium bg-white border border-gray-200 rounded-lg hover:border-indigo-300 hover:text-indigo-700 transition-colors"
               >
-                {b.icon}
+                {sp.name || sp.sender_name}
               </button>
             ))}
           </div>
         </div>
-        <div className="bg-gray-100 p-4 rounded flex justify-center overflow-auto max-h-[600px]">
-          {previewHtml ? (
-            <div
-              dangerouslySetInnerHTML={{ __html: previewHtml }}
-              className={`bg-white shadow-lg ${
-                previewMode === "desktop"
-                  ? "w-full max-w-4xl"
-                  : previewMode === "tablet"
-                    ? "w-[768px]"
-                    : "w-[375px]"
-              }`}
-            />
-          ) : (
-            <p className="text-gray-500">Select a template to preview</p>
-          )}
-        </div>
+      )}
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <InputField label="Sender Name" required error={errors.sender_name}>
+          <input
+            className={inputCls(errors.sender_name)}
+            placeholder="e.g., Acme Team"
+            value={form.sender_name}
+            onChange={(e) => set("sender_name", e.target.value)}
+          />
+        </InputField>
+        <InputField label="Sender Email" required error={errors.sender_email}>
+          <input
+            type="email"
+            className={inputCls(errors.sender_email)}
+            placeholder="hello@yourcompany.com"
+            value={form.sender_email}
+            onChange={(e) => set("sender_email", e.target.value)}
+          />
+        </InputField>
       </div>
-    </>
+
+      <InputField label="Reply-To" hint="optional, defaults to sender email">
+        <input
+          type="email"
+          className={inputCls(false)}
+          placeholder="replies@yourcompany.com"
+          value={form.reply_to}
+          onChange={(e) => set("reply_to", e.target.value)}
+        />
+      </InputField>
+    </div>
   );
 
-  /* ==================================================================
-     =========================  PAGE SKELETON  ========================
-     ==================================================================*/
-  if (loadingCampaign)
-    return <p className="text-center mt-10">Loading campaign…</p>;
-  if (!campaignFound)
-    return (
-      <div className="text-center mt-10">
-        <h2 className="text-2xl text-red-600 font-bold mb-4">
-          ❌ Campaign Not Found
-        </h2>
-        <button
-          className="bg-blue-600 text-white px-6 py-2 rounded"
-          onClick={() => navigate("/campaigns")}
-        >
-          ← Back
-        </button>
+  const renderStep2 = () => (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 bg-green-100 rounded-xl flex items-center justify-center text-xl">
+            👥
+          </div>
+          <div>
+            <h2 className="text-lg font-bold text-gray-900">Target Audience</h2>
+            <p className="text-sm text-gray-500">
+              Choose who receives this campaign
+            </p>
+          </div>
+        </div>
+        {totalAudienceSize > 0 && (
+          <div className="bg-indigo-50 border border-indigo-200 rounded-xl px-4 py-2 text-center">
+            <p className="text-xl font-bold text-indigo-700">
+              {fmt(totalAudienceSize)}
+            </p>
+            <p className="text-xs text-indigo-500">estimated recipients</p>
+          </div>
+        )}
       </div>
-    );
 
-  return (
-    <div className="max-w-5xl mx-auto p-6 bg-white rounded shadow">
-      <h2 className="text-2xl font-bold mb-6">
-        📝 Edit Campaign with Advanced Targeting
-      </h2>
+      {errors.audience && (
+        <div className="bg-red-50 border border-red-200 rounded-xl p-3 text-sm text-red-700">
+          ⚠ {errors.audience}
+        </div>
+      )}
 
-      {error && <p className="mb-4 text-red-600">{error}</p>}
-      {successMsg && <p className="mb-4 text-green-700">{successMsg}</p>}
+      {lists.length > 0 && (
+        <div>
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-sm font-semibold text-gray-700">
+              📋 Subscriber Lists
+              {form.target_lists.length > 0 && (
+                <span className="ml-2 px-2 py-0.5 bg-indigo-100 text-indigo-700 rounded-full text-xs">
+                  {form.target_lists.length} selected
+                </span>
+              )}
+            </h3>
+            {form.target_lists.length > 0 && (
+              <button
+                onClick={() => set("target_lists", [])}
+                className="text-xs text-gray-400 hover:text-red-500"
+              >
+                Clear
+              </button>
+            )}
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5 max-h-64 overflow-y-auto pr-1">
+            {lists.map((l) => {
+              const id = l._id || l.name;
+              return (
+                <AudienceCard
+                  key={id}
+                  name={l.name || l._id}
+                  count={l.total_count || l.count}
+                  activeCount={l.active_count}
+                  selected={form.target_lists.includes(id)}
+                  onClick={() =>
+                    set(
+                      "target_lists",
+                      form.target_lists.includes(id)
+                        ? form.target_lists.filter((x) => x !== id)
+                        : [...form.target_lists, id],
+                    )
+                  }
+                  type="list"
+                />
+              );
+            })}
+          </div>
+        </div>
+      )}
 
-      {/* step nav */}
-      <div className="mb-6 flex gap-4 text-sm font-semibold">
-        {[1, 2, 3].map((n) => (
-          <button
-            key={n}
-            disabled={step === n}
-            onClick={() => setStep(n)}
-            className={`px-4 py-2 rounded ${step === n ? "bg-blue-600 text-white" : "bg-gray-200 hover:bg-gray-300"}`}
-          >
-            Step {n}
-          </button>
+      {segments.length > 0 && (
+        <div>
+          <h3 className="text-sm font-semibold text-gray-700 mb-3">
+            🎯 Segments
+            {form.target_segments.length > 0 && (
+              <span className="ml-2 px-2 py-0.5 bg-indigo-100 text-indigo-700 rounded-full text-xs">
+                {form.target_segments.length} selected
+              </span>
+            )}
+          </h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5 max-h-52 overflow-y-auto pr-1">
+            {segments.map((sg) => (
+              <AudienceCard
+                key={sg._id}
+                name={sg.name}
+                count={sg.subscriber_count}
+                selected={form.target_segments.includes(sg._id)}
+                onClick={() =>
+                  set(
+                    "target_segments",
+                    form.target_segments.includes(sg._id)
+                      ? form.target_segments.filter((x) => x !== sg._id)
+                      : [...form.target_segments, sg._id],
+                  )
+                }
+                type="segment"
+              />
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+
+  const renderStep3 = () => (
+    <div className="space-y-6">
+      <div className="flex items-center gap-3">
+        <div className="w-10 h-10 bg-purple-100 rounded-xl flex items-center justify-center text-xl">
+          🎨
+        </div>
+        <div>
+          <h2 className="text-lg font-bold text-gray-900">Email Template</h2>
+          <p className="text-sm text-gray-500">
+            Select the template to use for this campaign
+          </p>
+        </div>
+      </div>
+
+      {errors.template_id && (
+        <div className="bg-red-50 border border-red-200 rounded-xl p-3 text-sm text-red-700">
+          ⚠ {errors.template_id}
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-72 overflow-y-auto pr-1">
+        {templates.map((t) => (
+          <TemplateCard
+            key={t._id || t.id}
+            template={t}
+            selected={form.template_id === (t._id || t.id)}
+            onClick={() => set("template_id", t._id || t.id)}
+          />
         ))}
       </div>
 
-      {/* form */}
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (step === 1 && validateStep1()) setStep(2);
-          else if (step === 2 && validateStep2()) setStep(3);
-          else if (step === 3) handleUpdateCampaign();
-        }}
-      >
-        {step === 1 && <Step1 />}
-        {step === 2 && <Step2 />}
-        {step === 3 && <Step3 />}
+      {selectedTemplate && previewHtml && (
+        <div className="border border-gray-200 rounded-xl overflow-hidden">
+          <div className="flex items-center justify-between px-4 py-3 bg-gray-50 border-b border-gray-200">
+            <p className="text-sm font-semibold text-gray-700">
+              Preview — {selectedTemplate.name}
+            </p>
+            <div className="flex gap-1">
+              {["desktop", "tablet", "mobile"].map((m) => (
+                <button
+                  key={m}
+                  onClick={() => setPreviewMode(m)}
+                  className={`px-2.5 py-1 text-xs rounded-lg font-medium transition-all ${
+                    previewMode === m
+                      ? "bg-indigo-600 text-white"
+                      : "text-gray-400 hover:bg-gray-200"
+                  }`}
+                >
+                  {m === "desktop" ? "🖥" : m === "tablet" ? "📟" : "📱"}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="bg-gray-100 p-4 flex justify-center overflow-hidden max-h-56">
+            <div
+              className={`bg-white shadow-sm overflow-auto ${
+                previewMode === "desktop"
+                  ? "w-full"
+                  : previewMode === "tablet"
+                    ? "w-[480px]"
+                    : "w-[320px]"
+              }`}
+              style={{ maxHeight: "200px" }}
+              dangerouslySetInnerHTML={{ __html: previewHtml }}
+            />
+          </div>
+        </div>
+      )}
+    </div>
+  );
 
-        {/* nav buttons */}
-        <div className="flex justify-between mt-6">
-          {step > 1 && (
-            <button
-              type="button"
-              onClick={() => setStep((s) => s - 1)}
-              className="px-6 py-2 bg-gray-300 hover:bg-gray-400 rounded"
-            >
-              ← Previous
-            </button>
+  const renderStep4 = () => (
+    <div className="space-y-6">
+      <div className="flex items-center gap-3">
+        <div className="w-10 h-10 bg-amber-100 rounded-xl flex items-center justify-center text-xl">
+          🔗
+        </div>
+        <div>
+          <h2 className="text-lg font-bold text-gray-900">Field Mapping</h2>
+          <p className="text-sm text-gray-500">
+            Map template variables to subscriber data
+          </p>
+        </div>
+      </div>
+
+      {fieldsLoading ? (
+        <div className="space-y-3">
+          {[...Array(3)].map((_, i) => (
+            <div
+              key={i}
+              className="h-20 bg-gray-100 rounded-xl animate-pulse"
+            />
+          ))}
+        </div>
+      ) : dynamicFields.length === 0 ? (
+        <div className="bg-green-50 border border-green-200 rounded-xl p-5 text-center">
+          <p className="text-2xl mb-2">✅</p>
+          <p className="text-sm font-semibold text-green-800">
+            No dynamic fields
+          </p>
+          <p className="text-xs text-green-600 mt-1">
+            This template has no personalization variables.
+          </p>
+        </div>
+      ) : (
+        <>
+          {unmappedCount > 0 && (
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 flex items-center gap-2 text-sm text-amber-800">
+              ⚠ {unmappedCount} field{unmappedCount > 1 ? "s" : ""} still need
+              mapping
+            </div>
           )}
-          <button
-            type="submit"
-            disabled={
-              (step === 1 && !validateStep1()) ||
-              (step === 2 && !validateStep2()) ||
-              isUpdating
-            }
-            className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded disabled:opacity-50"
+          <div className="space-y-3">
+            {dynamicFields.map((field) => {
+              const hasError = errors[`field_${field}`];
+              const isMapped = !!form.field_map[field]?.trim();
+              return (
+                <div
+                  key={field}
+                  className={`rounded-xl border-2 p-4 transition-all ${
+                    hasError
+                      ? "border-red-200 bg-red-50"
+                      : isMapped
+                        ? "border-green-200 bg-green-50"
+                        : "border-gray-200 bg-white"
+                  }`}
+                >
+                  <div className="flex items-center justify-between mb-2.5">
+                    <code
+                      className={`text-sm font-mono font-bold px-2 py-0.5 rounded-lg ${isMapped ? "bg-green-100 text-green-800" : "bg-gray-100 text-gray-700"}`}
+                    >
+                      {`{{${field}}}`}
+                    </code>
+                    {isMapped && !hasError && (
+                      <span className="text-xs text-green-600 font-medium">
+                        ✓ Mapped
+                      </span>
+                    )}
+                    {hasError && (
+                      <span className="text-xs text-red-500">⚠ Required</span>
+                    )}
+                  </div>
+                  <select
+                    value={form.field_map[field] || ""}
+                    onChange={(e) => setMap(field, e.target.value)}
+                    className={`w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 ${hasError ? "border-red-300" : "border-gray-200"}`}
+                  >
+                    <option value="">— Select a data source —</option>
+                    <option value="__DEFAULT__">
+                      Use fallback / default value
+                    </option>
+                    <option value="__EMPTY__">Leave empty</option>
+                    {availableFields.universal.length > 0 && (
+                      <optgroup label="Universal">
+                        {availableFields.universal.map((f) => (
+                          <option key={f} value={f}>
+                            {f}
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
+                    {availableFields.standard.length > 0 && (
+                      <optgroup label="Standard Fields">
+                        {availableFields.standard.map((f) => (
+                          <option key={f} value={`standard.${f}`}>
+                            {f}
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
+                    {availableFields.custom.length > 0 && (
+                      <optgroup label="Custom Fields">
+                        {availableFields.custom.map((f) => (
+                          <option key={f} value={`custom.${f}`}>
+                            {f}
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
+                  </select>
+                  {form.field_map[field] &&
+                    form.field_map[field] !== "__EMPTY__" && (
+                      <input
+                        type="text"
+                        placeholder={
+                          form.field_map[field] === "__DEFAULT__"
+                            ? `Default value for {{${field}}}`
+                            : "Fallback if subscriber's value is empty"
+                        }
+                        value={form.fallback_values[field] || ""}
+                        onChange={(e) => setFallback(field, e.target.value)}
+                        className="mt-2 w-full px-3 py-2 border border-indigo-200 bg-indigo-50 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                      />
+                    )}
+                </div>
+              );
+            })}
+          </div>
+
+          <details className="bg-gray-50 rounded-xl border border-gray-200">
+            <summary className="px-4 py-3 text-xs text-gray-500 cursor-pointer font-semibold">
+              Available subscriber fields
+            </summary>
+            <div className="px-4 pb-4 space-y-1 text-xs text-gray-500">
+              <p>
+                Universal: {availableFields.universal.join(", ") || "email"}
+              </p>
+              <p>Standard: {availableFields.standard.join(", ") || "none"}</p>
+              <p>Custom: {availableFields.custom.join(", ") || "none"}</p>
+            </div>
+          </details>
+        </>
+      )}
+    </div>
+  );
+
+  const renderStep5 = () => (
+    <div className="space-y-6">
+      <div className="flex items-center gap-3">
+        <div className="w-10 h-10 bg-rose-100 rounded-xl flex items-center justify-center text-xl">
+          💾
+        </div>
+        <div>
+          <h2 className="text-lg font-bold text-gray-900">Review & Save</h2>
+          <p className="text-sm text-gray-500">
+            Confirm your changes before saving
+          </p>
+        </div>
+      </div>
+
+      {globalError && (
+        <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-sm text-red-700">
+          ⚠ {globalError}
+        </div>
+      )}
+
+      {saveSuccess && (
+        <div className="bg-green-50 border border-green-200 rounded-xl p-4 text-sm text-green-700 flex items-center gap-2">
+          ✅ Campaign saved! Redirecting…
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="bg-gray-50 rounded-xl border border-gray-200 p-4 space-y-3">
+          <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider">
+            Campaign Details
+          </h3>
+          {[
+            ["Title", form.title],
+            ["Subject", form.subject],
+            ["Sender", `${form.sender_name} <${form.sender_email}>`],
+            ["Reply-To", form.reply_to || form.sender_email || "—"],
+            ["Status", originalStatus],
+          ].map(([label, value]) => (
+            <div key={label} className="flex gap-3">
+              <span className="text-xs text-gray-400 w-16 flex-shrink-0">
+                {label}
+              </span>
+              <span className="text-xs font-medium text-gray-800 break-all capitalize">
+                {value || "—"}
+              </span>
+            </div>
+          ))}
+        </div>
+
+        <div className="bg-gray-50 rounded-xl border border-gray-200 p-4 space-y-3">
+          <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider">
+            Audience & Template
+          </h3>
+          <div className="flex gap-3">
+            <span className="text-xs text-gray-400 w-16 flex-shrink-0">
+              Lists
+            </span>
+            <span className="text-xs font-medium text-gray-800">
+              {form.target_lists.length ? form.target_lists.join(", ") : "None"}
+            </span>
+          </div>
+          {form.target_segments.length > 0 && (
+            <div className="flex gap-3">
+              <span className="text-xs text-gray-400 w-16 flex-shrink-0">
+                Segments
+              </span>
+              <span className="text-xs font-medium text-gray-800">
+                {form.target_segments.length} selected
+              </span>
+            </div>
+          )}
+          <div className="flex gap-3">
+            <span className="text-xs text-gray-400 w-16 flex-shrink-0">
+              Template
+            </span>
+            <span className="text-xs font-medium text-gray-800">
+              {selectedTemplate?.name || "—"}
+            </span>
+          </div>
+          <div className="flex gap-3">
+            <span className="text-xs text-gray-400 w-16 flex-shrink-0">
+              Recipients
+            </span>
+            <span className="text-xs font-bold text-indigo-700">
+              {fmt(totalAudienceSize)}
+            </span>
+          </div>
+          <div className="flex gap-3">
+            <span className="text-xs text-gray-400 w-16 flex-shrink-0">
+              Fields
+            </span>
+            <span className="text-xs font-medium text-gray-800">
+              {dynamicFields.length} variable
+              {dynamicFields.length !== 1 ? "s" : ""}
+              {unmappedCount > 0
+                ? `, ${unmappedCount} unmapped`
+                : " (all mapped)"}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {previewHtml && (
+        <div className="border border-gray-200 rounded-xl overflow-hidden">
+          <div className="px-4 py-3 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
+            <p className="text-sm font-semibold text-gray-700">Email Preview</p>
+            <div className="flex gap-1">
+              {["desktop", "tablet", "mobile"].map((m) => (
+                <button
+                  key={m}
+                  onClick={() => setPreviewMode(m)}
+                  className={`px-2.5 py-1 text-xs rounded-lg font-medium ${previewMode === m ? "bg-indigo-600 text-white" : "text-gray-400 hover:bg-gray-200"}`}
+                >
+                  {m === "desktop" ? "🖥" : m === "tablet" ? "📟" : "📱"}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div
+            className="bg-gray-100 p-4 flex justify-center overflow-hidden"
+            style={{ maxHeight: "260px" }}
           >
-            {step < 3
-              ? "Next →"
-              : isUpdating
-                ? "⏳ Updating…"
-                : "💾 Update Campaign"}
+            <div
+              className={`bg-white shadow-sm overflow-auto ${
+                previewMode === "desktop"
+                  ? "w-full"
+                  : previewMode === "tablet"
+                    ? "w-[480px]"
+                    : "w-[320px]"
+              }`}
+              style={{ maxHeight: "220px" }}
+              dangerouslySetInnerHTML={{ __html: previewHtml }}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Save CTA */}
+      <div className="bg-gradient-to-br from-indigo-50 to-purple-50 border border-indigo-200 rounded-2xl p-6">
+        <div className="flex flex-col sm:flex-row gap-3">
+          <button
+            onClick={() => navigate("/campaigns")}
+            className="flex-1 py-3 px-6 bg-white border-2 border-gray-200 text-gray-700 font-semibold text-sm rounded-xl hover:border-gray-300 hover:bg-gray-50 transition-all"
+          >
+            ← Cancel
+          </button>
+          <button
+            onClick={handleSave}
+            disabled={submitting || saveSuccess}
+            className="flex-1 py-3 px-6 bg-indigo-600 text-white font-bold text-sm rounded-xl hover:bg-indigo-700 shadow-lg shadow-indigo-200 transition-all disabled:opacity-50"
+          >
+            {submitting
+              ? "⏳ Saving..."
+              : saveSuccess
+                ? "✅ Saved!"
+                : "💾 Save Changes"}
           </button>
         </div>
-      </form>
+        {isNonDraft && (
+          <p className="text-xs text-amber-600 mt-3 text-center">
+            ⚠ This campaign is "{originalStatus}" — changes will update
+            metadata only. Sent emails are unaffected.
+          </p>
+        )}
+      </div>
+    </div>
+  );
+
+  const stepRenderers = [
+    renderStep1,
+    renderStep2,
+    renderStep3,
+    renderStep4,
+    renderStep5,
+  ];
+
+  return (
+    <div className="max-w-3xl mx-auto">
+      {/* Header */}
+      <div className="flex items-center justify-between mb-8">
+        <div>
+          <div className="flex items-center gap-2 mb-0.5">
+            <h1 className="text-2xl font-bold text-gray-900">Edit Campaign</h1>
+            {originalStatus !== "draft" && (
+              <span
+                className={`text-xs px-2.5 py-1 rounded-full font-semibold ${
+                  originalStatus === "sending"
+                    ? "bg-blue-100 text-blue-800"
+                    : originalStatus === "completed" ||
+                        originalStatus === "sent"
+                      ? "bg-green-100 text-green-800"
+                      : originalStatus === "paused"
+                        ? "bg-orange-100 text-orange-800"
+                        : "bg-gray-100 text-gray-600"
+                }`}
+              >
+                {originalStatus}
+              </span>
+            )}
+          </div>
+          <p className="text-sm text-gray-500">
+            Step {step} of {STEPS.length}
+          </p>
+        </div>
+        <button
+          onClick={() => navigate("/campaigns")}
+          className="text-sm text-gray-500 hover:text-gray-700 border border-gray-200 px-3 py-1.5 rounded-lg hover:bg-gray-50"
+        >
+          ← Campaigns
+        </button>
+      </div>
+
+      {/* Step nav */}
+      <div className="mb-8">
+        <StepNav
+          current={step}
+          steps={STEPS}
+          onGoto={(s) => setStep(s)}
+          completedSteps={completedSteps}
+        />
+      </div>
+
+      {/* Progress */}
+      <div className="mb-8 bg-gray-100 rounded-full h-1.5">
+        <div
+          className="bg-indigo-500 h-1.5 rounded-full transition-all duration-500"
+          style={{ width: `${((step - 1) / (STEPS.length - 1)) * 100}%` }}
+        />
+      </div>
+
+      {/* Card */}
+      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-8">
+        {stepRenderers[step - 1]()}
+
+        {step < 5 && (
+          <div className="flex items-center justify-between mt-8 pt-6 border-t border-gray-100">
+            <button
+              onClick={() => setStep((s) => s - 1)}
+              disabled={step === 1}
+              className="px-5 py-2.5 text-sm font-medium text-gray-600 border border-gray-200 rounded-xl hover:bg-gray-50 disabled:opacity-30 disabled:cursor-not-allowed"
+            >
+              ← Back
+            </button>
+            <div className="flex items-center gap-3">
+              <span className="text-xs text-gray-400">
+                {step} / {STEPS.length}
+              </span>
+              <button
+                onClick={handleNext}
+                className="px-6 py-2.5 text-sm font-bold text-white bg-indigo-600 rounded-xl hover:bg-indigo-700 shadow-md shadow-indigo-200"
+              >
+                Continue →
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

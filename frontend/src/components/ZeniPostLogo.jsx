@@ -1,8 +1,10 @@
-import React from 'react';
+import React from "react";
 
-export default function ZeniPostLogo({ size = 32, variant = 'animated' }) {
-  // Scale all dimensions based on size prop
-  const scale = size / 32;
+export default function ZeniPostLogo({
+  size = 32,
+  variant = "animated",
+  showText = true,
+}) {
   const fontSize = size * 0.75;
   const subTextSize = size * 0.22;
 
@@ -32,8 +34,8 @@ export default function ZeniPostLogo({ size = 32, variant = 'animated' }) {
           fill="none"
           xmlns="http://www.w3.org/2000/svg"
           style={
-            variant === 'animated'
-              ? { animation: 'neon-pulse 3s ease-in-out infinite' }
+            variant === "animated"
+              ? { animation: "neon-pulse 3s ease-in-out infinite" }
               : {}
           }
         >
@@ -45,7 +47,6 @@ export default function ZeniPostLogo({ size = 32, variant = 'animated' }) {
             </linearGradient>
           </defs>
 
-          {/* Background envelope */}
           <rect
             x="15"
             y="25"
@@ -56,7 +57,6 @@ export default function ZeniPostLogo({ size = 32, variant = 'animated' }) {
             opacity="0.12"
           />
 
-          {/* Stream + envelope line */}
           <path
             d="M15 25 L50 55 L85 25 M15 25 V75 H85 V25"
             stroke="url(#neonStream)"
@@ -65,14 +65,13 @@ export default function ZeniPostLogo({ size = 32, variant = 'animated' }) {
             strokeLinejoin="round"
             strokeDasharray="120"
             style={
-              variant === 'animated'
-                ? { animation: 'stream-flow 2.5s linear infinite' }
+              variant === "animated"
+                ? { animation: "stream-flow 2.5s linear infinite" }
                 : {}
             }
           />
 
-          {/* Notification dot */}
-          {variant === 'animated' && (
+          {variant === "animated" && (
             <circle
               cx="85"
               cy="25"
@@ -86,24 +85,26 @@ export default function ZeniPostLogo({ size = 32, variant = 'animated' }) {
       </div>
 
       {/* Text */}
-      <div className="flex flex-col justify-center overflow-hidden">
-        <h1
-          className="font-bold tracking-tight leading-none text-white whitespace-nowrap"
-          style={{ fontSize }}
-        >
-          Ganga
-          <span className="ml-0.5 font-light text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-indigo-400">
-            Inbox
-          </span>
-        </h1>
+      {showText && (
+        <div className="flex flex-col justify-center overflow-hidden">
+          <h1
+            className="font-bold tracking-tight leading-none text-white whitespace-nowrap"
+            style={{ fontSize }}
+          >
+            Ganga
+            <span className="ml-0.5 font-light text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-indigo-400">
+              Inbox
+            </span>
+          </h1>
 
-        <p
-          className="font-medium uppercase tracking-[0.3em] text-slate-500 whitespace-nowrap"
-          style={{ fontSize: subTextSize, marginTop: 1 }}
-        >
-          Marketing
-        </p>
-      </div>
+          <p
+            className="font-medium uppercase tracking-[0.3em] text-slate-500 whitespace-nowrap"
+            style={{ fontSize: subTextSize, marginTop: 1 }}
+          >
+            Marketing
+          </p>
+        </div>
+      )}
     </div>
   );
 }
