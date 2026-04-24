@@ -260,3 +260,10 @@ Log Rotation
 5 backups retained
 
 Console logging is also preserved for live monitoring.
+
+
+This app talks to relay/submission SMTPs — SES, SendGrid, Mailgun, custom SMTP servers — not to recipient mail servers. So the error space is completely different from what I described before.
+Let me reframe correctly.
+
+Correct Error Space — Relay/Submission SMTP Only
+When you submit to SES/SendGrid/Mailgun/custom SMTP, the errors you get back are about your relationship with that relay — not about the recipient's mailbox. The relay accepts the message and handles delivery itself.
