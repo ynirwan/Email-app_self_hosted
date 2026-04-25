@@ -1,30 +1,5 @@
 # backend/tasks/campaign/email_campaign_tasks.py
 # PRODUCTION-READY EMAIL CAMPAIGN TASKS WITH SNAPSHOT SUPPORT
-#
-# KEY CHANGES vs original:
-#   - Module-level _campaign_meta_cache and _snapshot_cache replace
-#     per-email template fetches.
-#   - _get_campaign_meta(campaign_id): DB read once per worker per campaign,
-#     then memory only. Projection: only fields needed for sending.
-#   - _get_snapshot(campaign_id): reads content_snapshot once per worker
-#     per campaign. Falls back to live template_processor for old campaigns
-#     that have no snapshot (backward compatibility).
-#   - send_single_campaign_email: Step 5 now uses snapshot instead of
-#     template_cache removed — snapshot used instead, direct Mongo fetch as fallback.
-#   - finalize_campaign: evicts both caches on completion.
-#   - Everything else unchanged.
-#
-# BUG FIXES (requeue / counter accuracy):
-#   - Step 4  (already_sent):  removed stray `$inc processed_count +1` that
-#     caused double-counting when a successfully-sent email was re-queued.
-#   - Step 4c (new):           detect requeue — subscriber has an existing
-#     "failed" log entry from a prior attempt.
-#   - Success / failure paths: requeue-aware counter updates so processed_count
-#     and failed_count are never incremented a second time for the same email.
-#     On a successful requeue the previous failed_count is reversed (-1).
-#   - All queued_count decrements now route through _decrement_queued() which
-#     guards against going below zero (MongoDB $gt: 0 condition).
-
 import logging
 import time
 import redis as _redis_module
@@ -57,6 +32,13 @@ from tasks.campaign.audit_logger import (
     log_campaign_event,
     AuditEventType,
 )
+from tasks.error_classifier import (
+    classify_submission_error,
+    extract_smtp_code,
+    ProviderErrorClass,
+)
+
+
 
 logger = logging.getLogger(__name__)
 
@@ -223,6 +205,91 @@ def _evict_campaign_caches(campaign_id: str):
     _campaign_meta_cache.pop(campaign_id, None)
     _snapshot_cache.pop(campaign_id, None)
     logger.debug(f"Evicted worker caches for campaign {campaign_id}")
+
+
+#===============================================
+
+
+def _handle_campaign_level_failure(campaign_id: str, classification: dict) -> None:
+    """
+    Called when a campaign-level (not recipient-level) provider error is detected.
+
+    Uses atomic Redis NX so only the FIRST failing task triggers the pause.
+    All subsequent tasks hit the abort flag check and exit cheaply without
+    touching Mongo again.
+    """
+    abort_key = f"campaign:abort:{campaign_id}"
+
+    try:
+        _redis = _redis_module.Redis.from_url(
+            task_settings.REDIS_URL, decode_responses=True
+        )
+
+        # Atomic: only first task to detect this sets the flag
+        was_set = _redis.set(
+            abort_key,
+            json.dumps({
+                "error_class": classification["error_class"],
+                "error_type":  classification["error_type"],
+                "raw_message": classification["raw_message"],
+                "detected_at": datetime.utcnow().isoformat(),
+            }),
+            ex=86400,   # 24 h TTL
+            nx=True,    # only set if key does not already exist
+        )
+    except Exception as redis_err:
+        logger.warning(f"Redis abort flag write failed for {campaign_id}: {redis_err}")
+        was_set = True  # Proceed with Mongo update even if Redis failed
+
+    if not was_set:
+        # Another task already handled this — nothing more to do
+        return
+
+    provider_error = {
+        "error_class":   classification["error_class"],
+        "error_type":    classification["error_type"],
+        "smtp_code":     extract_smtp_code(classification["raw_message"]),
+        "raw_message":   classification["raw_message"],
+        "human_message": classification["human_message"],
+        "is_resumable":  classification["is_resumable"],
+        "detected_at":   datetime.utcnow(),
+        "auto_paused":   True,
+    }
+
+    campaigns_col = get_sync_campaigns_collection()
+    campaigns_col.update_one(
+        {
+            "_id":    ObjectId(campaign_id),
+            "status": {"$in": ["sending", "queued"]},
+        },
+        {
+            "$set": {
+                "status":          "paused",
+                "pause_reason":    "provider_error_auto_pause",
+                "paused_at":       datetime.utcnow(),
+                "paused_by":       "system",
+                "previous_status": "sending",
+                "provider_error":  provider_error,
+                "last_action_at":  datetime.utcnow(),
+            }
+        },
+    )
+
+    logger.error(
+        f"Campaign {campaign_id} auto-paused — "
+        f"{classification['error_type']}: {classification['raw_message']}"
+    )
+
+
+def _check_campaign_abort(campaign_id: str) -> bool:
+    """Return True if the campaign abort flag is set in Redis."""
+    try:
+        _redis = _redis_module.Redis.from_url(
+            task_settings.REDIS_URL, decode_responses=True
+        )
+        return bool(_redis.exists(f"campaign:abort:{campaign_id}"))
+    except Exception:
+        return False
 
 
 # ============================================================
@@ -1073,13 +1140,7 @@ def send_single_campaign_email(self, campaign_id: str, subscriber_id: str):
 def send_campaign_batch(
     self, campaign_id: str, batch_size: int = None, last_id: str = None
 ):
-    """
-    Process one batch of subscribers.
 
-    Redis lock: only ONE batch per campaign runs at a time.
-    If a batch is already running, this task exits immediately.
-    This prevents duplicate queueing and negative queued_count.
-    """
     try:
         _redis = _redis_module.Redis.from_url(
             task_settings.REDIS_URL, decode_responses=True

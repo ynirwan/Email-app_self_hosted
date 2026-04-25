@@ -1,163 +1,355 @@
-import { useState, useEffect } from 'react';
-import API from '../api';
+// frontend/src/pages/EmailSettings.jsx
+import { useState, useEffect } from "react";
+import API from "../api";
 
 export default function EmailSettings() {
   const [systemInfo, setSystemInfo] = useState(null);
-  const [settings, setSettings]     = useState({
-    smtp_choice: 'managed', provider: '', smtp_server: '', smtp_port: 587,
-    username: '', password: '', ses_type: null, aws_region: 'us-east-1',
-    ses_configuration_set: '', bounce_forward_email: ''
+  const [settings, setSettings] = useState({
+    smtp_choice: "managed",
+    provider: "",
+    smtp_server: "",
+    smtp_port: 587,
+    username: "",
+    password: "",
+    ses_type: null,
+    aws_region: "us-east-1",
+    ses_configuration_set: "",
+    bounce_forward_email: "",
   });
-  const [usage,   setUsage]   = useState(null);
-  const [saving,  setSaving]  = useState(false);
+  const [usage, setUsage] = useState(null);
+  const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [saveMsg, setSaveMsg] = useState(null); // { type, text }
+  const [testMsg, setTestMsg] = useState(null);
+  const [loadErr, setLoadErr] = useState(null);
+  // FIX: track whether user actually typed a new password
+  const [passwordEdited, setPasswordEdited] = useState(false);
 
-  // Inline feedback instead of alert()
-  const [saveMsg,  setSaveMsg]  = useState(null);   // { type: 'success'|'error', text }
-  const [testMsg,  setTestMsg]  = useState(null);
-  const [loadErr,  setLoadErr]  = useState(null);
+  const isHostedService = systemInfo?.deployment_mode === "hosted_service";
 
-  const isHostedService = systemInfo?.deployment_mode === 'hosted_service';
-
+  // ── Provider configs ───────────────────────────────────────────────────────
   const providerConfigs = {
-    sendgrid: { name: 'SendGrid', smtp_server: 'smtp.sendgrid.net', smtp_port: 587, usernameLabel: 'API Key', passwordLabel: 'Password', helpText: 'Use your SendGrid API key as the username' },
-    mailgun:  { name: 'Mailgun',  smtp_server: 'smtp.mailgun.org',  smtp_port: 587, usernameLabel: 'Username', passwordLabel: 'Password', helpText: 'Get SMTP credentials from Mailgun dashboard' },
-    postmark: { name: 'Postmark', smtp_server: 'smtp.postmarkapp.com', smtp_port: 587, usernameLabel: 'Server API Token', passwordLabel: 'Server API Token', helpText: 'Use the same Server API Token for both fields' },
-    custom:   { name: 'Custom SMTP', smtp_server: '', smtp_port: 587, usernameLabel: 'Username', passwordLabel: 'Password', helpText: 'Configure your custom SMTP server' },
+    sendgrid: {
+      name: "SendGrid",
+      smtp_server: "smtp.sendgrid.net",
+      smtp_port: 587,
+      usernameLabel: "API Key",
+      passwordLabel: "Password",
+      helpText: "Use your SendGrid API key as the username",
+    },
+    mailgun: {
+      name: "Mailgun",
+      smtp_server: "smtp.mailgun.org",
+      smtp_port: 587,
+      usernameLabel: "Username",
+      passwordLabel: "Password",
+      helpText: "Get SMTP credentials from your Mailgun dashboard",
+    },
+    postmark: {
+      name: "Postmark",
+      smtp_server: "smtp.postmarkapp.com",
+      smtp_port: 587,
+      usernameLabel: "Server API Token",
+      passwordLabel: "Server API Token",
+      helpText: "Use the same Server API Token for both fields",
+    },
+    custom: {
+      name: "Custom SMTP",
+      smtp_server: "",
+      smtp_port: 587,
+      usernameLabel: "Username",
+      passwordLabel: "Password",
+      helpText: "Configure your custom SMTP server",
+    },
   };
 
   const awsRegions = [
-    { value: 'us-east-1',      label: 'US East (N. Virginia)' },
-    { value: 'us-west-2',      label: 'US West (Oregon)' },
-    { value: 'eu-west-1',      label: 'Europe (Ireland)' },
-    { value: 'eu-central-1',   label: 'Europe (Frankfurt)' },
-    { value: 'ap-south-1',     label: 'Asia Pacific (Mumbai)' },
-    { value: 'ap-southeast-1', label: 'Asia Pacific (Singapore)' },
-    { value: 'ap-southeast-2', label: 'Asia Pacific (Sydney)' },
-    { value: 'ap-northeast-1', label: 'Asia Pacific (Tokyo)' },
+    { value: "us-east-1", label: "US East (N. Virginia)" },
+    { value: "us-west-2", label: "US West (Oregon)" },
+    { value: "eu-west-1", label: "Europe (Ireland)" },
+    { value: "eu-central-1", label: "Europe (Frankfurt)" },
+    { value: "ap-south-1", label: "Asia Pacific (Mumbai)" },
+    { value: "ap-southeast-1", label: "Asia Pacific (Singapore)" },
+    { value: "ap-southeast-2", label: "Asia Pacific (Sydney)" },
+    { value: "ap-northeast-1", label: "Asia Pacific (Tokyo)" },
   ];
 
-  useEffect(() => { fetchData(); }, []);
+  // ── Data loading ───────────────────────────────────────────────────────────
+  useEffect(() => {
+    fetchData();
+  }, []);
 
   const fetchData = async () => {
     setLoadErr(null);
     try {
       setLoading(true);
       const [sysRes, settingsRes] = await Promise.all([
-        API.get('/email/system-info'),
-        API.get('/email/settings'),
+        API.get("/email/system-info"),
+        API.get("/email/settings"),
       ]);
       setSystemInfo(sysRes.data);
       setSettings(settingsRes.data);
-      if (sysRes.data.deployment_mode === 'hosted_service') {
-        try { const r = await API.get('/email/usage'); setUsage(r.data); } catch { /* optional */ }
+      // FIX: password comes back as "********" — reset edit flag so we don't
+      // re-send the masked value on next save
+      setPasswordEdited(false);
+      if (sysRes.data.deployment_mode === "hosted_service") {
+        try {
+          const r = await API.get("/email/usage");
+          setUsage(r.data);
+        } catch {
+          /* optional */
+        }
       }
     } catch {
-      setLoadErr('Failed to load email settings. Please refresh.');
-    } finally { setLoading(false); }
+      setLoadErr("Failed to load email settings. Please refresh.");
+    } finally {
+      setLoading(false);
+    }
   };
 
+  // ── Provider / SES handlers ────────────────────────────────────────────────
   const handleProviderChange = (provider) => {
-    const config = providerConfigs[provider];
-    if (provider === 'amazonses') {
-      setSettings(p => ({ ...p, provider: 'amazonses', ses_type: null, smtp_server: '', smtp_port: 587, aws_region: 'us-east-1' }));
-    } else if (config) {
-      setSettings(p => ({ ...p, provider, smtp_server: config.smtp_server, smtp_port: config.smtp_port, ses_type: null }));
+    const cfg = providerConfigs[provider];
+    if (provider === "amazonses") {
+      setSettings((p) => ({
+        ...p,
+        provider: "amazonses",
+        ses_type: null,
+        smtp_server: "",
+        smtp_port: 587,
+        aws_region: "us-east-1",
+      }));
+    } else if (cfg) {
+      setSettings((p) => ({
+        ...p,
+        provider,
+        smtp_server: cfg.smtp_server,
+        smtp_port: cfg.smtp_port,
+        ses_type: null,
+      }));
     }
+    // Changing provider means the saved password no longer applies
+    setPasswordEdited(false);
   };
 
   const handleSESTypeChange = (sesType) => {
-    if (sesType === 'api') {
-      setSettings(p => ({ ...p, ses_type: 'api', smtp_server: '', smtp_port: 587 }));
-    } else if (sesType === 'smtp') {
-      setSettings(p => ({ ...p, ses_type: 'smtp', smtp_server: `email-smtp.${p.aws_region}.amazonaws.com`, smtp_port: 587 }));
-    }
-  };
-
-  const handleAWSRegionChange = (region) => {
-    setSettings(p => ({
-      ...p, aws_region: region,
-      smtp_server: p.ses_type === 'smtp' ? `email-smtp.${region}.amazonaws.com` : p.smtp_server,
+    setSettings((p) => ({
+      ...p,
+      ses_type: sesType,
+      smtp_server:
+        sesType === "smtp" ? `email-smtp.${p.aws_region}.amazonaws.com` : "",
+      smtp_port: 587,
     }));
   };
 
+  const handleAWSRegionChange = (region) => {
+    setSettings((p) => ({
+      ...p,
+      aws_region: region,
+      smtp_server:
+        p.ses_type === "smtp"
+          ? `email-smtp.${region}.amazonaws.com`
+          : p.smtp_server,
+    }));
+  };
+
+  // ── Validation helper ──────────────────────────────────────────────────────
+  const validateSmtp = () => {
+    const needsSmtp = !isHostedService || settings.smtp_choice === "client";
+    if (!needsSmtp) return null;
+
+    if (!settings.provider) return "Please select an email provider.";
+    if (!settings.smtp_server && settings.provider !== "amazonses")
+      return "SMTP server is required.";
+    if (settings.provider === "amazonses" && !settings.ses_type)
+      return "Please choose SES API or SES SMTP mode.";
+    if (!settings.username) return "Username / API key is required.";
+    // Only block save if no password has ever been set AND user hasn't typed one
+    if (
+      !settings.password ||
+      (settings.password === "********" && !passwordEdited)
+    )
+      return null; // existing password is fine
+    return null;
+  };
+
+  // ── Save ───────────────────────────────────────────────────────────────────
   const saveSettings = async () => {
-    setSaving(true); setSaveMsg(null);
-    try {
-      await API.put('/email/settings', settings);
-      setSaveMsg({ type: 'success', text: 'Email settings saved successfully!' });
-      fetchData();
-    } catch (err) {
-      setSaveMsg({ type: 'error', text: err.response?.data?.detail || 'Failed to save settings' });
-    } finally { setSaving(false); }
-  };
+    setSaveMsg(null);
 
-  const testConnection = async () => {
-    setTesting(true); setTestMsg(null);
+    const validationError = validateSmtp();
+    if (validationError) {
+      setSaveMsg({ type: "error", text: validationError });
+      return;
+    }
+
+    // FIX: build payload — omit password if user hasn't changed it, so we
+    // never accidentally store the masked "********" string
+    const payload = {
+      ...settings,
+      smtp_port: parseInt(settings.smtp_port, 10) || 587, // always integer
+    };
+    if (!passwordEdited) {
+      delete payload.password; // backend keeps existing encrypted password
+    }
+
+    setSaving(true);
     try {
-      const res = await API.post('/email/test-connection', {
-        provider: settings.provider, smtp_server: settings.smtp_server,
-        smtp_port: settings.smtp_port, username: settings.username,
-        password: settings.password, ses_type: settings.ses_type, aws_region: settings.aws_region,
+      await API.put("/email/settings", payload);
+      setSaveMsg({
+        type: "success",
+        text: "Email settings saved successfully!",
       });
-      setTestMsg({ type: 'success', text: res.data.message || 'Connection successful!' });
+      setPasswordEdited(false);
+      // FIX: don't call fetchData() here — it would overwrite state with the
+      // masked password again and trigger a stale-password save next time.
     } catch (err) {
-      setTestMsg({ type: 'error', text: err.response?.data?.detail || 'Connection test failed' });
-    } finally { setTesting(false); }
+      setSaveMsg({
+        type: "error",
+        text: err.response?.data?.detail || "Failed to save settings.",
+      });
+    } finally {
+      setSaving(false);
+    }
   };
 
-  if (loading) return (
-    <div className="flex items-center justify-center h-64 gap-3 text-gray-400">
-      <div className="animate-spin h-5 w-5 border-2 border-gray-300 border-t-blue-500 rounded-full" />
-      Loading email settings…
-    </div>
-  );
+  // ── Test connection ────────────────────────────────────────────────────────
+  const testConnection = async () => {
+    setTestMsg(null);
 
-  if (loadErr) return (
-    <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm flex items-center gap-3">
-      ⚠️ {loadErr}
-      <button onClick={fetchData} className="underline ml-1">Retry</button>
-    </div>
-  );
+    if (!settings.smtp_server) {
+      setTestMsg({ type: "error", text: "SMTP server is required to test." });
+      return;
+    }
+    if (!settings.username) {
+      setTestMsg({ type: "error", text: "Username is required to test." });
+      return;
+    }
 
-  const currentProviderConfig = providerConfigs[settings.provider] || providerConfigs.custom;
+    setTesting(true);
+    try {
+      // FIX: smtp_port as integer; password as-is — backend handles "********"
+      // by reading the stored encrypted value
+      const res = await API.post("/email/test-connection", {
+        provider: settings.provider,
+        smtp_server: settings.smtp_server,
+        smtp_port: parseInt(settings.smtp_port, 10) || 587,
+        username: settings.username,
+        password: settings.password,
+        ses_type: settings.ses_type,
+        aws_region: settings.aws_region,
+      });
+      setTestMsg({
+        type: "success",
+        text: res.data.message || "Connection successful!",
+      });
+    } catch (err) {
+      setTestMsg({
+        type: "error",
+        text: err.response?.data?.detail || "Connection test failed.",
+      });
+    } finally {
+      setTesting(false);
+    }
+  };
 
-  const InlineMsg = ({ msg }) => msg ? (
-    <div className={`flex items-center gap-2 px-4 py-3 rounded-lg text-sm font-medium ${msg.type === 'success' ? 'bg-green-50 border border-green-200 text-green-800' : 'bg-red-50 border border-red-200 text-red-800'}`}>
-      {msg.type === 'success' ? '✓' : '✕'} {msg.text}
-    </div>
-  ) : null;
+  // ── Loading / error guards ─────────────────────────────────────────────────
+  if (loading)
+    return (
+      <div className="flex items-center justify-center h-64 gap-3 text-gray-400">
+        <div className="animate-spin h-5 w-5 border-2 border-gray-300 border-t-blue-500 rounded-full" />
+        Loading email settings…
+      </div>
+    );
 
+  if (loadErr)
+    return (
+      <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm flex items-center gap-3">
+        ⚠️ {loadErr}
+        <button onClick={fetchData} className="underline ml-2">
+          Retry
+        </button>
+      </div>
+    );
+
+  const currentProviderCfg =
+    providerConfigs[settings.provider] || providerConfigs.custom;
+  const showSmtpConfig = isHostedService
+    ? settings.smtp_choice === "client"
+    : true;
+
+  // ── Render ─────────────────────────────────────────────────────────────────
   return (
     <div className="max-w-4xl space-y-6">
-
-      {/* Deployment info banner */}
+      {/* Deployment banner */}
       <div className="bg-blue-50 border border-blue-200 px-4 py-3 rounded-lg text-sm text-blue-800">
-        <strong>Deployment Mode:</strong> {isHostedService ? '☁️ Hosted Service' : '🏠 Self-Hosted'} ·{' '}
-        {isHostedService ? 'Managed infrastructure with quota enforced per your subscription plan.' : 'Full control over email sending — connect any provider.'}
+        <strong>Deployment Mode:</strong>{" "}
+        {isHostedService ? "☁️ Hosted Service" : "🏠 Self-Hosted"} ·{" "}
+        {isHostedService
+          ? "Managed infrastructure — quota enforced per your subscription plan."
+          : "Full control over email sending — connect any SMTP provider."}
       </div>
 
       {/* SMTP choice (hosted only) */}
       {isHostedService && (
         <div className="bg-white border border-gray-200 rounded-xl p-6 shadow-sm">
-          <h2 className="text-sm font-semibold text-gray-700 mb-4">SMTP Configuration Type</h2>
+          <h2 className="text-sm font-semibold text-gray-700 mb-4">
+            SMTP Configuration Type
+          </h2>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {[
-              { value: 'managed', label: '🚀 Managed SMTP', desc: 'Premium email service managed by us', points: ['High deliverability', 'Managed infrastructure', 'Quota based on plan'], color: 'green' },
-              { value: 'client',  label: '⚙️ Your SMTP',    desc: 'Use your own SMTP provider',           points: ['Use your own provider', 'Full control', 'No additional cost'], color: 'blue' },
-            ].map(opt => (
-              <div key={opt.value} onClick={() => setSettings(p => ({ ...p, smtp_choice: opt.value }))}
-                className={`p-5 border-2 rounded-xl cursor-pointer transition-all ${settings.smtp_choice === opt.value ? `border-${opt.color}-500 bg-${opt.color}-50` : 'border-gray-200 hover:border-gray-300'}`}>
+              {
+                value: "managed",
+                label: "🚀 Managed SMTP",
+                desc: "Premium email service managed by us",
+                points: [
+                  "High deliverability",
+                  "Managed infrastructure",
+                  "Quota based on plan",
+                ],
+                color: "green",
+              },
+              {
+                value: "client",
+                label: "⚙️ Your SMTP",
+                desc: "Use your own SMTP provider",
+                points: [
+                  "Full control",
+                  "Use your own provider",
+                  "No additional cost",
+                ],
+                color: "blue",
+              },
+            ].map((opt) => (
+              <div
+                key={opt.value}
+                onClick={() =>
+                  setSettings((p) => ({ ...p, smtp_choice: opt.value }))
+                }
+                className={`p-5 border-2 rounded-xl cursor-pointer transition-all ${
+                  settings.smtp_choice === opt.value
+                    ? `border-${opt.color}-500 bg-${opt.color}-50`
+                    : "border-gray-200 hover:border-gray-300"
+                }`}
+              >
                 <div className="flex items-center gap-2 mb-2">
-                  <input type="radio" checked={settings.smtp_choice === opt.value} readOnly className="flex-shrink-0" />
-                  <h3 className="text-sm font-semibold">{opt.label}</h3>
+                  <input
+                    type="radio"
+                    readOnly
+                    checked={settings.smtp_choice === opt.value}
+                    className="flex-shrink-0"
+                  />
+                  <span className="text-sm font-semibold">{opt.label}</span>
                 </div>
                 <p className="text-xs text-gray-500 mb-3">{opt.desc}</p>
                 <ul className="space-y-1">
-                  {opt.points.map(p => (
-                    <li key={p} className="flex items-center gap-1.5 text-xs text-gray-600">
-                      <span className={`text-${opt.color}-500`}>✓</span> {p}
+                  {opt.points.map((pt) => (
+                    <li
+                      key={pt}
+                      className="flex items-center gap-1.5 text-xs text-gray-600"
+                    >
+                      <span className={`text-${opt.color}-500`}>✓</span> {pt}
                     </li>
                   ))}
                 </ul>
@@ -167,16 +359,54 @@ export default function EmailSettings() {
         </div>
       )}
 
-      {/* Provider config (client SMTP) */}
-      {(isHostedService ? settings.smtp_choice === 'client' : true) && (
-        <div className="bg-white border border-gray-200 rounded-xl p-6 shadow-sm space-y-5">
-          <h2 className="text-sm font-semibold text-gray-700">Email Provider</h2>
+      {/* Usage quota (hosted + managed) */}
+      {isHostedService && settings.smtp_choice === "managed" && usage && (
+        <div className="bg-white border border-gray-200 rounded-xl p-6 shadow-sm">
+          <h2 className="text-sm font-semibold text-gray-700 mb-4">
+            📊 Usage &amp; Quota
+          </h2>
+          <div className="grid grid-cols-3 gap-4 text-center">
+            {[
+              {
+                label: "Monthly Limit",
+                value: usage.quota?.monthly_limit ?? "—",
+              },
+              {
+                label: "Emails Sent",
+                value: usage.quota?.current_usage ?? "—",
+              },
+              { label: "Remaining", value: usage.quota?.remaining ?? "—" },
+            ].map((item) => (
+              <div key={item.label} className="bg-gray-50 rounded-lg p-4">
+                <div className="text-2xl font-bold text-gray-800">
+                  {typeof item.value === "number"
+                    ? item.value.toLocaleString()
+                    : item.value}
+                </div>
+                <div className="text-xs text-gray-500 mt-1">{item.label}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
+      {/* Provider + credentials (self-hosted always; hosted only when client) */}
+      {showSmtpConfig && (
+        <div className="bg-white border border-gray-200 rounded-xl p-6 shadow-sm space-y-5">
+          <h2 className="text-sm font-semibold text-gray-700">
+            Email Provider
+          </h2>
+
+          {/* Provider selector */}
           <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1.5">Select Provider</label>
-            <select className="w-full px-3 py-2.5 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
-              value={settings.provider || ''}
-              onChange={e => handleProviderChange(e.target.value)}>
+            <label className="block text-xs font-medium text-gray-600 mb-1.5">
+              Select Provider
+            </label>
+            <select
+              className="w-full px-3 py-2.5 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
+              value={settings.provider || ""}
+              onChange={(e) => handleProviderChange(e.target.value)}
+            >
               <option value="">Choose provider…</option>
               <option value="amazonses">🟠 Amazon SES (API or SMTP)</option>
               <option value="sendgrid">SendGrid</option>
@@ -186,159 +416,376 @@ export default function EmailSettings() {
             </select>
           </div>
 
-          {/* SES config */}
-          {settings.provider === 'amazonses' && (
+          {/* ── Amazon SES config ── */}
+          {settings.provider === "amazonses" && (
             <div className="bg-orange-50 border border-orange-200 rounded-xl p-4 space-y-4">
-              <h3 className="text-sm font-semibold text-orange-900">Amazon SES Configuration</h3>
+              <h3 className="text-sm font-semibold text-orange-900">
+                Amazon SES Configuration
+              </h3>
+
+              {/* SES mode picker */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 {[
-                  { type: 'api',  title: 'SES API (boto3)', desc: 'IAM Access Key + Secret Key', points: ['More features', 'Better error handling', 'Requires boto3'] },
-                  { type: 'smtp', title: 'SES SMTP',         desc: 'SMTP username + password',   points: ['Standard SMTP', 'From IAM credentials', 'Easier setup'] },
-                ].map(opt => (
-                  <div key={opt.type} onClick={() => handleSESTypeChange(opt.type)}
-                    className={`p-4 border-2 rounded-xl cursor-pointer transition-all ${settings.ses_type === opt.type ? 'border-orange-500 bg-white' : 'border-gray-200 bg-white hover:border-orange-300'}`}>
+                  {
+                    type: "api",
+                    title: "SES API (boto3)",
+                    desc: "IAM Access Key + Secret Key",
+                    points: ["More features", "Better error handling"],
+                  },
+                  {
+                    type: "smtp",
+                    title: "SES SMTP",
+                    desc: "SMTP username + password",
+                    points: ["Standard SMTP", "Easier setup"],
+                  },
+                ].map((opt) => (
+                  <div
+                    key={opt.type}
+                    onClick={() => handleSESTypeChange(opt.type)}
+                    className={`p-4 border-2 rounded-xl cursor-pointer transition-all ${
+                      settings.ses_type === opt.type
+                        ? "border-orange-500 bg-orange-100"
+                        : "border-orange-200 hover:border-orange-400 bg-white"
+                    }`}
+                  >
                     <div className="flex items-center gap-2 mb-1">
-                      <input type="radio" checked={settings.ses_type === opt.type} readOnly />
-                      <h4 className="text-sm font-semibold">{opt.title}</h4>
+                      <input
+                        type="radio"
+                        readOnly
+                        checked={settings.ses_type === opt.type}
+                      />
+                      <span className="text-sm font-semibold text-orange-900">
+                        {opt.title}
+                      </span>
                     </div>
-                    <p className="text-xs text-gray-500 mb-2">{opt.desc}</p>
+                    <p className="text-xs text-orange-700 mb-2">{opt.desc}</p>
                     <ul className="space-y-0.5">
-                      {opt.points.map(p => <li key={p} className="text-xs text-gray-500">· {p}</li>)}
+                      {opt.points.map((pt) => (
+                        <li
+                          key={pt}
+                          className="text-xs text-orange-600 flex items-center gap-1"
+                        >
+                          <span>✓</span> {pt}
+                        </li>
+                      ))}
                     </ul>
                   </div>
                 ))}
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* AWS Region (both modes) */}
+              {settings.ses_type && (
                 <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1.5">AWS Region</label>
-                  <select className="w-full px-3 py-2.5 border rounded-lg text-sm focus:ring-2 focus:ring-orange-500"
-                    value={settings.aws_region} onChange={e => handleAWSRegionChange(e.target.value)}>
-                    {awsRegions.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
+                  <label className="block text-xs font-medium text-gray-600 mb-1.5">
+                    AWS Region
+                  </label>
+                  <select
+                    className="w-full px-3 py-2.5 border rounded-lg text-sm focus:ring-2 focus:ring-orange-500"
+                    value={settings.aws_region || "us-east-1"}
+                    onChange={(e) => handleAWSRegionChange(e.target.value)}
+                  >
+                    {awsRegions.map((r) => (
+                      <option key={r.value} value={r.value}>
+                        {r.label}
+                      </option>
+                    ))}
                   </select>
                 </div>
-                <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1.5">Configuration Set <span className="text-gray-400 font-normal">(optional)</span></label>
-                  <input type="text" placeholder="my-configuration-set"
-                    className="w-full px-3 py-2.5 border rounded-lg text-sm focus:ring-2 focus:ring-orange-500"
-                    value={settings.ses_configuration_set || ''}
-                    onChange={e => setSettings(p => ({ ...p, ses_configuration_set: e.target.value }))} />
+              )}
+
+              {/* SES credentials */}
+              {settings.ses_type === "api" && (
+                <div className="space-y-3">
+                  <Field
+                    label="AWS Access Key ID *"
+                    value={settings.username || ""}
+                    onChange={(v) =>
+                      setSettings((p) => ({ ...p, username: v }))
+                    }
+                    placeholder="AKIAIOSFODNN7EXAMPLE"
+                  />
+                  <Field
+                    label="AWS Secret Access Key *"
+                    type="password"
+                    value={settings.password || ""}
+                    onChange={(v) => {
+                      setPasswordEdited(true);
+                      setSettings((p) => ({ ...p, password: v }));
+                    }}
+                    placeholder="wJalrXUtnFEMI/K7MDENG…"
+                  />
                 </div>
-              </div>
+              )}
+
+              {settings.ses_type === "smtp" && (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1.5">
+                      SMTP Server (auto-filled)
+                    </label>
+                    <input
+                      type="text"
+                      readOnly
+                      value={settings.smtp_server}
+                      className="w-full px-3 py-2.5 border rounded-lg text-sm bg-gray-50 text-gray-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1.5">
+                      Port
+                    </label>
+                    <select
+                      className="w-full px-3 py-2.5 border rounded-lg text-sm focus:ring-2 focus:ring-orange-500"
+                      value={settings.smtp_port || 587}
+                      onChange={(e) =>
+                        setSettings((p) => ({
+                          ...p,
+                          smtp_port: parseInt(e.target.value, 10),
+                        }))
+                      }
+                    >
+                      <option value={587}>587 (STARTTLS)</option>
+                      <option value={465}>465 (SSL)</option>
+                    </select>
+                  </div>
+                  <Field
+                    label="SMTP Username *"
+                    value={settings.username || ""}
+                    onChange={(v) =>
+                      setSettings((p) => ({ ...p, username: v }))
+                    }
+                    placeholder="Your SES SMTP username"
+                  />
+                  <Field
+                    label="SMTP Password *"
+                    type="password"
+                    value={settings.password || ""}
+                    onChange={(v) => {
+                      setPasswordEdited(true);
+                      setSettings((p) => ({ ...p, password: v }));
+                    }}
+                    placeholder="Your SES SMTP password"
+                  />
+                </div>
+              )}
+
+              {/* SES configuration set (optional) */}
+              {settings.ses_type && (
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1.5">
+                    SES Configuration Set{" "}
+                    <span className="text-gray-400 font-normal">
+                      (optional)
+                    </span>
+                  </label>
+                  <input
+                    type="text"
+                    className="w-full px-3 py-2.5 border rounded-lg text-sm focus:ring-2 focus:ring-orange-500"
+                    value={settings.ses_configuration_set || ""}
+                    onChange={(e) =>
+                      setSettings((p) => ({
+                        ...p,
+                        ses_configuration_set: e.target.value,
+                      }))
+                    }
+                    placeholder="my-config-set"
+                  />
+                  <p className="text-xs text-gray-400 mt-1">
+                    Used for SES event tracking (opens, clicks, bounces).
+                  </p>
+                </div>
+              )}
             </div>
           )}
 
-          {/* Credentials */}
-          {settings.provider && settings.provider !== 'amazonses' && (
+          {/* ── Generic SMTP provider credentials ── */}
+          {settings.provider && settings.provider !== "amazonses" && (
             <div className="space-y-4">
-              <div>
-                <p className="text-sm font-medium text-gray-700 mb-0.5">{currentProviderConfig.name} Credentials</p>
-                <p className="text-xs text-gray-400">{currentProviderConfig.helpText}</p>
-              </div>
+              <p className="text-xs text-gray-500">
+                {currentProviderCfg.helpText}
+              </p>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <Field label="SMTP Server *" value={settings.smtp_server || ''} onChange={v => setSettings(p => ({ ...p, smtp_server: v }))} placeholder="smtp.provider.com" />
                 <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1.5">Port *</label>
-                  <select className="w-full px-3 py-2.5 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
-                    value={settings.smtp_port || 587} onChange={e => setSettings(p => ({ ...p, smtp_port: parseInt(e.target.value) }))}>
+                  <label className="block text-xs font-medium text-gray-600 mb-1.5">
+                    SMTP Server *
+                  </label>
+                  <input
+                    type="text"
+                    className="w-full px-3 py-2.5 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
+                    value={settings.smtp_server || ""}
+                    onChange={(e) =>
+                      setSettings((p) => ({
+                        ...p,
+                        smtp_server: e.target.value,
+                      }))
+                    }
+                    placeholder="smtp.provider.com"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1.5">
+                    Port *
+                  </label>
+                  <select
+                    className="w-full px-3 py-2.5 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
+                    value={settings.smtp_port || 587}
+                    onChange={(e) =>
+                      setSettings((p) => ({
+                        ...p,
+                        smtp_port: parseInt(e.target.value, 10),
+                      }))
+                    }
+                  >
                     <option value={587}>587 (STARTTLS)</option>
                     <option value={465}>465 (SSL)</option>
                     <option value={25}>25 (Plain)</option>
                     <option value={2525}>2525 (Alternative)</option>
                   </select>
                 </div>
-                <Field label={`${currentProviderConfig.usernameLabel} *`} value={settings.username || ''} onChange={v => setSettings(p => ({ ...p, username: v }))} placeholder={currentProviderConfig.usernameLabel} />
-                <Field label={`${currentProviderConfig.passwordLabel} *`} type="password" value={settings.password || ''} onChange={v => setSettings(p => ({ ...p, password: v }))} placeholder={currentProviderConfig.passwordLabel} />
+                <Field
+                  label={`${currentProviderCfg.usernameLabel} *`}
+                  value={settings.username || ""}
+                  onChange={(v) => setSettings((p) => ({ ...p, username: v }))}
+                  placeholder={currentProviderCfg.usernameLabel}
+                />
+                {/* FIX: password onChange sets passwordEdited flag */}
+                <Field
+                  label={`${currentProviderCfg.passwordLabel} *`}
+                  type="password"
+                  value={settings.password || ""}
+                  onChange={(v) => {
+                    setPasswordEdited(true);
+                    setSettings((p) => ({ ...p, password: v }));
+                  }}
+                  placeholder={
+                    settings.password === "********"
+                      ? "(saved — type to change)"
+                      : currentProviderCfg.passwordLabel
+                  }
+                />
               </div>
             </div>
           )}
 
-          {settings.provider === 'amazonses' && settings.ses_type && (
-            <div className="space-y-4">
-              <p className="text-sm font-medium text-gray-700">
-                Amazon SES {settings.ses_type === 'api' ? 'API' : 'SMTP'} Credentials
-              </p>
-              {settings.ses_type === 'api' ? (
-                <div className="space-y-3">
-                  <Field label="AWS Access Key ID *" value={settings.username || ''} onChange={v => setSettings(p => ({ ...p, username: v }))} placeholder="AKIAIOSFODNN7EXAMPLE" />
-                  <Field label="AWS Secret Access Key *" type="password" value={settings.password || ''} onChange={v => setSettings(p => ({ ...p, password: v }))} placeholder="wJalrXUtn…" />
-                </div>
-              ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-xs font-medium text-gray-600 mb-1.5">SMTP Server (auto-filled)</label>
-                    <input type="text" readOnly value={settings.smtp_server}
-                      className="w-full px-3 py-2.5 border rounded-lg text-sm bg-gray-50 text-gray-500" />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-medium text-gray-600 mb-1.5">Port</label>
-                    <select className="w-full px-3 py-2.5 border rounded-lg text-sm focus:ring-2 focus:ring-orange-500"
-                      value={settings.smtp_port || 587} onChange={e => setSettings(p => ({ ...p, smtp_port: parseInt(e.target.value) }))}>
-                      <option value={587}>587 (STARTTLS)</option>
-                      <option value={465}>465 (SSL)</option>
-                    </select>
-                  </div>
-                  <Field label="SMTP Username *" value={settings.username || ''} onChange={v => setSettings(p => ({ ...p, username: v }))} placeholder="Your SMTP username" />
-                  <Field label="SMTP Password *" type="password" value={settings.password || ''} onChange={v => setSettings(p => ({ ...p, password: v }))} placeholder="Your SMTP password" />
-                </div>
-              )}
-            </div>
-          )}
-
+          {/* Bounce forward email */}
           {settings.provider && (
             <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1.5">Bounce Forward Email <span className="text-gray-400 font-normal">(optional)</span></label>
-              <input type="email" placeholder="admin@yourdomain.com"
+              <label className="block text-xs font-medium text-gray-600 mb-1.5">
+                Bounce Forward Email{" "}
+                <span className="text-gray-400 font-normal">(optional)</span>
+              </label>
+              <input
+                type="email"
                 className="w-full px-3 py-2.5 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
-                value={settings.bounce_forward_email || ''}
-                onChange={e => setSettings(p => ({ ...p, bounce_forward_email: e.target.value }))} />
-              <p className="text-xs text-gray-400 mt-1">Forward bounce notifications to this address.</p>
+                value={settings.bounce_forward_email || ""}
+                onChange={(e) =>
+                  setSettings((p) => ({
+                    ...p,
+                    bounce_forward_email: e.target.value,
+                  }))
+                }
+                placeholder="admin@yourdomain.com"
+              />
+              <p className="text-xs text-gray-400 mt-1">
+                Forward bounce notifications to this address.
+              </p>
             </div>
           )}
         </div>
       )}
 
-      {/* Test connection result */}
+      {/* Feedback messages */}
       <InlineMsg msg={testMsg} />
-
-      {/* Save result */}
       <InlineMsg msg={saveMsg} />
 
       {/* Action buttons */}
       <div className="flex items-center gap-3 flex-wrap">
-        {(isHostedService ? settings.smtp_choice === 'client' : true) && settings.provider && (
-          <button onClick={testConnection}
-            disabled={testing || !settings.username || !settings.password || (settings.provider === 'amazonses' && !settings.ses_type)}
-            className="flex items-center gap-2 px-5 py-2.5 bg-blue-600 text-white text-sm font-semibold rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed">
-            {testing ? <><span className="animate-spin">↻</span> Testing…</> : '🧪 Test Connection'}
-          </button>
-        )}
-        <button onClick={saveSettings} disabled={saving}
-          className="flex items-center gap-2 px-6 py-2.5 bg-green-600 text-white text-sm font-semibold rounded-lg hover:bg-green-700 disabled:opacity-50 ml-auto">
-          {saving ? <><span className="animate-spin">↻</span> Saving…</> : '💾 Save Configuration'}
+        {/* Test button — only when SMTP is configured */}
+        {showSmtpConfig &&
+          settings.provider &&
+          settings.provider !== "amazonses" && (
+            <button
+              onClick={testConnection}
+              disabled={testing || !settings.username || !settings.smtp_server}
+              className="flex items-center gap-2 px-5 py-2.5 bg-blue-600 text-white text-sm font-semibold rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+            >
+              {testing ? (
+                <>
+                  <span className="animate-spin inline-block">↻</span> Testing…
+                </>
+              ) : (
+                "🧪 Test Connection"
+              )}
+            </button>
+          )}
+        {showSmtpConfig &&
+          settings.provider === "amazonses" &&
+          settings.ses_type && (
+            <button
+              onClick={testConnection}
+              disabled={testing || !settings.username}
+              className="flex items-center gap-2 px-5 py-2.5 bg-orange-600 text-white text-sm font-semibold rounded-lg hover:bg-orange-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+            >
+              {testing ? (
+                <>
+                  <span className="animate-spin inline-block">↻</span> Testing…
+                </>
+              ) : (
+                "🧪 Test SES Connection"
+              )}
+            </button>
+          )}
+
+        {/* Save button */}
+        <button
+          onClick={saveSettings}
+          disabled={saving}
+          className="flex items-center gap-2 px-6 py-2.5 bg-green-600 text-white text-sm font-semibold rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all ml-auto"
+        >
+          {saving ? (
+            <>
+              <span className="animate-spin inline-block">↻</span> Saving…
+            </>
+          ) : (
+            "💾 Save Configuration"
+          )}
         </button>
       </div>
     </div>
   );
 }
 
-// ─── tiny field helper ───────────────────────────────────────
-function Field({ label, value, onChange, placeholder, type = 'text' }) {
+// ── Shared field component ─────────────────────────────────────────────────
+function Field({ label, value, onChange, placeholder, type = "text" }) {
   return (
     <div>
-      <label className="block text-xs font-medium text-gray-600 mb-1.5">{label}</label>
-      <input type={type} value={value} onChange={e => onChange(e.target.value)}
+      <label className="block text-xs font-medium text-gray-600 mb-1.5">
+        {label}
+      </label>
+      <input
+        type={type}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
-        className="w-full px-3 py-2.5 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500" />
+        className="w-full px-3 py-2.5 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
+      />
     </div>
   );
 }
 
+// ── Inline feedback banner ─────────────────────────────────────────────────
 function InlineMsg({ msg }) {
   if (!msg) return null;
+  const isSuccess = msg.type === "success";
   return (
-    <div className={`flex items-center gap-2 px-4 py-3 rounded-lg text-sm font-medium ${msg.type === 'success' ? 'bg-green-50 border border-green-200 text-green-800' : 'bg-red-50 border border-red-200 text-red-800'}`}>
-      {msg.type === 'success' ? '✓' : '✕'} {msg.text}
+    <div
+      className={`flex items-center gap-2 px-4 py-3 rounded-lg text-sm font-medium ${
+        isSuccess
+          ? "bg-green-50 border border-green-200 text-green-800"
+          : "bg-red-50 border border-red-200 text-red-800"
+      }`}
+    >
+      {isSuccess ? "✓" : "✕"} {msg.text}
     </div>
   );
 }
