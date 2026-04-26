@@ -74,7 +74,8 @@ class UploadSubscriber(BaseModel):
 
 class BackgroundUploadPayload(BaseModel):
     list_name: str
-    field_registry: ListFieldRegistry
+    field_registry: Optional[ListFieldRegistry] = None  # was required, now optional
+    job_id: Optional[str] = None  # added for tracking
     subscribers: List[UploadSubscriber]
     processing_mode: str = "background"
 
