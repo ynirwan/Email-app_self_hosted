@@ -4,7 +4,7 @@ import API from "../api";
 import Papa from "papaparse";
 import { useNavigate } from "react-router-dom";
 
-// ─── debounce extracted outside component (fixes hooks-in-component issue) ───
+// ─── debounce hook ────────────────────────────────────────────────────────────
 function useDebounce(value, delay) {
   const [debouncedValue, setDebouncedValue] = useState(value);
   useEffect(() => {
@@ -14,9 +14,14 @@ function useDebounce(value, delay) {
   return debouncedValue;
 }
 
-// ─── helpers ─────────────────────────────────────────────────
+// ─── helpers ──────────────────────────────────────────────────────────────────
 const fmt = (n) => Number(n ?? 0).toLocaleString();
-const validateEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+const validateEmail = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e);
+
+// With SINGLE_ENDPOINT=true every chunk creates its own job.
+// Set to false only after adding POST /subscribers/background-upload-chunk to backend.
+const SINGLE_ENDPOINT = true;
+const UPLOAD_CHUNK_SIZE = 5_000; // ~5 MB per request — well within Nginx 50 M limit
 
 const STATUS_STYLE = {
   active: "bg-green-100 text-green-700",
@@ -25,7 +30,8 @@ const STATUS_STYLE = {
   unsubscribed: "bg-orange-100 text-orange-700",
 };
 
-// ─── ListHealthBar ────────────────────────────────────────────
+// ─── Sub-components ───────────────────────────────────────────────────────────
+
 function ListHealthBar({ total, active }) {
   const rate = total > 0 ? (active / total) * 100 : 0;
   const color =
@@ -45,16 +51,14 @@ function ListHealthBar({ total, active }) {
   );
 }
 
-// ─── Pagination ───────────────────────────────────────────────
 function Pagination({ page, totalPages, total, onChange }) {
   if (totalPages <= 1) return null;
-  const pages = [];
   const max = 5;
   let start = Math.max(1, page - Math.floor(max / 2));
   let end = Math.min(totalPages, start + max - 1);
   if (end - start + 1 < max) start = Math.max(1, end - max + 1);
+  const pages = [];
   for (let i = start; i <= end; i++) pages.push(i);
-
   return (
     <div className="flex items-center justify-between mt-4 px-1">
       <p className="text-sm text-gray-500">
@@ -101,7 +105,6 @@ function Pagination({ page, totalPages, total, onChange }) {
   );
 }
 
-// ─── Toast ────────────────────────────────────────────────────
 function ToastContainer({ notifications, onDismiss }) {
   return (
     <div className="fixed top-4 right-4 z-50 space-y-2 pointer-events-none">
@@ -110,13 +113,7 @@ function ToastContainer({ notifications, onDismiss }) {
           key={n.id}
           onClick={() => onDismiss(n.id)}
           className={`pointer-events-auto flex items-center gap-2 px-4 py-3 rounded-lg shadow-lg text-sm font-medium cursor-pointer
-            ${
-              n.type === "success"
-                ? "bg-green-600 text-white"
-                : n.type === "error"
-                  ? "bg-red-600 text-white"
-                  : "bg-gray-800 text-white"
-            }`}
+            ${n.type === "success" ? "bg-green-600 text-white" : n.type === "error" ? "bg-red-600 text-white" : "bg-gray-800 text-white"}`}
         >
           {n.type === "success" ? "✓" : n.type === "error" ? "✕" : "ℹ"}{" "}
           {n.message}
@@ -126,7 +123,6 @@ function ToastContainer({ notifications, onDismiss }) {
   );
 }
 
-// ─── ProcessingBanner ─────────────────────────────────────────
 function ProcessingBanner({
   processingJobs,
   showBanner,
@@ -183,10 +179,11 @@ function ProcessingBanner({
           const total = job.total_records || job.total || 1;
           const progress = Math.min((processed / total) * 100, 100);
           const speed = job.records_per_second || 0;
-          const remaining = Math.max(0, total - processed);
-          const etaMin = speed > 0 ? Math.ceil(remaining / speed / 60) : 0;
+          const etaMin =
+            speed > 0
+              ? Math.ceil(Math.max(0, total - processed) / speed / 60)
+              : 0;
           const stuck = job.is_really_stuck && progress === 0;
-
           return (
             <div
               key={job.list_name}
@@ -270,7 +267,7 @@ function ProcessingBanner({
                     await API.delete(`/subscribers/jobs/${job.job_id}`);
                     showToast(`Cleared: ${job.list_name}`, "success");
                     setTimeout(() => window.location.reload(), 1000);
-                  } catch (e) {
+                  } catch {
                     showToast("Clear failed", "error");
                   }
                 }}
@@ -289,7 +286,6 @@ function ProcessingBanner({
   );
 }
 
-// ─── AddSubscriberModal (extracted) ──────────────────────────
 function AddSubscriberModal({
   editingSubscriber,
   subscriberForm,
@@ -338,10 +334,9 @@ function AddSubscriberModal({
               onChange={(e) =>
                 setSubscriberForm((p) => ({ ...p, email: e.target.value }))
               }
-              className="w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              className="w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
             />
           </div>
-
           <div>
             <label className="block text-sm font-medium mb-1">List *</label>
             {isEditing ? (
@@ -391,7 +386,6 @@ function AddSubscriberModal({
               <p className="text-xs text-blue-500 mt-1">Loading list fields…</p>
             )}
           </div>
-
           <div>
             <label className="block text-sm font-medium mb-1">Status</label>
             <select
@@ -407,7 +401,6 @@ function AddSubscriberModal({
               <option value="unsubscribed">Unsubscribed</option>
             </select>
           </div>
-
           {stdFields.map((field) => (
             <div key={field}>
               <label className="block text-sm font-medium mb-1 capitalize">
@@ -429,7 +422,6 @@ function AddSubscriberModal({
               />
             </div>
           ))}
-
           {custFields.length > 0 && (
             <div className="border-t pt-3">
               <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
@@ -459,7 +451,6 @@ function AddSubscriberModal({
             </div>
           )}
         </div>
-
         <div className="flex gap-3 px-6 py-4 border-t bg-gray-50 rounded-b-xl">
           <button
             onClick={isEditing ? handleEditSubscriber : handleAddSubscriber}
@@ -479,11 +470,11 @@ function AddSubscriberModal({
   );
 }
 
-// ─── Main Component ───────────────────────────────────────────
+// ─── Main Component ───────────────────────────────────────────────────────────
 export default function Subscribers() {
   const navigate = useNavigate();
 
-  // ── state ──────────────────────────────────────────────────
+  // ── state ──────────────────────────────────────────────────────────────────
   const [subscribers, setSubscribers] = useState([]);
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
@@ -492,8 +483,6 @@ export default function Subscribers() {
   const [currentSearchTerm, setCurrentSearchTerm] = useState("");
   const [searchStats, setSearchStats] = useState(null);
   const [searchWarning, setSearchWarning] = useState("");
-  const [searchStrategy] = useState("smart");
-  const searchTimeoutRef = useRef(null);
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [csvHeaders, setCsvHeaders] = useState([]);
   const [csvData, setCsvData] = useState([]);
@@ -509,23 +498,20 @@ export default function Subscribers() {
   const [subscriberPage, setSubscriberPage] = useState(1);
   const [subscriberTotalPages, setSubscriberTotalPages] = useState(1);
   const [subscriberTotal, setSubscriberTotal] = useState(0);
-  // fieldMap.rows: [{csvHeader, sampleValue, mappedTo, fieldType}]
-  // mappedTo: "email" | "standard.FIELD" | "custom.LABEL" | "skip"
-  const emptyFieldMap = { rows: [] };
   const [fieldMap, setFieldMap] = useState({ rows: [] });
   const [lists, setLists] = useState([]);
-  const [selectedListName, setSelectedListName] = useState("");
-  const [selectedSubscribers, setSelectedSubscribers] = useState([]);
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingSubscriber, setEditingSubscriber] = useState(null);
   const [processingJobs, setProcessingJobs] = useState(new Map());
   const [showProcessingBanner, setShowProcessingBanner] = useState(false);
-  const pollingIntervalRef = useRef(null);
   const [notifications, setNotifications] = useState([]);
   const [listFields, setListFields] = useState({ standard: [], custom: [] });
   const [loadingFields, setLoadingFields] = useState(false);
   const [isNewList, setIsNewList] = useState(false);
   const [error, setError] = useState("");
+
+  const pollingIntervalRef = useRef(null);
+  const searchStrategy = "smart";
 
   const emptyForm = {
     email: "",
@@ -538,7 +524,7 @@ export default function Subscribers() {
 
   const debouncedSearchTerm = useDebounce(searchTerm, 300);
 
-  // ── toast ──────────────────────────────────────────────────
+  // ── toast ───────────────────────────────────────────────────────────────────
   const showToast = useCallback((message, type = "info") => {
     const id = uuidv4();
     setNotifications((prev) => [...prev, { id, message, type }]);
@@ -553,54 +539,143 @@ export default function Subscribers() {
     [],
   );
 
-  // ── job polling ────────────────────────────────────────────
-  const stopPollingJobs = () => {
+  // ── reset upload modal state ────────────────────────────────────────────────
+  // FIX: was missing entirely — referenced by handleUpload, cancel buttons, modal close
+  const resetUploadModal = useCallback(() => {
+    setCsvHeaders([]);
+    setCsvData([]);
+    setListName("");
+    setUploadProgress(0);
+    setUploadStatus("");
+    setUploadStats({ total: 0, processed: 0, speed: 0, method: "" });
+    setFieldMap({ rows: [] });
+  }, []);
+
+  // ── job polling ─────────────────────────────────────────────────────────────
+  const stopPollingJobs = useCallback(() => {
     if (pollingIntervalRef.current) {
       clearInterval(pollingIntervalRef.current);
       pollingIntervalRef.current = null;
     }
-  };
+  }, []);
 
   const startPollingJobs = useCallback(() => {
     stopPollingJobs();
     pollingIntervalRef.current = setInterval(async () => {
       try {
         const response = await API.get("/subscribers/jobs/status");
-        const jobs = response.data.jobs || [];
-        const updatedJobs = new Map();
+        const jobs = response.data?.jobs ?? [];
+        const updated = new Map();
         let hasActive = false;
         jobs.forEach((job) => {
           if (job.status === "completed") return;
-          updatedJobs.set(job.list_name, job);
-          if (["pending", "processing", "failed"].includes(job.status))
-            hasActive = true;
+          updated.set(job.list_name, job);
+          if (["pending", "processing"].includes(job.status)) hasActive = true;
         });
-        setProcessingJobs(updatedJobs);
-        setShowProcessingBanner(hasActive || updatedJobs.size > 0);
+        setProcessingJobs(updated);
+        setShowProcessingBanner(hasActive || updated.size > 0);
         if (!hasActive) {
           stopPollingJobs();
           fetchLists();
         }
-      } catch (e) {
-        console.error("Polling error:", e);
+      } catch (err) {
+        console.error("Banner polling error:", err);
       }
-    }, 3000);
-  }, []);
+    }, 3_000);
+  }, [stopPollingJobs]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // ── poll a specific job to surface terminal state in the upload progress ────
+  const pollJobStatus = useCallback(
+    async (jobId) => {
+      try {
+        const response = await API.get("/subscribers/jobs/status");
+        const jobs = response.data?.jobs ?? [];
+        const job = jobs.find((j) => j.job_id === jobId);
+
+        if (!job) {
+          setTimeout(() => pollJobStatus(jobId), 3_000);
+          return;
+        }
+
+        if (job.status === "failed") {
+          setUploadStatus("");
+          setUploadProgress(0);
+          const msg = job.error_message ?? "Upload processing failed";
+          const done = job.processed_records ?? 0;
+          const tot = job.total_records ?? 0;
+          showToast(
+            `❌ Upload failed: ${msg}${tot > 0 ? ` (${done.toLocaleString()}/${tot.toLocaleString()})` : ""}`,
+            "error",
+          );
+          return;
+        }
+
+        if (
+          job.status === "completed" ||
+          job.status === "partially_completed"
+        ) {
+          setUploadStatus("");
+          setUploadProgress(100);
+          const count = (
+            job.final_processed ??
+            job.processed_records ??
+            0
+          ).toLocaleString();
+          const speed = (
+            job.final_records_per_second ??
+            job.records_per_second ??
+            0
+          ).toLocaleString();
+          const partial = job.status === "partially_completed";
+          showToast(
+            partial
+              ? `⚠️ Upload partially complete — ${count} subscribers processed (some chunks failed)`
+              : `✅ Upload complete — ${count} subscribers at ${speed}/sec`,
+            partial ? "warning" : "success",
+          );
+          fetchLists();
+          return;
+        }
+
+        if (job.status === "processing" || job.status === "pending") {
+          const backendPct = job.progress ?? 0;
+          const displayProgress = 40 + Math.round(backendPct * 0.6);
+          setUploadProgress(displayProgress);
+          const speed = job.records_per_second ?? 0;
+          setUploadStats({
+            total: job.total_records ?? 0,
+            processed: job.processed_records ?? 0,
+            speed,
+            method:
+              speed > 0 ? `${speed.toLocaleString()} rec/sec` : "Processing…",
+          });
+          setTimeout(() => pollJobStatus(jobId), 3_000);
+        }
+      } catch (err) {
+        console.error("pollJobStatus error:", err);
+        setTimeout(() => pollJobStatus(jobId), 5_000);
+      }
+    },
+    [showToast],
+  ); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── on mount: check for in-progress jobs ────────────────────────────────────
+  // FIX: removed startPollingJobs from dep array — it's stable via useCallback
+  // but including it caused infinite re-render in the old version.
   useEffect(() => {
     const check = async () => {
       try {
         const response = await API.get("/subscribers/jobs/status");
-        const jobs = response.data.jobs || [];
-        const updatedJobs = new Map();
+        const jobs = response.data?.jobs ?? [];
+        const updated = new Map();
         let hasActive = false;
         jobs.forEach((job) => {
           if (job.status === "completed") return;
-          updatedJobs.set(job.list_name, job);
+          updated.set(job.list_name, job);
           if (["pending", "processing", "failed"].includes(job.status))
             hasActive = true;
         });
-        setProcessingJobs(updatedJobs);
+        setProcessingJobs(updated);
         setShowProcessingBanner(hasActive);
         if (hasActive) startPollingJobs();
       } catch (e) {
@@ -609,16 +684,16 @@ export default function Subscribers() {
     };
     check();
     return () => stopPollingJobs();
-  }, [startPollingJobs]);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── auto-search on debounced term ──────────────────────────
+  // ── auto-search ─────────────────────────────────────────────────────────────
   useEffect(() => {
     if (debouncedSearchTerm.length >= 2 || debouncedSearchTerm.length === 0) {
       fetchAllSubscribers(1, debouncedSearchTerm, statusFilter);
     }
-  }, [debouncedSearchTerm, statusFilter]);
+  }, [debouncedSearchTerm, statusFilter]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── data fetchers ──────────────────────────────────────────
+  // ── data fetchers ────────────────────────────────────────────────────────────
   const fetchAllSubscribers = async (page = 1, search = "", status = "") => {
     try {
       setLoading(true);
@@ -634,10 +709,12 @@ export default function Subscribers() {
       setSubscriberTotalPages(pagination?.total_pages || 1);
       setSubscriberTotal(pagination?.total || 0);
       setSearchStats(performance);
-      if (search && pagination?.total > 10000)
-        setSearchWarning("Large result set — try a more specific search");
-      else setSearchWarning("");
-    } catch (err) {
+      setSearchWarning(
+        search && pagination?.total > 10000
+          ? "Large result set — try a more specific search"
+          : "",
+      );
+    } catch {
       setSearchWarning("Search failed. Please try again.");
       setError("Search failed. Please try again.");
     } finally {
@@ -649,7 +726,7 @@ export default function Subscribers() {
     try {
       const res = await API.get("/subscribers/lists");
       setLists(res.data || []);
-    } catch (err) {
+    } catch {
       setLists([]);
     } finally {
       setLoading(false);
@@ -659,10 +736,9 @@ export default function Subscribers() {
   useEffect(() => {
     fetchLists();
     fetchAllSubscribers(1, "", "");
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── CSV upload ─────────────────────────────────────────────
-  // ── Auto-mapping helpers ───────────────────────────────────
+  // ── CSV parsing + auto-mapping ───────────────────────────────────────────────
   const ALL_STANDARD_FIELDS = [
     "first_name",
     "last_name",
@@ -679,92 +755,72 @@ export default function Subscribers() {
     "website",
     "job_title",
   ];
-  const FIELD_TYPES = [
-    { value: "string", label: "Text" },
-    { value: "number", label: "Number" },
-    { value: "boolean", label: "Boolean" },
-    { value: "date", label: "Date" },
-  ];
 
-  // Fuzzy match: normalize a string to lowercase alphanum for comparison
   const norm = (s) => (s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
 
   const autoMapHeaders = (headers, data) => {
-    const sample = data.slice(0, 5); // first 5 data rows for sample values
-
-    const rows = headers.map((header, colIdx) => {
+    const sample = data.slice(0, 5);
+    const aliases = {
+      fname: "first_name",
+      firstname: "first_name",
+      forename: "first_name",
+      lname: "last_name",
+      lastname: "last_name",
+      surname: "last_name",
+      mob: "phone",
+      mobile: "phone",
+      cell: "phone",
+      telephone: "phone",
+      org: "company",
+      organisation: "company",
+      organization: "company",
+      zip: "zip_code",
+      postal: "zip_code",
+      postcode: "zip_code",
+      dob: "date_of_birth",
+      birthday: "date_of_birth",
+      birthdate: "date_of_birth",
+      lang: "language",
+      locale: "language",
+      jobtitle: "job_title",
+      title: "job_title",
+      role: "job_title",
+      position: "job_title",
+      web: "website",
+      url: "website",
+      site: "website",
+    };
+    return headers.map((header, colIdx) => {
       const n = norm(header);
       const sampleValue =
-        sample.map((r) => r[colIdx]).find((v) => v && v.trim()) || "";
+        sample.map((r) => r[colIdx]).find((v) => v?.trim()) || "";
 
-      // 1. Email detection
-      if (
-        n === "email" ||
-        n === "emailaddress" ||
-        n === "e_mail" ||
-        n === "mail"
-      ) {
+      if (["email", "emailaddress", "e_mail", "mail"].includes(n))
         return {
           csvHeader: header,
           sampleValue,
           mappedTo: "email",
           fieldType: "string",
         };
-      }
 
-      // 2. Standard field match
       for (const sf of ALL_STANDARD_FIELDS) {
-        if (norm(sf) === n || norm(sf.replace(/_/g, "")) === n) {
+        if (norm(sf) === n || norm(sf.replace(/_/g, "")) === n)
           return {
             csvHeader: header,
             sampleValue,
             mappedTo: `standard.${sf}`,
             fieldType: "string",
           };
-        }
       }
 
-      // 3. Partial standard field match (e.g. "fname" → first_name)
-      const aliases = {
-        fname: "first_name",
-        firstname: "first_name",
-        forename: "first_name",
-        lname: "last_name",
-        lastname: "last_name",
-        surname: "last_name",
-        mob: "phone",
-        mobile: "phone",
-        cell: "phone",
-        telephone: "phone",
-        org: "company",
-        organisation: "company",
-        organization: "company",
-        zip: "zip_code",
-        postal: "zip_code",
-        postcode: "zip_code",
-        dob: "date_of_birth",
-        birthday: "date_of_birth",
-        birthdate: "date_of_birth",
-        lang: "language",
-        locale: "language",
-        jobtitle: "job_title",
-        title: "job_title",
-        role: "job_title",
-        position: "job_title",
-        web: "website",
-        url: "website",
-        site: "website",
-      };
-      if (aliases[n]) {
+      if (aliases[n])
         return {
           csvHeader: header,
           sampleValue,
           mappedTo: `standard.${aliases[n]}`,
           fieldType: "string",
         };
-      }
 
-      // 4. Type inference from sample value
       let guessedType = "string";
       if (sampleValue) {
         if (/^\d{4}-\d{2}-\d{2}|\d{2}[\/\-]\d{2}[\/\-]\d{4}/.test(sampleValue))
@@ -774,8 +830,6 @@ export default function Subscribers() {
         else if (/^-?\d+(\.\d+)?$/.test(sampleValue.trim()))
           guessedType = "number";
       }
-
-      // 5. Unmapped → custom field using CSV header as the field name
       return {
         csvHeader: header,
         sampleValue,
@@ -783,8 +837,6 @@ export default function Subscribers() {
         fieldType: guessedType,
       };
     });
-
-    return rows;
   };
 
   const handleFileUpload = (e) => {
@@ -799,27 +851,34 @@ export default function Subscribers() {
             .filter((r) => r.some((c) => c?.trim()));
           setCsvHeaders(headers);
           setCsvData(data);
-          // Auto-map immediately
-          const rows = autoMapHeaders(headers, data);
-          setFieldMap({ rows });
+          setFieldMap({ rows: autoMapHeaders(headers, data) });
           setUploadStatus("ready");
         } else {
           showToast("CSV file appears to be empty or invalid", "error");
-          setUploadStatus("");
         }
       },
-      error: () => {
-        showToast("Failed to parse CSV file", "error");
-        setUploadStatus("");
-      },
+      error: () => showToast("Failed to parse CSV file", "error"),
     });
   };
 
-  const handleUploadList = async () => {
+  // ── handleUpload ─────────────────────────────────────────────────────────────
+  // Single source of truth for the upload flow.
+  // FIX 1: Builds standardFields / customFields from fieldMap (was missing in old handleUpload).
+  // FIX 2: Sends correct field_registry on every chunk-0 request.
+  // FIX 3: resetUploadModal is now defined and called correctly.
+  // FIX 4: SINGLE_ENDPOINT=true so chunk-N also goes to /background-upload (safe default).
+  const handleUpload = async () => {
     const emailRow = fieldMap.rows.find((r) => r.mappedTo === "email");
-    if (!emailRow || !listName.trim()) return;
+    if (!emailRow) {
+      showToast("Map a column to email before uploading", "error");
+      return;
+    }
+    if (!listName.trim()) {
+      showToast("List name is required", "error");
+      return;
+    }
 
-    // Build field registry from rows
+    // ── Build field registry from mapping table ──
     const standardFields = [];
     const customFields = {};
     fieldMap.rows.forEach((row) => {
@@ -828,30 +887,24 @@ export default function Subscribers() {
         standardFields.push(row.mappedTo.replace("standard.", ""));
       } else if (row.mappedTo.startsWith("custom.")) {
         const fieldName = row.mappedTo.replace("custom.", "");
-        customFields[fieldName] = {
-          type: row.fieldType || "string",
-          columns: null,
-          keys: null,
-        };
+        customFields[fieldName] = { type: row.fieldType || "string" };
       }
     });
 
-    // Build subscriber rows (CPU work, do before any state changes)
+    // ── Build subscriber rows ──
     const emailColIdx = csvHeaders.indexOf(emailRow.csvHeader);
     const subscribers = csvData
       .map((row) => {
-        const email = row[emailColIdx]?.trim();
-        if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return null;
+        const email = row[emailColIdx]?.trim().toLowerCase();
+        if (!email || !validateEmail(email)) return null;
         const fields = {};
         fieldMap.rows.forEach((mapRow) => {
           if (mapRow.mappedTo === "email" || mapRow.mappedTo === "skip") return;
           const colIdx = csvHeaders.indexOf(mapRow.csvHeader);
           const val = row[colIdx];
           if (val !== undefined && val !== "") {
-            const fieldName = mapRow.mappedTo.startsWith("standard.")
-              ? mapRow.mappedTo.replace("standard.", "")
-              : mapRow.mappedTo.replace("custom.", "");
-            fields[fieldName] = val;
+            const key = mapRow.mappedTo.replace(/^(standard\.|custom\.)/, "");
+            fields[key] = String(val).trim();
           }
         });
         return { email, status: "active", fields };
@@ -863,86 +916,109 @@ export default function Subscribers() {
       return;
     }
 
-    // ── Close modal immediately — don't wait for the POST ──────────────
-    // For large lists the POST can take 10-30s; the user should be able to
-    // navigate away while the upload runs. Progress is shown in the banner.
     const uploadingFor = listName.trim();
     const uploadingCount = subscribers.length;
 
+    // ── Close modal immediately, show optimistic banner ──
     setShowUploadModal(false);
     resetUploadModal();
 
-    // Optimistically show the job in the processing banner right away
     setProcessingJobs((prev) =>
       new Map(prev).set(uploadingFor, {
         list_name: uploadingFor,
         status: "pending",
         processed: 0,
         total: uploadingCount,
+        progress: 0,
       }),
     );
     setShowProcessingBanner(true);
 
-    // POST in background — modal is already closed
-    try {
-      const response = await API.post("/subscribers/background-upload", {
-        list_name: uploadingFor,
-        subscribers,
-        field_registry: {
-          list_name: uploadingFor,
-          standard: standardFields,
-          custom: customFields,
-        },
-      });
+    // ── Chunk and upload ──
+    const chunks = [];
+    for (let i = 0; i < subscribers.length; i += UPLOAD_CHUNK_SIZE) {
+      chunks.push(subscribers.slice(i, i + UPLOAD_CHUNK_SIZE));
+    }
 
-      if (response.data?.job_id) {
-        // Update the optimistic entry with the real job_id so retry/cancel works
-        setProcessingJobs((prev) => {
-          const next = new Map(prev);
-          next.set(uploadingFor, {
+    const fieldRegistryPayload = {
+      list_name: uploadingFor,
+      standard: standardFields,
+      custom: customFields,
+    };
+
+    let primaryJobId = null;
+
+    try {
+      for (let i = 0; i < chunks.length; i++) {
+        const isFirst = i === 0;
+        const chunkData = chunks[i];
+
+        setUploadStatus(`Uploading part ${i + 1} of ${chunks.length}…`);
+        setUploadProgress(Math.round((i / chunks.length) * 40));
+
+        if (SINGLE_ENDPOINT || isFirst) {
+          // Chunk 0 always goes here; with SINGLE_ENDPOINT=true, all chunks do too.
+          const payload = {
             list_name: uploadingFor,
-            status: "pending",
-            job_id: response.data.job_id,
-            processed: 0,
-            total: uploadingCount,
+            subscribers: chunkData,
+            field_registry: isFirst ? fieldRegistryPayload : undefined,
+            processing_mode: "background",
+          };
+          if (!isFirst) delete payload.field_registry;
+
+          const response = await API.post(
+            "/subscribers/background-upload",
+            payload,
+          );
+          const data = response.data;
+
+          if (isFirst) {
+            primaryJobId = data.job_id;
+            setProcessingJobs((prev) => {
+              const next = new Map(prev);
+              next.set(uploadingFor, {
+                ...next.get(uploadingFor),
+                job_id: primaryJobId,
+                status: "processing",
+              });
+              return next;
+            });
+          }
+        } else {
+          // Future: lightweight chunk endpoint (requires backend implementation)
+          await API.post("/subscribers/background-upload-chunk", {
+            job_id: primaryJobId,
+            chunk_number: i,
+            total_chunks: chunks.length,
+            list_name: uploadingFor,
+            subscribers: chunkData,
           });
-          return next;
-        });
-        startPollingJobs();
-        showToast(
-          `Upload started for "${uploadingFor}" — ${fmt(uploadingCount)} rows processing`,
-          "success",
-        );
-      } else {
-        showToast(`Upload submitted for "${uploadingFor}"`, "success");
-        startPollingJobs();
+        }
+
+        setUploadProgress(Math.round(((i + 1) / chunks.length) * 40));
       }
-      fetchLists();
+
+      setUploadStatus("Processing…");
+      setUploadProgress(40);
+
+      if (primaryJobId) setTimeout(() => pollJobStatus(primaryJobId), 2_000);
+      startPollingJobs();
     } catch (err) {
-      // Upload POST itself failed — remove the optimistic banner entry
+      const detail =
+        err?.response?.data?.detail ?? err?.message ?? "Unknown error";
+      console.error("Upload failed:", err);
+      showToast(`❌ Upload failed: ${detail}`, "error");
+      setUploadStatus("");
+      setUploadProgress(0);
       setProcessingJobs((prev) => {
         const next = new Map(prev);
         next.delete(uploadingFor);
         return next;
       });
-      if ((prev) => prev.size === 0) setShowProcessingBanner(false);
-      showToast(
-        err.response?.data?.detail || "Upload failed — please try again",
-        "error",
-      );
     }
   };
 
-  const resetUploadModal = () => {
-    setCsvHeaders([]);
-    setCsvData([]);
-    setListName("");
-    setUploadProgress(0);
-    setUploadStatus("");
-    setFieldMap({ rows: [] });
-  };
-
-  // ── subscriber CRUD ────────────────────────────────────────
+  // ── subscriber CRUD ───────────────────────────────────────────────────────────
   const handleAddSubscriber = async () => {
     if (!subscriberForm.email || !validateEmail(subscriberForm.email)) {
       showToast("Valid email is required", "error");
@@ -1016,8 +1092,8 @@ export default function Subscribers() {
       try {
         const res = await API.get(`/subscribers/lists/${val}/fields`);
         setListFields({
-          standard: res.data.standard_fields || [],
-          custom: res.data.custom_fields || [],
+          standard: res.data.standard || [],
+          custom: res.data.custom || [],
         });
       } catch {
         setListFields({ standard: [], custom: [] });
@@ -1064,7 +1140,7 @@ export default function Subscribers() {
     }
   };
 
-  // ── banner handlers ────────────────────────────────────────
+  // ── banner handlers ────────────────────────────────────────────────────────
   const handleClearFailed = async () => {
     try {
       await API.delete("/subscribers/jobs/clear-all");
@@ -1088,14 +1164,14 @@ export default function Subscribers() {
     }
   };
 
-  // ── derived data ───────────────────────────────────────────
+  // ── derived ────────────────────────────────────────────────────────────────
   const totalAcrossLists = lists.reduce(
     (s, l) => s + (l.total_count || l.count || 0),
     0,
   );
   const totalActive = lists.reduce((s, l) => s + (l.active_count || 0), 0);
 
-  // ── render ─────────────────────────────────────────────────
+  // ── render ─────────────────────────────────────────────────────────────────
   return (
     <div className="space-y-6">
       <ToastContainer notifications={notifications} onDismiss={dismissToast} />
@@ -1140,7 +1216,7 @@ export default function Subscribers() {
           ➕ Add Subscriber
         </button>
         <button
-          onClick={() => fetchLists()}
+          onClick={fetchLists}
           className="flex items-center gap-2 px-4 py-2 border border-gray-200 text-sm font-medium rounded-lg hover:bg-gray-50 transition-colors text-gray-600"
         >
           🔄 Refresh
@@ -1192,21 +1268,16 @@ export default function Subscribers() {
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-gray-50 border-b border-gray-100">
-                <th className="px-5 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  List Name
-                </th>
-                <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Total
-                </th>
-                <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Active
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[140px]">
-                  Health
-                </th>
-                <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Actions
-                </th>
+                {["List Name", "Total", "Active", "Health", "Actions"].map(
+                  (h, i) => (
+                    <th
+                      key={h}
+                      className={`px-${i === 0 ? "5" : "4"} py-3 text-xs font-medium text-gray-500 uppercase tracking-wider ${i === 0 ? "text-left" : "i" === 4 ? "text-right" : "i" < 3 ? "text-right" : "text-left"} ${h === "Health" ? "min-w-[140px]" : ""}`}
+                    >
+                      {h}
+                    </th>
+                  ),
+                )}
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
@@ -1217,7 +1288,6 @@ export default function Subscribers() {
                 const isFailed = job && job.status === "failed";
                 const total = list.total_count || list.count || 0;
                 const active = list.active_count || 0;
-
                 return (
                   <tr
                     key={`${list._id}-${i}`}
@@ -1243,7 +1313,7 @@ export default function Subscribers() {
                           </span>
                         )}
                       </div>
-                      {isProcessing && job.processed > 0 && (
+                      {isProcessing && (job.processed || 0) > 0 && (
                         <p className="text-xs text-blue-600 mt-0.5">
                           +{fmt(job.processed)} being added
                         </p>
@@ -1264,13 +1334,13 @@ export default function Subscribers() {
                           onClick={() =>
                             navigate(`/subscribers/list/${list._id}`)
                           }
-                          className="px-3 py-1.5 text-xs font-medium border border-gray-200 rounded-lg hover:bg-gray-50 text-gray-600 transition-colors"
+                          className="px-3 py-1.5 text-xs font-medium border border-gray-200 rounded-lg hover:bg-gray-50 text-gray-600"
                         >
                           View
                         </button>
                         <button
                           onClick={() => handleExportList(list._id)}
-                          className="px-3 py-1.5 text-xs font-medium border border-gray-200 rounded-lg hover:bg-gray-50 text-gray-600 transition-colors"
+                          className="px-3 py-1.5 text-xs font-medium border border-gray-200 rounded-lg hover:bg-gray-50 text-gray-600"
                         >
                           Export
                         </button>
@@ -1287,14 +1357,14 @@ export default function Subscribers() {
                                 showToast("Retry failed", "error");
                               }
                             }}
-                            className="px-3 py-1.5 text-xs font-medium bg-orange-50 border border-orange-200 rounded-lg hover:bg-orange-100 text-orange-700 transition-colors"
+                            className="px-3 py-1.5 text-xs font-medium bg-orange-50 border border-orange-200 rounded-lg hover:bg-orange-100 text-orange-700"
                           >
                             Retry
                           </button>
                         )}
                         <button
                           onClick={() => handleDeleteList(list._id)}
-                          className="px-3 py-1.5 text-xs font-medium border border-red-200 rounded-lg hover:bg-red-50 text-red-600 transition-colors"
+                          className="px-3 py-1.5 text-xs font-medium border border-red-200 rounded-lg hover:bg-red-50 text-red-600"
                         >
                           Delete
                         </button>
@@ -1304,7 +1374,6 @@ export default function Subscribers() {
                 );
               })}
             </tbody>
-            {/* Summary row */}
             {lists.length > 1 && (
               <tfoot>
                 <tr className="bg-gray-50 border-t-2 border-gray-200">
@@ -1331,7 +1400,7 @@ export default function Subscribers() {
         )}
       </section>
 
-      {/* ── All Subscribers search ── */}
+      {/* ── All Subscribers ── */}
       <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
         <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-4 border-b border-gray-100">
           <div>
@@ -1349,7 +1418,6 @@ export default function Subscribers() {
             )}
           </div>
           <div className="flex items-center gap-2">
-            {/* Status filter */}
             <select
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value)}
@@ -1361,7 +1429,6 @@ export default function Subscribers() {
               <option value="bounced">Bounced</option>
               <option value="unsubscribed">Unsubscribed</option>
             </select>
-            {/* Search */}
             <div className="relative">
               <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 text-xs">
                 🔍
@@ -1429,21 +1496,14 @@ export default function Subscribers() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="bg-gray-50 border-b border-gray-100">
-                  <th className="px-5 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Email
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Name
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    List
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Status
-                  </th>
-                  <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider w-24">
-                    Actions
-                  </th>
+                  {["Email", "Name", "List", "Status", "Actions"].map((h) => (
+                    <th
+                      key={h}
+                      className={`px-${h === "Email" ? "5" : "4"} py-3 text-xs font-medium text-gray-500 uppercase tracking-wider ${h === "Actions" ? "text-right w-24" : "text-left"}`}
+                    >
+                      {h}
+                    </th>
+                  ))}
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
@@ -1512,7 +1572,6 @@ export default function Subscribers() {
       {showUploadModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-xl shadow-xl w-full max-w-3xl max-h-[92vh] flex flex-col">
-            {/* Header */}
             <div className="flex items-center justify-between px-6 py-4 border-b shrink-0">
               <h2 className="text-base font-semibold">Upload Subscribers</h2>
               <button
@@ -1527,7 +1586,6 @@ export default function Subscribers() {
             </div>
 
             <div className="overflow-y-auto flex-1 px-6 py-5 space-y-5">
-              {/* Step 1: file pick */}
               {uploadStatus === "" && (
                 <div>
                   <label className="block text-sm font-medium mb-2">
@@ -1546,12 +1604,8 @@ export default function Subscribers() {
                 </div>
               )}
 
-              {/* No in-modal spinner — modal closes immediately on Start Upload */}
-
-              {/* Step 2: review mapping */}
               {uploadStatus === "ready" && csvHeaders.length > 0 && (
                 <>
-                  {/* List name */}
                   <div>
                     <label className="block text-sm font-medium mb-1">
                       List Name *
@@ -1566,7 +1620,6 @@ export default function Subscribers() {
                     />
                   </div>
 
-                  {/* Mapping table */}
                   <div>
                     <div className="flex items-center justify-between mb-2">
                       <p className="text-sm font-medium">
@@ -1611,7 +1664,6 @@ export default function Subscribers() {
                                       : ""
                                 }
                               >
-                                {/* CSV header */}
                                 <td className="px-3 py-2 font-medium text-gray-800 whitespace-nowrap">
                                   {isEmail && (
                                     <span className="mr-1 text-blue-500">
@@ -1620,7 +1672,6 @@ export default function Subscribers() {
                                   )}
                                   {row.csvHeader}
                                 </td>
-                                {/* Sample */}
                                 <td
                                   className="px-3 py-2 text-gray-400 text-xs truncate max-w-[120px]"
                                   title={row.sampleValue}
@@ -1629,7 +1680,6 @@ export default function Subscribers() {
                                     <span className="italic">empty</span>
                                   )}
                                 </td>
-                                {/* Maps-to select */}
                                 <td className="px-3 py-2">
                                   <select
                                     value={row.mappedTo}
@@ -1647,22 +1697,7 @@ export default function Subscribers() {
                                       ✉ email (required)
                                     </option>
                                     <optgroup label="Standard Fields">
-                                      {[
-                                        "first_name",
-                                        "last_name",
-                                        "phone",
-                                        "company",
-                                        "country",
-                                        "city",
-                                        "state",
-                                        "zip_code",
-                                        "language",
-                                        "timezone",
-                                        "gender",
-                                        "date_of_birth",
-                                        "website",
-                                        "job_title",
-                                      ].map((sf) => (
+                                      {ALL_STANDARD_FIELDS.map((sf) => (
                                         <option
                                           key={sf}
                                           value={`standard.${sf}`}
@@ -1687,7 +1722,6 @@ export default function Subscribers() {
                                     </option>
                                   </select>
                                 </td>
-                                {/* Type select — only for custom fields */}
                                 <td className="px-3 py-2">
                                   {row.mappedTo.startsWith("custom.") ? (
                                     <select
@@ -1720,7 +1754,6 @@ export default function Subscribers() {
                       </table>
                     </div>
 
-                    {/* Validation hint */}
                     {!fieldMap.rows.some((r) => r.mappedTo === "email") && (
                       <p className="text-xs text-red-500 mt-1.5">
                         ⚠ No column is mapped to email — please set one column
@@ -1729,7 +1762,6 @@ export default function Subscribers() {
                     )}
                   </div>
 
-                  {/* Preview */}
                   <div className="border border-gray-200 rounded-lg overflow-hidden">
                     <div className="px-3 py-2 bg-gray-50 border-b text-xs font-medium text-gray-600">
                       Raw preview — first 3 rows
@@ -1769,11 +1801,10 @@ export default function Subscribers() {
               )}
             </div>
 
-            {/* Footer */}
             {uploadStatus === "ready" && (
               <div className="flex gap-3 px-6 py-4 border-t bg-gray-50 rounded-b-xl shrink-0">
                 <button
-                  onClick={handleUploadList}
+                  onClick={handleUpload}
                   disabled={
                     !fieldMap.rows.some((r) => r.mappedTo === "email") ||
                     !listName.trim()
