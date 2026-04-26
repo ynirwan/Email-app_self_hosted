@@ -1244,16 +1244,30 @@ export default function Subscribers() {
                           <button
                             onClick={async () => {
                               try {
-                                await API.post(
+                                const res = await API.post(
                                   `/subscribers/jobs/${job.job_id}/force-retry`,
                                 );
-                                showToast("Retry initiated", "success");
-                                startPollingJobs();
-                              } catch {
-                                showToast("Retry failed", "error");
+                                if (res.data?.can_retry === false) {
+                                  // Chunk files gone — tell user to re-upload
+                                  showToast(
+                                    `Cannot retry "${job.list_name}" — chunk files were cleaned up. Please re-upload the CSV.`,
+                                    "error",
+                                  );
+                                } else {
+                                  showToast(
+                                    `Retry started for "${job.list_name}"`,
+                                    "success",
+                                  );
+                                  startPollingJobs();
+                                }
+                              } catch (e) {
+                                showToast(
+                                  `Retry failed: ${e.response?.data?.detail || e.message}`,
+                                  "error",
+                                );
                               }
                             }}
-                            className="px-3 py-1.5 text-xs font-medium bg-orange-50 border border-orange-200 rounded-lg hover:bg-orange-100 text-orange-700 transition-colors"
+                            className="text-xs bg-orange-600 text-white px-2.5 py-1 rounded hover:bg-orange-700"
                           >
                             Retry
                           </button>
