@@ -8,7 +8,9 @@ import smtplib
 import redis as redis_lib
 import json
 from core.config import settings, get_redis_key
-from core.redis_client import get_redis   # BLOCKER-1 FIX: central pool, no per-instance connections
+from core.redis_client import (
+    get_redis,
+)  # BLOCKER-1 FIX: central pool, no per-instance connections
 from tasks.campaign.snapshot_utils import build_snapshot
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -19,7 +21,8 @@ from database import (
     get_templates_collection,
 )
 from tasks.campaign.email_campaign_tasks import celery_app, send_campaign_batch
-#from .test_email.py import send_test_email
+
+# from .test_email.py import send_test_email
 from .list_validator import validate_target_lists_exist, compute_target_list_count
 from .field_handler import (
     get_subscriber_field_value,
@@ -286,6 +289,13 @@ async def get_campaign(campaign_id: str):
                 status_code=status.HTTP_404_NOT_FOUND, detail="Campaign not found"
             )
         campaign["_id"] = str(campaign["_id"])
+        # Serialise datetime inside provider_error (datetime is not JSON-serialisable)
+        if campaign.get("provider_error") and campaign["provider_error"].get(
+            "detected_at"
+        ):
+            pe = campaign["provider_error"]
+            if hasattr(pe["detected_at"], "isoformat"):
+                pe["detected_at"] = pe["detected_at"].isoformat()
         logger.info(f"Retrieved campaign: {campaign_id}")
         return campaign
     except HTTPException:
@@ -314,28 +324,46 @@ async def update_campaign(campaign_id: str, campaign_data: CampaignUpdate):
         if not existing_campaign:
             raise HTTPException(status_code=404, detail="Campaign not found")
 
-        # FIX #3: Instead of hard-blocking non-draft campaigns with a 409,
-        # allow the update but return a warning so the frontend can inform the user.
-        # The frontend already shows a confirm dialog for sent campaigns.
-        non_draft_warning = None
-        campaign_current_status = existing_campaign.get("status", "draft")
-        if campaign_current_status not in ("draft", "scheduled"):
-            non_draft_warning = (
-                f"Campaign was in '{campaign_current_status}' status. "
-                "Metadata updated. Previously sent emails are unaffected."
-            )
-            logger.warning(
-                f"Updating non-draft campaign {campaign_id} (status={campaign_current_status})"
+        # ── Status guard ──────────────────────────────────────────────────────
+        _LOCKED = {
+            "sending",
+            "queued",
+            "completed",
+            "sent",
+            "stopped",
+            "cancelled",
+            "failed",
+        }
+        _PAUSED = {"paused"}
+
+        current_status = existing_campaign.get("status", "draft")
+        pause_reason = existing_campaign.get("pause_reason", "")
+
+        if current_status in _LOCKED:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Campaign cannot be edited in '{current_status}' status.",
             )
 
-        # ✅ Validate target lists only when lists are actually provided
-        # FIX #6: unconditional call caused 400 error in segments-only mode
-        if campaign_data.target_lists:
-            if not await validate_target_lists_exist(campaign_data.target_lists):
-                raise HTTPException(
-                    status_code=400,
-                    detail="One or more target lists do not exist or have no subscribers",
-                )
+        if current_status in _PAUSED:
+            # Audience + template are always locked mid-send to prevent desync
+            campaign_data.target_lists = existing_campaign.get("target_lists", [])
+            campaign_data.target_segments = existing_campaign.get("target_segments", [])
+            campaign_data.template_id = existing_campaign.get("template_id", "")
+            if pause_reason == "provider_error_auto_pause":
+                # Error-paused: also lock title + subject; user only fixes sender
+                campaign_data.title = existing_campaign.get("title", "")
+                campaign_data.subject = existing_campaign.get("subject", "")
+
+        # Detect if provider_error should be cleared (sender fix applied)
+        _clear_provider_error = (
+            current_status == "paused"
+            and pause_reason == "provider_error_auto_pause"
+            and (
+                campaign_data.sender_email != existing_campaign.get("sender_email", "")
+                or campaign_data.sender_name != existing_campaign.get("sender_name", "")
+            )
+        )
 
         # ✅ Tiered mapping validation
         validated_mapping = await validate_tiered_field_mapping(
@@ -382,6 +410,13 @@ async def update_campaign(campaign_id: str, campaign_data: CampaignUpdate):
             update_data["created_at"] = existing_campaign["created_at"]
         if "sent_at" in existing_campaign:
             update_data["sent_at"] = existing_campaign["sent_at"]
+
+        # Clear provider_error when user saves corrected sender details
+        if _clear_provider_error:
+            update_data["provider_error"] = None
+            logger.info(
+                f"Cleared provider_error on campaign {campaign_id} after sender fix"
+            )
 
         result = await campaigns_collection.update_one(
             {"_id": ObjectId(campaign_id)}, {"$set": update_data}
@@ -839,6 +874,16 @@ async def resume_campaign(campaign_id: str):
             last_id = None
         r.delete(cursor_key)
 
+        # ── NEW: clear the provider error abort flag ──────────────────────────
+        # _handle_campaign_level_failure() writes "campaign:abort:{id}" when it
+        # auto-pauses. Without deleting it here, every resumed task would still
+        # see the flag and return {"skipped": True, "reason": "campaign_aborted"}.
+        try:
+            r.delete(f"campaign:abort:{campaign_id}")
+            logger.info(f"Cleared provider error abort flag for campaign {campaign_id}")
+        except Exception as _re:
+            logger.warning(f"Could not clear abort flag for {campaign_id}: {_re}")
+
         # Resume from saved cursor — not from the beginning
         task = send_campaign_batch.delay(
             campaign_id=campaign_id, batch_size=None, last_id=last_id
@@ -847,7 +892,12 @@ async def resume_campaign(campaign_id: str):
         await campaigns_collection.update_one(
             {"_id": ObjectId(campaign_id)},
             {
-                "$set": {"status": "sending", "resumed_at": datetime.utcnow()},
+                "$set": {
+                    "status": "sending",
+                    "resumed_at": datetime.utcnow(),
+                    "pause_reason": None,  # clear so the UI no longer shows error badge
+                    "paused_by": None,
+                },
                 "$unset": {"paused_at": ""},
             },
         )
@@ -857,6 +907,7 @@ async def resume_campaign(campaign_id: str):
             "message": "Campaign resumed successfully",
             "status": "sending",
             "task_id": task.id,
+            "cursor": last_id,
         }
 
     except HTTPException:
@@ -864,14 +915,6 @@ async def resume_campaign(campaign_id: str):
     except Exception as e:
         logger.error(f"Failed to resume campaign {campaign_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-    except Exception as e:
-        logger.error(
-            "get-campaign-status-error",
-            extra={"campaign_id": campaign_id, "error": str(e)},
-        )
-        raise HTTPException(
-            status_code=500, detail=f"Failed to get campaign status: {str(e)}"
-        )
 
 
 @router.post("/campaigns/{campaign_id}/stop")

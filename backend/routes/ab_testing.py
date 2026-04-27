@@ -17,6 +17,7 @@ from database import (
 )
 from tasks.ab.ab_testing import send_ab_test_batch
 
+
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
@@ -90,6 +91,16 @@ class ABTestCreate(BaseModel):
 class CompleteTestRequest(BaseModel):
     apply_to_campaign: bool = True
 
+def _safe_provider_error(pe):
+    """Serialise provider_error for JSON — handles datetime fields."""
+    if not pe:
+        return None
+    out = dict(pe)
+    if "detected_at" in out and hasattr(out["detected_at"], "isoformat"):
+        out["detected_at"] = out["detected_at"].isoformat()
+    return out
+
+    
 
 # ============================================================
 # UTILITY: ObjectId → str
@@ -372,17 +383,31 @@ def calculate_statistical_significance(results: Dict) -> Dict:
 
 
 @router.get("/ab-tests")
-async def get_all_ab_tests():
-    try:
-        col = get_ab_tests_collection()
-        tests = []
-        async for doc in col.find().sort("created_at", -1):
-            tests.append(convert_objectid_to_str(doc))
-        logger.info(f"Retrieved {len(tests)} A/B tests")
-        return {"tests": tests, "total": len(tests)}
-    except Exception as e:
-        logger.error(f"Failed to list A/B tests: {e}")
-        raise HTTPException(status_code=500, detail="Failed to retrieve A/B tests")
+        async def get_all_ab_tests():
+            try:
+                ab_tests_collection = get_ab_tests_collection()
+                tests = []
+
+                cursor = ab_tests_collection.find().sort("created_at", -1)
+                async for test in cursor:
+                    test = convert_objectid_to_str(test)
+
+                    # ── NEW: expose provider_error + fail_reason so the dashboard
+                    #         can show "✕ Failed — Provider Error" badges ────────────
+                    test["provider_error"] = _safe_provider_error(test.get("provider_error"))
+                    test["fail_reason"]    = test.get("fail_reason")
+
+                    tests.append(test)
+
+                logger.info(f"Retrieved {len(tests)} A/B tests")
+                return {
+                    "tests": tests,
+                    "total": len(tests),
+                }
+
+            except Exception as e:
+                logger.error(f"Failed to list A/B tests: {e}")
+                raise HTTPException(status_code=500, detail="Failed to retrieve A/B tests")
 
 
 @router.get("/ab-tests/lists")
@@ -756,6 +781,8 @@ async def get_ab_test_results(test_id: str):
             "results": results,
             "winner": winner,
             "winner_info": winner,
+            "provider_error": _safe_provider_error(test.get("provider_error")),
+            "fail_reason":    test.get("fail_reason"),
             "statistical_significance": significance,
             "start_date": test.get("start_date"),
             "end_date": test.get("end_date"),

@@ -1,15 +1,4 @@
 # backend/tasks/ab/ab_testing.py
-"""
-A/B test email sending tasks.
-
-Changes vs previous version:
-  - Added error_classifier integration
-  - _handle_ab_test_level_failure(): atomic Redis NX + Mongo auto-fail
-  - _check_ab_test_abort(): cheap Redis abort flag read per task
-  - Pre-flight provider check in send_ab_test_batch
-  - CONFIG/LIMIT errors → status=failed (A/B tests are terminal, no pause/resume)
-  - TRANSIENT/UNKNOWN → existing retry path unchanged
-"""
 
 import logging
 import json
@@ -450,7 +439,24 @@ def send_ab_test_single_email(
                 }
 
             # TRANSIENT/UNKNOWN — raise for existing retry path
+            _cls = classify_submission_error(error_msg)
+            if _cls["error_class"] in (
+                ProviderErrorClass.CONFIG_ERROR,
+                ProviderErrorClass.LIMIT_ERROR,
+            ):
+                _handle_ab_test_level_failure(test_id, _cls)
+                ab_test_results_collection.insert_one({
+                    "test_id":         test_id,
+                    "variant":         variant,
+                    "subscriber_id":   str(subscriber.get("_id") or subscriber.get("id", "")),
+                    "subscriber_email": subscriber.get("email", ""),
+                    "email_sent":      False,
+                    "error":           _cls["human_message"],
+                    "sent_at":         datetime.utcnow(),
+                })
+                return {"status": "aborted", "reason": f"test_auto_failed:{_cls['error_type']}"}
             raise Exception(error_msg or "Provider returned failure")
+
 
     except Exception as e:
         # Already aborted?

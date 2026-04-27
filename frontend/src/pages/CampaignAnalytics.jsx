@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import API from "../api";
+import ProviderErrorBanner from "../components/ProviderErrorBanner";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 const fmt = (n) => Number(n ?? 0).toLocaleString();
@@ -230,8 +231,15 @@ export default function CampaignAnalytics() {
               <h1 className="text-lg font-bold text-gray-900">
                 {campaign?.title || "Campaign Analytics"}
               </h1>
-              <StatusBadge status={campaign?.status} />
+            <StatusBadge status={campaign?.status} pauseReason={campaign?.pause_reason} />
             </div>
+            <ProviderErrorBanner
+              providerError={campaign?.provider_error}
+              isCampaign={true}
+              campaignId={campaignId}
+              onFixed={load}       // re-fetch data so banner updates
+              onResumed={load}
+            />
             <p className="text-sm text-gray-500 mt-0.5">{campaign?.subject}</p>
           </div>
 
@@ -892,32 +900,33 @@ const Spinner = () => (
   </div>
 );
 
-function StatusBadge({ status }) {
-  const m = {
-    sent: "bg-green-100 text-green-800 ✅ Sent",
-    completed: "bg-green-100 text-green-800 ✅ Completed",
-    draft: "bg-yellow-100 text-yellow-800 📝 Draft",
-    sending: "bg-blue-100 text-blue-800 📤 Sending",
-    paused: "bg-orange-100 text-orange-800 ⏸️ Paused",
-    stopped: "bg-gray-100 text-gray-700 🛑 Stopped",
-    failed: "bg-red-100 text-red-800 ❌ Failed",
-  }[status];
+function StatusBadge({ status, pauseReason }) {
+  const isPausedByError = pauseReason === "provider_error_auto_pause";
 
-  if (!m) {
-    return (
-      <span className="text-xs bg-gray-100 text-gray-700 px-2.5 py-0.5 rounded-full">
-        {status || "Unknown"}
-      </span>
-    );
-  }
+  const map = {
+    sent:      { cls: "bg-green-100 text-green-800",   label: "✅ Sent" },
+    completed: { cls: "bg-green-100 text-green-800",   label: "✅ Completed" },
+    sending:   { cls: "bg-blue-100  text-blue-800",    label: "📤 Sending" },
+    queued:    { cls: "bg-blue-100  text-blue-800",    label: "⏳ Queued" },
+    scheduled: { cls: "bg-purple-100 text-purple-800", label: "🕐 Scheduled" },
+    draft:     { cls: "bg-yellow-100 text-yellow-800", label: "📝 Draft" },
+    stopped:   { cls: "bg-gray-100  text-gray-700",    label: "🛑 Stopped" },
+    cancelled: { cls: "bg-gray-100  text-gray-700",    label: "✕ Cancelled" },
+    failed:    { cls: "bg-red-100   text-red-800",     label: "❌ Failed" },
+    paused: isPausedByError
+      ? { cls: "bg-red-100 text-red-800",   label: "⚠️ Paused — Provider Error" }
+      : { cls: "bg-orange-100 text-orange-800", label: "⏸ Paused" },
+  };
 
-  const [bg, text, ...rest] = m.split(" ");
+  const cfg = map[status] || map.draft;
   return (
-    <span className={`text-xs px-2.5 py-0.5 rounded-full font-semibold ${bg} ${text}`}>
-      {rest.join(" ")}
+    <span className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-semibold ${cfg.cls}`}>
+      {cfg.label}
     </span>
   );
 }
+
+ 
 
 const EmailPreview = ({ campaign }) => {
   const [exp, setExp] = useState(false);

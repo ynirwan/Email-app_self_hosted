@@ -19,7 +19,7 @@ from database import (
     get_sync_email_logs_collection,
     get_sync_subscribers_collection,
     get_sync_templates_collection,
-    get_sync_email_delivery_state_collection,   # BLOCKER-4: canonical delivery state
+    get_sync_email_delivery_state_collection,  # BLOCKER-4: canonical delivery state
 )
 from tasks.campaign.resource_manager import resource_manager
 from tasks.campaign.rate_limiter import rate_limiter, EmailProvider, RateLimitResult
@@ -39,7 +39,6 @@ from tasks.error_classifier import (
 )
 
 
-
 logger = logging.getLogger(__name__)
 
 # ============================================================
@@ -47,9 +46,7 @@ logger = logging.getLogger(__name__)
 # ============================================================
 
 
-BACKEND_ROOT = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "..")
-)
+BACKEND_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 LOG_DIR = os.path.join(BACKEND_ROOT, "var", "log")
 os.makedirs(LOG_DIR, exist_ok=True)
 
@@ -76,12 +73,8 @@ def _build_rotating_logger(name: str, filename: str) -> logging.Logger:
 submission_logger = _build_rotating_logger(
     "campaign_submission_logger", "submission.log"
 )
-delivery_logger = _build_rotating_logger(
-    "campaign_delivery_logger", "delivery.log"
-)
-campaign_ops_logger = _build_rotating_logger(
-    "campaign_ops_logger", "campaign.log"
-)
+delivery_logger = _build_rotating_logger("campaign_delivery_logger", "delivery.log")
+campaign_ops_logger = _build_rotating_logger("campaign_ops_logger", "campaign.log")
 
 
 def _write_json_log(file_logger: logging.Logger, payload: Dict[str, Any]):
@@ -207,7 +200,7 @@ def _evict_campaign_caches(campaign_id: str):
     logger.debug(f"Evicted worker caches for campaign {campaign_id}")
 
 
-#===============================================
+# ===============================================
 
 
 def _handle_campaign_level_failure(campaign_id: str, classification: dict) -> None:
@@ -228,14 +221,16 @@ def _handle_campaign_level_failure(campaign_id: str, classification: dict) -> No
         # Atomic: only first task to detect this sets the flag
         was_set = _redis.set(
             abort_key,
-            json.dumps({
-                "error_class": classification["error_class"],
-                "error_type":  classification["error_type"],
-                "raw_message": classification["raw_message"],
-                "detected_at": datetime.utcnow().isoformat(),
-            }),
-            ex=86400,   # 24 h TTL
-            nx=True,    # only set if key does not already exist
+            json.dumps(
+                {
+                    "error_class": classification["error_class"],
+                    "error_type": classification["error_type"],
+                    "raw_message": classification["raw_message"],
+                    "detected_at": datetime.utcnow().isoformat(),
+                }
+            ),
+            ex=86400,  # 24 h TTL
+            nx=True,  # only set if key does not already exist
         )
     except Exception as redis_err:
         logger.warning(f"Redis abort flag write failed for {campaign_id}: {redis_err}")
@@ -246,31 +241,31 @@ def _handle_campaign_level_failure(campaign_id: str, classification: dict) -> No
         return
 
     provider_error = {
-        "error_class":   classification["error_class"],
-        "error_type":    classification["error_type"],
-        "smtp_code":     extract_smtp_code(classification["raw_message"]),
-        "raw_message":   classification["raw_message"],
+        "error_class": classification["error_class"],
+        "error_type": classification["error_type"],
+        "smtp_code": extract_smtp_code(classification["raw_message"]),
+        "raw_message": classification["raw_message"],
         "human_message": classification["human_message"],
-        "is_resumable":  classification["is_resumable"],
-        "detected_at":   datetime.utcnow(),
-        "auto_paused":   True,
+        "is_resumable": classification["is_resumable"],
+        "detected_at": datetime.utcnow(),
+        "auto_paused": True,
     }
 
     campaigns_col = get_sync_campaigns_collection()
     campaigns_col.update_one(
         {
-            "_id":    ObjectId(campaign_id),
+            "_id": ObjectId(campaign_id),
             "status": {"$in": ["sending", "queued"]},
         },
         {
             "$set": {
-                "status":          "paused",
-                "pause_reason":    "provider_error_auto_pause",
-                "paused_at":       datetime.utcnow(),
-                "paused_by":       "system",
+                "status": "paused",
+                "pause_reason": "provider_error_auto_pause",
+                "paused_at": datetime.utcnow(),
+                "paused_by": "system",
                 "previous_status": "sending",
-                "provider_error":  provider_error,
-                "last_action_at":  datetime.utcnow(),
+                "provider_error": provider_error,
+                "last_action_at": datetime.utcnow(),
             }
         },
     )
@@ -355,6 +350,80 @@ def log_email_status(
 # ============================================================
 # TASK: send_single_campaign_email
 # ============================================================
+
+
+def _check_campaign_abort(campaign_id: str) -> bool:
+    """Return True if the campaign abort flag is set (another task already paused it)."""
+    try:
+        r = _redis_module.Redis.from_url(task_settings.REDIS_URL, decode_responses=True)
+        return bool(r.exists(f"campaign:abort:{campaign_id}"))
+    except Exception:
+        return False
+
+
+def _handle_campaign_level_failure(campaign_id: str, classification: dict) -> None:
+    """
+    Called on the first CONFIG or LIMIT provider error during a send run.
+
+    Uses Redis SET NX so only the first failing task triggers the Mongo update.
+    All subsequent tasks see _check_campaign_abort() == True and exit cheaply.
+    """
+    abort_key = f"campaign:abort:{campaign_id}"
+    try:
+        r = _redis_module.Redis.from_url(task_settings.REDIS_URL, decode_responses=True)
+        was_set = r.set(
+            abort_key,
+            json.dumps(
+                {
+                    "error_class": classification["error_class"],
+                    "error_type": classification["error_type"],
+                    "raw_message": classification["raw_message"],
+                    "detected_at": datetime.utcnow().isoformat(),
+                }
+            ),
+            ex=86400,  # 24 h TTL
+            nx=True,  # only if key does not already exist
+        )
+    except Exception as redis_err:
+        logger.warning(f"Redis abort flag write failed for {campaign_id}: {redis_err}")
+        was_set = True  # proceed with Mongo update anyway
+
+    if not was_set:
+        return  # another task already handled this
+
+    provider_error = {
+        "error_class": classification["error_class"],
+        "error_type": classification["error_type"],
+        "smtp_code": extract_smtp_code(classification["raw_message"]),
+        "raw_message": classification["raw_message"],
+        "human_message": classification["human_message"],
+        "is_resumable": classification["is_resumable"],
+        "detected_at": datetime.utcnow(),
+        "auto_paused": True,
+    }
+
+    col = get_sync_campaigns_collection()
+    col.update_one(
+        {"_id": ObjectId(campaign_id), "status": {"$in": ["sending", "queued"]}},
+        {
+            "$set": {
+                "status": "paused",
+                "pause_reason": "provider_error_auto_pause",
+                "paused_at": datetime.utcnow(),
+                "paused_by": "system",
+                "previous_status": "sending",
+                "provider_error": provider_error,
+                "last_action_at": datetime.utcnow(),
+            }
+        },
+    )
+    # Evict meta cache so subsequent tasks see the new status immediately
+    _campaign_meta_cache.pop(campaign_id, None)
+
+    logger.error(
+        f"Campaign {campaign_id} auto-paused — "
+        f"{classification['error_type']}: {classification['raw_message']}"
+    )
 
 
 def _decrement_queued(campaign_id: str):
@@ -475,6 +544,16 @@ def send_single_campaign_email(self, campaign_id: str, subscriber_id: str):
     start_time = time.time()
 
     try:
+        # ── ABORT FLAG CHECK ──────────────────────────────────────────────────
+        # If another task already triggered a campaign-level pause, exit cheaply
+        # without touching DB, counters, or locks.
+
+        if _check_campaign_abort(campaign_id):
+            return {
+                "skipped": True,
+                "reason": "campaign_aborted",
+                "campaign_id": campaign_id,
+            }
         # ── STEP 1: RESOURCE CHECK ────────────────────────────────────────────
         can_process, reason, health_info = resource_manager.can_process_batch(
             1, campaign_id
@@ -544,11 +623,17 @@ def send_single_campaign_email(self, campaign_id: str, subscriber_id: str):
         _send_redis = None
         try:
             from core.redis_client import get_redis as _get_redis
+
             _send_redis = _get_redis()
-            lock_acquired = _send_redis.set(_send_lock_key, self.request.id, nx=True, ex=900)
+            lock_acquired = _send_redis.set(
+                _send_lock_key, self.request.id, nx=True, ex=900
+            )
             if not lock_acquired:
                 _decrement_queued(campaign_id)
-                return {"status": "skipped", "reason": "send_lock_held_by_concurrent_task"}
+                return {
+                    "status": "skipped",
+                    "reason": "send_lock_held_by_concurrent_task",
+                }
         except Exception as _lock_err:
             logger.warning(
                 f"Send lock unavailable for {campaign_id}/{subscriber_id}: {_lock_err}. "
@@ -591,7 +676,9 @@ def send_single_campaign_email(self, campaign_id: str, subscriber_id: str):
             campaigns_collection.update_one(
                 {"_id": ObjectId(campaign_id)}, {"$inc": {"processed_count": 1}}
             )
-            upsert_delivery_state(campaign_id, subscriber_id, recipient_email, "suppressed")
+            upsert_delivery_state(
+                campaign_id, subscriber_id, recipient_email, "suppressed"
+            )
             return {
                 "status": "skipped",
                 "reason": "suppressed",
@@ -894,6 +981,47 @@ def send_single_campaign_email(self, campaign_id: str, subscriber_id: str):
                     },
                 )
 
+                if not is_permanent:
+                    _cls = classify_submission_error(error_reason)
+                    if _cls["error_class"] in (
+                        ProviderErrorClass.CONFIG_ERROR,
+                        ProviderErrorClass.LIMIT_ERROR,
+                    ):
+                        _handle_campaign_level_failure(campaign_id, _cls)
+                        log_email_status(
+                            campaign_id,
+                            subscriber_id,
+                            recipient_email,
+                            "failed",
+                            None,
+                            _cls["human_message"],
+                            attempted_providers[0]
+                            if attempted_providers
+                            else "unknown",
+                        )
+                        upsert_delivery_state(
+                            campaign_id,
+                            subscriber_id,
+                            recipient_email,
+                            "failed",
+                            failure_reason=_cls["human_message"],
+                            attempts_inc=1,
+                        )
+                        if not is_requeue:
+                            campaigns_collection.update_one(
+                                {"_id": ObjectId(campaign_id)},
+                                {
+                                    "$inc": {"failed_count": 1, "processed_count": 1},
+                                    "$set": {"last_batch_at": datetime.utcnow()},
+                                },
+                            )
+                        _decrement_queued(campaign_id)
+                        return {
+                            "status": "aborted",
+                            "reason": f"campaign_auto_paused:{_cls['error_type']}",
+                            "error": _cls["human_message"],
+                        }
+
                 log_email_status(
                     campaign_id,
                     subscriber_id,
@@ -905,8 +1033,13 @@ def send_single_campaign_email(self, campaign_id: str, subscriber_id: str):
                     cost,
                 )
                 upsert_delivery_state(
-                    campaign_id, subscriber_id, recipient_email, "sent",
-                    provider=provider, message_id=message_id, attempts_inc=1,
+                    campaign_id,
+                    subscriber_id,
+                    recipient_email,
+                    "sent",
+                    provider=provider,
+                    message_id=message_id,
+                    attempts_inc=1,
                 )
 
                 if is_requeue:
@@ -992,8 +1125,12 @@ def send_single_campaign_email(self, campaign_id: str, subscriber_id: str):
                         attempted_providers[0] if attempted_providers else "unknown",
                     )
                     upsert_delivery_state(
-                        campaign_id, subscriber_id, recipient_email, "failed",
-                        failure_reason=error_reason, attempts_inc=1,
+                        campaign_id,
+                        subscriber_id,
+                        recipient_email,
+                        "failed",
+                        failure_reason=error_reason,
+                        attempts_inc=1,
                     )
 
                     if not is_requeue:
@@ -1052,7 +1189,16 @@ def send_single_campaign_email(self, campaign_id: str, subscriber_id: str):
             )
 
             if self.request.retries >= self.max_retries:
-                error_msg = str(e)
+                error_msg = str(send_exc)
+
+                # Classify exception-form errors — auto-pause if CONFIG/LIMIT
+                _cls_exc = classify_submission_error(error_msg)
+                if _cls_exc["error_class"] in (
+                    ProviderErrorClass.CONFIG_ERROR,
+                    ProviderErrorClass.LIMIT_ERROR,
+                ):
+                    _handle_campaign_level_failure(campaign_id, _cls_exc)
+
                 if task_settings.ENABLE_DLQ:
                     dlq_manager.send_to_dlq(
                         campaign_id,
@@ -1075,8 +1221,12 @@ def send_single_campaign_email(self, campaign_id: str, subscriber_id: str):
                     "unknown",
                 )
                 upsert_delivery_state(
-                    campaign_id, subscriber_id, recipient_email, "failed",
-                    failure_reason=error_msg, attempts_inc=1,
+                    campaign_id,
+                    subscriber_id,
+                    recipient_email,
+                    "failed",
+                    failure_reason=error_msg,
+                    attempts_inc=1,
                 )
 
                 if not is_requeue:
@@ -1140,7 +1290,6 @@ def send_single_campaign_email(self, campaign_id: str, subscriber_id: str):
 def send_campaign_batch(
     self, campaign_id: str, batch_size: int = None, last_id: str = None
 ):
-
     try:
         _redis = _redis_module.Redis.from_url(
             task_settings.REDIS_URL, decode_responses=True
@@ -1202,15 +1351,18 @@ def send_campaign_batch(
             # Also write cursor to Mongo for durability (Redis can expire).
             try:
                 from core.redis_client import get_redis as _get_redis
+
                 _get_redis().set(cursor_key, last_id or "", ex=86400)
             except Exception as _re:
                 logger.warning(f"Redis cursor write failed for {campaign_id}: {_re}")
             campaigns_collection.update_one(
                 {"_id": ObjectId(campaign_id)},
-                {"$set": {
-                    "resume_cursor": last_id,
-                    "resume_cursor_saved_at": datetime.utcnow(),
-                }},
+                {
+                    "$set": {
+                        "resume_cursor": last_id,
+                        "resume_cursor_saved_at": datetime.utcnow(),
+                    }
+                },
             )
             return {
                 "status": "paused",
@@ -1221,6 +1373,19 @@ def send_campaign_batch(
 
         if campaign_controller.is_campaign_stopped(campaign_id):
             return {"status": "stopped", "campaign_id": campaign_id}
+
+        # ── PRE-FLIGHT: verify provider is reachable before burning queue slots ──
+        if not email_provider_manager.get_best_provider(campaign_id):
+            _cls = classify_submission_error("no healthy email providers available")
+            _handle_campaign_level_failure(campaign_id, _cls)
+            logger.error(
+                f"Campaign {campaign_id} aborted at pre-flight: no healthy providers"
+            )
+            return {
+                "status": "aborted",
+                "reason": "no_healthy_providers",
+                "campaign_id": campaign_id,
+            }
 
         subscribers = get_subscribers_for_campaign(campaign_id, batch_size, last_id)
 
@@ -1288,15 +1453,20 @@ def send_campaign_batch(
         if campaign_controller.is_campaign_paused(campaign_id):
             try:
                 from core.redis_client import get_redis as _get_redis
-                _get_redis().set(f"campaign:cursor:{campaign_id}", last_id or "", ex=86400)
+
+                _get_redis().set(
+                    f"campaign:cursor:{campaign_id}", last_id or "", ex=86400
+                )
             except Exception:
                 pass
             campaigns_collection.update_one(
                 {"_id": ObjectId(campaign_id)},
-                {"$set": {
-                    "resume_cursor": last_id,
-                    "resume_cursor_saved_at": datetime.utcnow(),
-                }},
+                {
+                    "$set": {
+                        "resume_cursor": last_id,
+                        "resume_cursor_saved_at": datetime.utcnow(),
+                    }
+                },
             )
             return {
                 "status": "paused",
@@ -1306,8 +1476,11 @@ def send_campaign_batch(
             }
 
         if campaign_controller.is_campaign_stopped(campaign_id):
-            return {"status": "stopped", "reason": "stop_detected_pre_queue",
-                    "campaign_id": campaign_id}
+            return {
+                "status": "stopped",
+                "reason": "stop_detected_pre_queue",
+                "campaign_id": campaign_id,
+            }
 
         campaigns_collection.update_one(
             {"_id": ObjectId(campaign_id)},
@@ -1458,10 +1631,9 @@ def finalize_campaign(campaign_id: str) -> Dict[str, Any]:
     _held_lock = False
     try:
         from core.redis_client import get_redis as _get_redis
+
         _finalize_redis = _get_redis()
-        _held_lock = bool(
-            _finalize_redis.set(_finalize_lock_key, "1", nx=True, ex=600)
-        )
+        _held_lock = bool(_finalize_redis.set(_finalize_lock_key, "1", nx=True, ex=600))
         if not _held_lock:
             logger.info(
                 f"finalize_campaign: lock already held for {campaign_id} — skipping duplicate"
@@ -1606,6 +1778,7 @@ def _cleanup_campaign_redis_keys(campaign_id: str) -> None:
     try:
         from core.redis_client import get_redis as _get_redis
         from tasks.task_config import get_redis_key
+
         r = _get_redis()
         r.delete(f"campaign:cursor:{campaign_id}")
         r.delete(f"campaign_batch_lock:{campaign_id}")

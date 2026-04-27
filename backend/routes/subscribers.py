@@ -2314,92 +2314,98 @@ async def export_list_csv(list_name: str, request: Request):
 
 
 @router.post("/jobs/{job_id}/force-retry")
-        async def retry_failed_job(
-            job_id: str,
-            request: Request,
-            background_tasks: BackgroundTasks,
-        ):
-            """
-            Retry a failed job.
-            - If chunk files still exist on disk → re-trigger processing immediately.
-            - If chunk files are gone (cleaned up) → return a clear message so the
-              frontend can tell the user to re-upload instead of silently doing nothing.
-            """
-            try:
-                jobs_collection = get_jobs_collection()
-                job = await jobs_collection.find_one({"_id": job_id})
+async def retry_failed_job(
+    job_id: str,
+    request: Request,
+    background_tasks: BackgroundTasks,
+):
+    """
+    Retry a failed job.
+    - If chunk files still exist on disk → re-trigger processing immediately.
+    - If chunk files are gone (cleaned up) → return a clear message so the
+      frontend can tell the user to re-upload instead of silently doing nothing.
+    """
+    try:
+        jobs_collection = get_jobs_collection()
+        job = await jobs_collection.find_one({"_id": job_id})
 
-                if not job:
-                    raise HTTPException(status_code=404, detail="Job not found")
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
 
-                if job.get("status") not in ("failed", "partially_completed"):
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"Job is '{job.get('status')}' — only failed jobs can be retried",
-                    )
+        if job.get("status") not in ("failed", "partially_completed"):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Job is '{job.get('status')}' — only failed jobs can be retried",
+            )
 
-                # Check whether chunk files still exist on disk
-                import glob as _glob
-                directory   = os.path.join("upload_queue", "chunks", job_id)
-                chunk_files = sorted(_glob.glob(os.path.join(directory, "chunk_*.json")))
+        # Check whether chunk files still exist on disk
+        import glob as _glob
 
-                if chunk_files:
-                    # Chunk files exist — re-trigger processing in background
-                    list_name    = job.get("list_name", "")
-                    total_records= job.get("total_records", 0)
+        directory = os.path.join("upload_queue", "chunks", job_id)
+        chunk_files = sorted(_glob.glob(os.path.join(directory, "chunk_*.json")))
 
-                    await jobs_collection.update_one(
-                        {"_id": job_id},
-                        {"$set": {
-                            "status":       "pending",
-                            "updated_at":   datetime.utcnow(),
-                            "last_heartbeat": datetime.utcnow(),
-                            "retry_count":  job.get("retry_count", 0) + 1,
-                            "error_message": None,
-                        }},
-                    )
+        if chunk_files:
+            # Chunk files exist — re-trigger processing in background
+            list_name = job.get("list_name", "")
+            total_records = job.get("total_records", 0)
 
-                    background_tasks.add_task(
-                        process_upload_chunks,
-                        job_id,
-                        list_name,
-                        chunk_files,
-                        total_records,
-                    )
-
-                    logger.info(f"🔄 Job {job_id} retried — {len(chunk_files)} chunk files found, processing restarted")
-                    return {
-                        "message":     "Retry started — processing resumed from existing chunks",
-                        "job_id":      job_id,
-                        "chunk_files": len(chunk_files),
-                        "can_retry":   True,
+            await jobs_collection.update_one(
+                {"_id": job_id},
+                {
+                    "$set": {
+                        "status": "pending",
+                        "updated_at": datetime.utcnow(),
+                        "last_heartbeat": datetime.utcnow(),
+                        "retry_count": job.get("retry_count", 0) + 1,
+                        "error_message": None,
                     }
+                },
+            )
 
-                else:
-                    # Chunk files cleaned up — cannot re-process, must re-upload
-                    # Mark as failed with a helpful message rather than leaving it pending
-                    await jobs_collection.update_one(
-                        {"_id": job_id},
-                        {"$set": {
-                            "status":        "failed",
-                            "error_message": "Chunk files were cleaned up after failure — please re-upload the CSV",
-                            "updated_at":    datetime.utcnow(),
-                        }},
-                    )
+            background_tasks.add_task(
+                process_upload_chunks,
+                job_id,
+                list_name,
+                chunk_files,
+                total_records,
+            )
 
-                    logger.info(f"⚠️ Job {job_id} retry requested but chunk files are gone")
-                    return {
-                        "message":   "Chunk files no longer exist — please re-upload the CSV file",
-                        "job_id":    job_id,
-                        "can_retry": False,
+            logger.info(
+                f"🔄 Job {job_id} retried — {len(chunk_files)} chunk files found, processing restarted"
+            )
+            return {
+                "message": "Retry started — processing resumed from existing chunks",
+                "job_id": job_id,
+                "chunk_files": len(chunk_files),
+                "can_retry": True,
+            }
+
+        else:
+            # Chunk files cleaned up — cannot re-process, must re-upload
+            # Mark as failed with a helpful message rather than leaving it pending
+            await jobs_collection.update_one(
+                {"_id": job_id},
+                {
+                    "$set": {
+                        "status": "failed",
+                        "error_message": "Chunk files were cleaned up after failure — please re-upload the CSV",
+                        "updated_at": datetime.utcnow(),
                     }
+                },
+            )
 
-            except HTTPException:
-                raise
-            except Exception as e:
-                logger.error(f"Retry job failed: {e}")
-                raise HTTPException(status_code=500, detail="Failed to retry job")
+            logger.info(f"⚠️ Job {job_id} retry requested but chunk files are gone")
+            return {
+                "message": "Chunk files no longer exist — please re-upload the CSV file",
+                "job_id": job_id,
+                "can_retry": False,
+            }
 
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Retry job failed: {e}")
+        raise HTTPException(status_code=500, detail="Failed to retry job")
 
 
 # ===== UTILITY FUNCTIONS =====
@@ -2566,7 +2572,6 @@ def build_optimized_search_query(search_term: str, specificity: str):
     return query, sort_order
 
 
-
 @router.delete("/jobs/{job_id}")
 async def delete_single_job(job_id: str):
     """
@@ -2583,6 +2588,7 @@ async def delete_single_job(job_id: str):
         # Also clean up any leftover chunk files
         try:
             import shutil as _shutil
+
             chunk_dir = os.path.join("upload_queue", "chunks", job_id)
             if os.path.exists(chunk_dir):
                 _shutil.rmtree(chunk_dir, ignore_errors=True)
@@ -2597,7 +2603,8 @@ async def delete_single_job(job_id: str):
     except Exception as e:
         logger.error(f"Delete job failed: {e}")
         raise HTTPException(status_code=500, detail="Failed to delete job")
-        
+
+
 @router.post("/analyze-fields")
 async def analyze_fields(request: dict):
     """
