@@ -141,7 +141,7 @@ export default function CampaignAnalytics() {
 
       try {
         const res = await API.get(
-          `/analytics/campaigns/${campaignId}/detail?metric=${eventType}&limit=10`
+          `/analytics/campaigns/${campaignId}/detail?metric=${eventType}&limit=10`,
         );
         setPanelRows(res.data.rows || []);
         setPanelTotal(res.data.total_all || 0);
@@ -152,7 +152,7 @@ export default function CampaignAnalytics() {
         setPL(false);
       }
     },
-    [campaignId]
+    [campaignId],
   );
 
   // ── Metric modal opener ─────────────────────────────────────────────────────
@@ -168,7 +168,7 @@ export default function CampaignAnalytics() {
 
     try {
       const res = await API.get(
-        `/analytics/campaigns/${campaignId}/detail?metric=${metric}&limit=200`
+        `/analytics/campaigns/${campaignId}/detail?metric=${metric}&limit=200`,
       );
       setModal({ metric, ...res.data, loading: false });
     } catch {
@@ -184,7 +184,7 @@ export default function CampaignAnalytics() {
     try {
       const res = await API.get(
         `/analytics/campaigns/${campaignId}/export?event_type=${eventType}`,
-        { responseType: "blob" }
+        { responseType: "blob" },
       );
 
       const title = (data?.campaign?.title || "campaign")
@@ -218,7 +218,9 @@ export default function CampaignAnalytics() {
   const { campaign, analytics, recent_events, top_links } = data || {};
   const progress =
     campaign?.target_list_count > 0
-      ? Math.round(((campaign.sent_count || 0) / campaign.target_list_count) * 100)
+      ? Math.round(
+          ((campaign.sent_count || 0) / campaign.target_list_count) * 100,
+        )
       : 0;
 
   return (
@@ -231,15 +233,12 @@ export default function CampaignAnalytics() {
               <h1 className="text-lg font-bold text-gray-900">
                 {campaign?.title || "Campaign Analytics"}
               </h1>
-            <StatusBadge status={campaign?.status} pauseReason={campaign?.pause_reason} />
+              <StatusBadge
+                status={campaign?.status}
+                pauseReason={campaign?.pause_reason}
+              />
             </div>
-            <ProviderErrorBanner
-              providerError={campaign?.provider_error}
-              isCampaign={true}
-              campaignId={campaignId}
-              onFixed={load}       // re-fetch data so banner updates
-              onResumed={load}
-            />
+
             <p className="text-sm text-gray-500 mt-0.5">{campaign?.subject}</p>
           </div>
 
@@ -266,6 +265,14 @@ export default function CampaignAnalytics() {
           </div>
         </div>
       </div>
+
+      <ProviderErrorBanner
+        providerError={campaign?.provider_error}
+        isCampaign={true}
+        campaignId={campaignId}
+        onFixed={load} // re-fetch data so banner updates
+        onResumed={load}
+      />
 
       {/* Progress */}
       {["sending", "paused"].includes(campaign?.status) && (
@@ -301,7 +308,10 @@ export default function CampaignAnalytics() {
                 cls: "bg-orange-50 text-orange-700 border-orange-200",
               },
             ].map(({ title, val, icon, cls }) => (
-              <div key={title} className={`${cls} border rounded-xl p-4 text-center`}>
+              <div
+                key={title}
+                className={`${cls} border rounded-xl p-4 text-center`}
+              >
                 <p className="text-2xl mb-1">{icon}</p>
                 <p className="text-xs font-medium">{title}</p>
                 <p className="text-2xl font-bold tabular-nums">{fmt(val)}</p>
@@ -315,7 +325,10 @@ export default function CampaignAnalytics() {
           </div>
 
           <div className="bg-gray-100 rounded-full h-2 mb-5">
-            <div className="bg-blue-600 h-2 rounded-full" style={{ width: `${progress}%` }} />
+            <div
+              className="bg-blue-600 h-2 rounded-full"
+              style={{ width: `${progress}%` }}
+            />
           </div>
 
           <div className="grid grid-cols-3 gap-4 pt-4 border-t border-gray-100 text-sm">
@@ -360,7 +373,11 @@ export default function CampaignAnalytics() {
               metric: "delivered",
               total:
                 analytics?.total_delivered ||
-                Math.max(0, (analytics?.total_sent || 0) - (analytics?.total_bounced || 0)),
+                Math.max(
+                  0,
+                  (analytics?.total_sent || 0) -
+                    (analytics?.total_bounced || 0),
+                ),
               rate: analytics?.delivery_rate || 0,
               rateLabel: "delivery",
             },
@@ -376,8 +393,12 @@ export default function CampaignAnalytics() {
                   ↗
                 </div>
                 <p className="text-2xl mb-2">{cfg.icon}</p>
-                <p className="text-xs font-medium text-gray-500 mb-1">{cfg.label}</p>
-                <p className={`text-3xl font-bold tabular-nums ${cfg.color}`}>{fmt(total)}</p>
+                <p className="text-xs font-medium text-gray-500 mb-1">
+                  {cfg.label}
+                </p>
+                <p className={`text-3xl font-bold tabular-nums ${cfg.color}`}>
+                  {fmt(total)}
+                </p>
                 <p className="text-xs text-gray-400 mt-1">
                   {pct(rate)} {rateLabel}
                 </p>
@@ -416,9 +437,15 @@ export default function CampaignAnalytics() {
                     ↗
                   </div>
                   <p className="text-xl mb-1">{cfg.icon}</p>
-                  <p className="text-xs font-medium text-gray-500">{cfg.label}</p>
-                  <p className={`text-2xl font-bold tabular-nums ${cfg.color}`}>{fmt(total)}</p>
-                  {rate !== null && <p className="text-xs text-gray-400">{pct(rate)}</p>}
+                  <p className="text-xs font-medium text-gray-500">
+                    {cfg.label}
+                  </p>
+                  <p className={`text-2xl font-bold tabular-nums ${cfg.color}`}>
+                    {fmt(total)}
+                  </p>
+                  {rate !== null && (
+                    <p className="text-xs text-gray-400">{pct(rate)}</p>
+                  )}
                 </button>
               );
             })}
@@ -451,7 +478,9 @@ export default function CampaignAnalytics() {
         </div>
 
         <div className="p-5">
-          {panel === "activity" && <ActivityFeed events={recent_events} limit={10} />}
+          {panel === "activity" && (
+            <ActivityFeed events={recent_events} limit={10} />
+          )}
           {panel === "links" && <LinkList links={top_links} limit={10} />}
           {(panel === "openers" || panel === "clickers") &&
             (panelLoading ? (
@@ -461,7 +490,9 @@ export default function CampaignAnalytics() {
                 rows={panelRows}
                 total={panelTotal}
                 type={panel === "openers" ? "open" : "click"}
-                onViewAll={() => openModal(panel === "openers" ? "opened" : "clicked")}
+                onViewAll={() =>
+                  openModal(panel === "openers" ? "opened" : "clicked")
+                }
               />
             ))}
         </div>
@@ -506,11 +537,13 @@ function MetricDetailModal({ modal, onClose, onDownload, downloading }) {
           <div className="flex items-center gap-3">
             <span className="text-2xl">{cfg.icon}</span>
             <div>
-              <h2 className="text-base font-bold text-gray-900">{cfg.label} Detail</h2>
+              <h2 className="text-base font-bold text-gray-900">
+                {cfg.label} Detail
+              </h2>
               {!modal.loading && (
                 <p className="text-xs text-gray-400">
-                  {fmt(modal.total_all)} total · {fmt(modal.total_unique)} unique ·{" "}
-                  {fmt(modal.total_duplicate)} duplicate
+                  {fmt(modal.total_all)} total · {fmt(modal.total_unique)}{" "}
+                  unique · {fmt(modal.total_duplicate)} duplicate
                 </p>
               )}
             </div>
@@ -540,11 +573,17 @@ function MetricDetailModal({ modal, onClose, onDownload, downloading }) {
             <Spinner />
           </div>
         ) : modal.error ? (
-          <div className="py-16 text-center text-sm text-red-500">Failed to load data.</div>
+          <div className="py-16 text-center text-sm text-red-500">
+            Failed to load data.
+          </div>
         ) : (
           <>
             <div className="flex items-center gap-3 px-6 py-4 bg-gray-50 border-b border-gray-100">
-              <StatPill label="Total" value={modal.total_all} color="bg-gray-200 text-gray-700" />
+              <StatPill
+                label="Total"
+                value={modal.total_all}
+                color="bg-gray-200 text-gray-700"
+              />
               <StatPill
                 label="Unique"
                 value={modal.total_unique}
@@ -617,8 +656,13 @@ function MetricDetailModal({ modal, onClose, onDownload, downloading }) {
             </div>
 
             <div className="px-6 py-3 border-t border-gray-100 text-xs text-gray-400 flex justify-between">
-              <span>Showing up to 200 records. Download CSV for full export.</span>
-              <button onClick={onClose} className="text-indigo-600 hover:underline font-medium">
+              <span>
+                Showing up to 200 records. Download CSV for full export.
+              </span>
+              <button
+                onClick={onClose}
+                className="text-indigo-600 hover:underline font-medium"
+              >
                 Close
               </button>
             </div>
@@ -631,7 +675,9 @@ function MetricDetailModal({ modal, onClose, onDownload, downloading }) {
 
 function StatPill({ label, value, color }) {
   return (
-    <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold ${color}`}>
+    <span
+      className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold ${color}`}
+    >
       {label}: {fmt(value)}
     </span>
   );
@@ -657,7 +703,9 @@ function DetailRow({ row, metric }) {
           </span>
         </td>
 
-        <td className="px-4 py-3 font-medium text-gray-800 text-xs">{row.email || "—"}</td>
+        <td className="px-4 py-3 font-medium text-gray-800 text-xs">
+          {row.email || "—"}
+        </td>
 
         {metric === "clicked" && (
           <td className="px-4 py-3 max-w-xs">
@@ -669,7 +717,11 @@ function DetailRow({ row, metric }) {
               className="text-blue-600 hover:underline text-xs truncate block"
               title={row.url}
             >
-              {row.url ? (row.url.length > 45 ? row.url.slice(0, 45) + "…" : row.url) : "—"}
+              {row.url
+                ? row.url.length > 45
+                  ? row.url.slice(0, 45) + "…"
+                  : row.url
+                : "—"}
             </a>
           </td>
         )}
@@ -680,8 +732,12 @@ function DetailRow({ row, metric }) {
           </span>
         </td>
 
-        <td className="px-4 py-3 text-xs font-mono text-gray-400">{row.ip_address || "—"}</td>
-        <td className="px-4 py-3 text-xs text-gray-500 whitespace-nowrap">{fmtD(row.timestamp)}</td>
+        <td className="px-4 py-3 text-xs font-mono text-gray-400">
+          {row.ip_address || "—"}
+        </td>
+        <td className="px-4 py-3 text-xs text-gray-500 whitespace-nowrap">
+          {fmtD(row.timestamp)}
+        </td>
         <td className="px-4 py-3">
           <span className="text-xs text-gray-500">{row.total_count || 1}×</span>
         </td>
@@ -692,12 +748,18 @@ function DetailRow({ row, metric }) {
           <td colSpan={colSpan} className="px-4 py-3">
             <div className="text-xs text-gray-500 space-y-1">
               <p>
-                <span className="font-semibold text-gray-600">User Agent: </span>
-                <span className="font-mono break-all">{row.user_agent || "Not captured"}</span>
+                <span className="font-semibold text-gray-600">
+                  User Agent:{" "}
+                </span>
+                <span className="font-mono break-all">
+                  {row.user_agent || "Not captured"}
+                </span>
               </p>
               {metric === "clicked" && row.url && (
                 <p>
-                  <span className="font-semibold text-gray-600">Full URL: </span>
+                  <span className="font-semibold text-gray-600">
+                    Full URL:{" "}
+                  </span>
                   <span className="break-all text-blue-600">{row.url}</span>
                 </p>
               )}
@@ -715,7 +777,9 @@ function MiniTable({ rows, total, type, onViewAll }) {
     return (
       <div className="text-center py-12">
         <p className="text-3xl mb-2">{type === "open" ? "👁️" : "👆"}</p>
-        <p className="text-sm text-gray-400">{type === "open" ? "No opens yet" : "No clicks yet"}</p>
+        <p className="text-sm text-gray-400">
+          {type === "open" ? "No opens yet" : "No clicks yet"}
+        </p>
       </div>
     );
   }
@@ -727,7 +791,10 @@ function MiniTable({ rows, total, type, onViewAll }) {
           Showing {rows.length} of {fmt(total)}
         </p>
         {total > 10 && (
-          <button onClick={onViewAll} className="text-xs text-indigo-600 hover:underline font-medium">
+          <button
+            onClick={onViewAll}
+            className="text-xs text-indigo-600 hover:underline font-medium"
+          >
             View all {fmt(total)} →
           </button>
         )}
@@ -738,7 +805,9 @@ function MiniTable({ rows, total, type, onViewAll }) {
           <thead className="bg-gray-50 text-gray-400 uppercase border-b border-gray-100">
             <tr>
               <th className="px-3 py-2 font-semibold">Email</th>
-              {type === "click" && <th className="px-3 py-2 font-semibold">URL</th>}
+              {type === "click" && (
+                <th className="px-3 py-2 font-semibold">URL</th>
+              )}
               <th className="px-3 py-2 font-semibold">Device</th>
               <th className="px-3 py-2 font-semibold">IP</th>
               <th className="px-3 py-2 font-semibold">Time</th>
@@ -751,12 +820,21 @@ function MiniTable({ rows, total, type, onViewAll }) {
               const device = row.device || parseDevice(row.user_agent || "");
               return (
                 <tr key={i} className="hover:bg-gray-50">
-                  <td className="px-3 py-2 font-medium text-gray-700">{row.email || "—"}</td>
+                  <td className="px-3 py-2 font-medium text-gray-700">
+                    {row.email || "—"}
+                  </td>
 
                   {type === "click" && (
                     <td className="px-3 py-2 max-w-[180px]">
-                      <span className="text-blue-600 truncate block" title={row.url}>
-                        {row.url ? (row.url.length > 30 ? row.url.slice(0, 30) + "…" : row.url) : "—"}
+                      <span
+                        className="text-blue-600 truncate block"
+                        title={row.url}
+                      >
+                        {row.url
+                          ? row.url.length > 30
+                            ? row.url.slice(0, 30) + "…"
+                            : row.url
+                          : "—"}
                       </span>
                     </td>
                   )}
@@ -764,8 +842,12 @@ function MiniTable({ rows, total, type, onViewAll }) {
                   <td className="px-3 py-2 text-gray-500">
                     <DeviceIcon d={device} /> {device}
                   </td>
-                  <td className="px-3 py-2 text-gray-400 font-mono">{row.ip_address || "—"}</td>
-                  <td className="px-3 py-2 text-gray-400 whitespace-nowrap">{fmtD(row.timestamp)}</td>
+                  <td className="px-3 py-2 text-gray-400 font-mono">
+                    {row.ip_address || "—"}
+                  </td>
+                  <td className="px-3 py-2 text-gray-400 whitespace-nowrap">
+                    {fmtD(row.timestamp)}
+                  </td>
                   <td className="px-3 py-2">
                     <span
                       className={`px-1.5 py-0.5 rounded text-xs font-medium
@@ -786,12 +868,42 @@ function MiniTable({ rows, total, type, onViewAll }) {
 
 // ── ActivityFeed ──────────────────────────────────────────────────────────────
 const EV_CFG = {
-  opened: { icon: "👁️", bg: "bg-green-100", color: "text-green-700", label: "Opened" },
-  clicked: { icon: "👆", bg: "bg-purple-100", color: "text-purple-700", label: "Clicked" },
-  bounced: { icon: "⚠️", bg: "bg-red-100", color: "text-red-700", label: "Bounced" },
-  delivered: { icon: "✅", bg: "bg-green-100", color: "text-green-700", label: "Delivered" },
-  unsubscribed: { icon: "🚫", bg: "bg-orange-100", color: "text-orange-700", label: "Unsubscribed" },
-  spam_report: { icon: "🚨", bg: "bg-red-100", color: "text-red-700", label: "Spam Report" },
+  opened: {
+    icon: "👁️",
+    bg: "bg-green-100",
+    color: "text-green-700",
+    label: "Opened",
+  },
+  clicked: {
+    icon: "👆",
+    bg: "bg-purple-100",
+    color: "text-purple-700",
+    label: "Clicked",
+  },
+  bounced: {
+    icon: "⚠️",
+    bg: "bg-red-100",
+    color: "text-red-700",
+    label: "Bounced",
+  },
+  delivered: {
+    icon: "✅",
+    bg: "bg-green-100",
+    color: "text-green-700",
+    label: "Delivered",
+  },
+  unsubscribed: {
+    icon: "🚫",
+    bg: "bg-orange-100",
+    color: "text-orange-700",
+    label: "Unsubscribed",
+  },
+  spam_report: {
+    icon: "🚨",
+    bg: "bg-red-100",
+    color: "text-red-700",
+    label: "Spam Report",
+  },
 };
 
 function ActivityFeed({ events, limit = 10 }) {
@@ -820,15 +932,24 @@ function ActivityFeed({ events, limit = 10 }) {
         const device = ev.device || parseDevice(ev.user_agent || "");
 
         return (
-          <div key={i} className="flex items-start gap-3 p-2.5 hover:bg-gray-50 rounded-lg">
-            <div className={`w-7 h-7 ${cfg.bg} rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5 text-xs`}>
+          <div
+            key={i}
+            className="flex items-start gap-3 p-2.5 hover:bg-gray-50 rounded-lg"
+          >
+            <div
+              className={`w-7 h-7 ${cfg.bg} rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5 text-xs`}
+            >
               {cfg.icon}
             </div>
 
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
-                <span className={`text-xs font-semibold ${cfg.color}`}>{cfg.label}</span>
-                {email && <span className="text-xs text-gray-600">{email}</span>}
+                <span className={`text-xs font-semibold ${cfg.color}`}>
+                  {cfg.label}
+                </span>
+                {email && (
+                  <span className="text-xs text-gray-600">{email}</span>
+                )}
                 <span className="text-xs text-gray-400">
                   {device !== "Unknown" && (
                     <>
@@ -840,7 +961,11 @@ function ActivityFeed({ events, limit = 10 }) {
 
               <div className="flex gap-3 mt-0.5">
                 <p className="text-xs text-gray-400">{fmtD(ev.timestamp)}</p>
-                {ev.ip_address && <p className="text-xs text-gray-300 font-mono">{ev.ip_address}</p>}
+                {ev.ip_address && (
+                  <p className="text-xs text-gray-300 font-mono">
+                    {ev.ip_address}
+                  </p>
+                )}
               </div>
 
               {ev.url && ev.event_type === "clicked" && (
@@ -870,7 +995,10 @@ function LinkList({ links, limit = 10 }) {
   return (
     <div className="space-y-2">
       {items.map((link, i) => (
-        <div key={i} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg hover:bg-gray-100">
+        <div
+          key={i}
+          className="flex items-center justify-between p-3 bg-gray-50 rounded-lg hover:bg-gray-100"
+        >
           <div className="flex items-center gap-3 flex-1 min-w-0">
             <div className="w-6 h-6 bg-blue-600 text-white rounded-md flex items-center justify-center text-xs font-bold flex-shrink-0">
               {i + 1}
@@ -904,29 +1032,29 @@ function StatusBadge({ status, pauseReason }) {
   const isPausedByError = pauseReason === "provider_error_auto_pause";
 
   const map = {
-    sent:      { cls: "bg-green-100 text-green-800",   label: "✅ Sent" },
-    completed: { cls: "bg-green-100 text-green-800",   label: "✅ Completed" },
-    sending:   { cls: "bg-blue-100  text-blue-800",    label: "📤 Sending" },
-    queued:    { cls: "bg-blue-100  text-blue-800",    label: "⏳ Queued" },
+    sent: { cls: "bg-green-100 text-green-800", label: "✅ Sent" },
+    completed: { cls: "bg-green-100 text-green-800", label: "✅ Completed" },
+    sending: { cls: "bg-blue-100  text-blue-800", label: "📤 Sending" },
+    queued: { cls: "bg-blue-100  text-blue-800", label: "⏳ Queued" },
     scheduled: { cls: "bg-purple-100 text-purple-800", label: "🕐 Scheduled" },
-    draft:     { cls: "bg-yellow-100 text-yellow-800", label: "📝 Draft" },
-    stopped:   { cls: "bg-gray-100  text-gray-700",    label: "🛑 Stopped" },
-    cancelled: { cls: "bg-gray-100  text-gray-700",    label: "✕ Cancelled" },
-    failed:    { cls: "bg-red-100   text-red-800",     label: "❌ Failed" },
+    draft: { cls: "bg-yellow-100 text-yellow-800", label: "📝 Draft" },
+    stopped: { cls: "bg-gray-100  text-gray-700", label: "🛑 Stopped" },
+    cancelled: { cls: "bg-gray-100  text-gray-700", label: "✕ Cancelled" },
+    failed: { cls: "bg-red-100   text-red-800", label: "❌ Failed" },
     paused: isPausedByError
-      ? { cls: "bg-red-100 text-red-800",   label: "⚠️ Paused — Provider Error" }
+      ? { cls: "bg-red-100 text-red-800", label: "⚠️ Paused — Provider Error" }
       : { cls: "bg-orange-100 text-orange-800", label: "⏸ Paused" },
   };
 
   const cfg = map[status] || map.draft;
   return (
-    <span className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-semibold ${cfg.cls}`}>
+    <span
+      className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-semibold ${cfg.cls}`}
+    >
       {cfg.label}
     </span>
   );
 }
-
- 
 
 const EmailPreview = ({ campaign }) => {
   const [exp, setExp] = useState(false);
@@ -937,7 +1065,9 @@ const EmailPreview = ({ campaign }) => {
   return (
     <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
       <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-gray-700">📩 Email Content</h3>
+        <h3 className="text-sm font-semibold text-gray-700">
+          📩 Email Content
+        </h3>
         <button
           onClick={() => setExp((v) => !v)}
           className="text-xs px-3 py-1.5 border border-gray-200 rounded-lg hover:bg-gray-50 text-gray-600"
@@ -958,7 +1088,10 @@ const EmailPreview = ({ campaign }) => {
 
       {!exp && (
         <div className="px-5 py-3 border-t border-gray-100 text-center">
-          <button onClick={() => setExp(true)} className="text-xs text-blue-600 hover:text-blue-700 font-medium">
+          <button
+            onClick={() => setExp(true)}
+            className="text-xs text-blue-600 hover:text-blue-700 font-medium"
+          >
             Show full email ↓
           </button>
         </div>
@@ -970,7 +1103,9 @@ const EmailPreview = ({ campaign }) => {
 const CampaignDetails = ({ campaign }) => (
   <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
     <div className="px-5 py-4 border-b border-gray-100">
-      <h3 className="text-sm font-semibold text-gray-700">📧 Campaign Details</h3>
+      <h3 className="text-sm font-semibold text-gray-700">
+        📧 Campaign Details
+      </h3>
     </div>
 
     <div className="p-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
@@ -985,7 +1120,10 @@ const CampaignDetails = ({ campaign }) => (
         ["Sent", fmt(campaign?.sent_count)],
         ["Created", fmtD(campaign?.created_at)],
         ["Started", fmtD(campaign?.started_at)],
-        ["Completed", campaign?.completed_at ? fmtD(campaign.completed_at) : "In progress"],
+        [
+          "Completed",
+          campaign?.completed_at ? fmtD(campaign.completed_at) : "In progress",
+        ],
       ].map(([label, value]) => (
         <div key={label}>
           <p className="text-xs font-medium text-gray-400 mb-1">{label}</p>
@@ -1017,7 +1155,9 @@ const ErrState = ({ msg, retry }) => (
   <div className="flex items-center justify-center min-h-[60vh]">
     <div className="text-center max-w-sm">
       <p className="text-4xl mb-3">⚠️</p>
-      <p className="font-semibold text-gray-800 mb-1">Failed to load analytics</p>
+      <p className="font-semibold text-gray-800 mb-1">
+        Failed to load analytics
+      </p>
       <p className="text-sm text-gray-500 mb-4">{msg}</p>
       <button
         onClick={retry}

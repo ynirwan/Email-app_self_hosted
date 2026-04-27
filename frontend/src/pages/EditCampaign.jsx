@@ -1,6 +1,8 @@
-import { useState, useEffect, useCallback } from "react";
+// frontend/src/pages/EditCampaign.jsx
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import API from "../api";
+import ProviderErrorBanner from "../components/ProviderErrorBanner";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 const fmt = (n) => Number(n ?? 0).toLocaleString();
@@ -43,7 +45,11 @@ function StepNav({ current, steps, onGoto, completedSteps }) {
             </button>
             {i < steps.length - 1 && (
               <div
-                className={`h-px w-4 md:w-6 mx-1 ${completedSteps.includes(step.id) ? "bg-green-300" : "bg-gray-200"}`}
+                className={`h-px w-4 md:w-6 mx-1 ${
+                  completedSteps.includes(step.id)
+                    ? "bg-green-300"
+                    : "bg-gray-200"
+                }`}
               />
             )}
           </div>
@@ -53,102 +59,43 @@ function StepNav({ current, steps, onGoto, completedSteps }) {
   );
 }
 
-// ── InputField ────────────────────────────────────────────────────────────────
-function InputField({ label, required, hint, error, children }) {
+// ── Small UI helpers ──────────────────────────────────────────────────────────
+const inputCls = (err) =>
+  `w-full border rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 transition ${
+    err ? "border-red-400 bg-red-50" : "border-gray-200"
+  }`;
+
+function InputField({ label, hint, required, error, children }) {
   return (
-    <div className="space-y-1.5">
-      <label className="flex items-center gap-1.5 text-sm font-semibold text-gray-700">
+    <div>
+      <label className="block text-sm font-medium text-gray-700 mb-1.5">
         {label}
-        {required && <span className="text-red-400">*</span>}
+        {required && <span className="text-red-500 ml-0.5">*</span>}
         {hint && (
-          <span className="text-xs font-normal text-gray-400 ml-1">
-            — {hint}
+          <span className="text-gray-400 font-normal ml-1 text-xs">
+            ({hint})
           </span>
         )}
       </label>
       {children}
-      {error && <p className="text-xs text-red-500">⚠ {error}</p>}
+      {error && <p className="text-xs text-red-500 mt-1">{error}</p>}
     </div>
   );
 }
 
-const inputCls = (error) =>
-  `w-full px-3.5 py-2.5 rounded-xl border text-sm transition-all focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-indigo-400 ${
-    error
-      ? "border-red-300 bg-red-50"
-      : "border-gray-200 bg-white hover:border-gray-300"
-  }`;
-
-// ── TemplateCard ──────────────────────────────────────────────────────────────
-function TemplateCard({ template, selected, onClick }) {
-  const mode = template.content_json?.mode || "legacy";
-  const modeColors = {
-    html: "bg-blue-100 text-blue-700",
-    "drag-drop": "bg-purple-100 text-purple-700",
-    visual: "bg-green-100 text-green-700",
-    legacy: "bg-gray-100 text-gray-600",
-  };
+function ListItem({ name, count, activeCount, selected, onClick }) {
   return (
     <button
       onClick={onClick}
-      className={`w-full text-left p-4 rounded-xl border-2 transition-all hover:shadow-md group ${
-        selected
-          ? "border-indigo-500 bg-indigo-50 shadow-indigo-100 shadow-lg"
-          : "border-gray-200 hover:border-indigo-300 bg-white"
-      }`}
-    >
-      <div className="flex items-start justify-between gap-2">
-        <div className="flex-1 min-w-0">
-          <p
-            className={`text-sm font-semibold truncate ${selected ? "text-indigo-800" : "text-gray-800"}`}
-          >
-            {template.name || "Untitled"}
-          </p>
-          {template.subject && (
-            <p className="text-xs text-gray-400 truncate mt-0.5">
-              {template.subject}
-            </p>
-          )}
-        </div>
-        <div className="flex items-center gap-1.5 flex-shrink-0">
-          <span
-            className={`text-xs px-2 py-0.5 rounded-full font-medium ${modeColors[mode]}`}
-          >
-            {mode}
-          </span>
-          {selected && <span className="text-indigo-600">✓</span>}
-        </div>
-      </div>
-    </button>
-  );
-}
-
-// ── AudienceCard ──────────────────────────────────────────────────────────────
-function AudienceCard({
-  name,
-  count,
-  activeCount,
-  selected,
-  onClick,
-  type = "list",
-}) {
-  return (
-    <button
-      onClick={onClick}
-      className={`flex items-center gap-3 w-full p-3 rounded-xl border-2 text-left transition-all ${
+      className={`w-full flex items-center justify-between px-4 py-3 rounded-xl border-2 text-left transition-all ${
         selected
           ? "border-indigo-500 bg-indigo-50"
-          : "border-gray-200 hover:border-gray-300 hover:bg-gray-50 bg-white"
+          : "border-gray-200 hover:border-gray-300 bg-white"
       }`}
     >
-      <div
-        className={`w-8 h-8 rounded-lg flex items-center justify-center text-sm flex-shrink-0 ${selected ? "bg-indigo-100" : "bg-gray-100"}`}
-      >
-        {type === "list" ? "📋" : "🎯"}
-      </div>
-      <div className="flex-1 min-w-0">
+      <div className="min-w-0 flex-1">
         <p
-          className={`text-sm font-semibold truncate ${selected ? "text-indigo-800" : "text-gray-800"}`}
+          className={`text-sm font-medium truncate ${selected ? "text-indigo-800" : "text-gray-800"}`}
         >
           {name}
         </p>
@@ -170,6 +117,23 @@ function AudienceCard({
   );
 }
 
+// ── Locked step overlay (for limited / sender_only edit modes) ────────────────
+function LockedOverlay({ locked, children }) {
+  if (!locked) return children;
+  return (
+    <div className="relative">
+      <div className="pointer-events-none opacity-40 select-none">
+        {children}
+      </div>
+      <div className="absolute inset-0 flex items-center justify-center rounded-xl">
+        <span className="bg-white border border-gray-300 rounded-lg px-4 py-2 text-sm text-gray-500 font-medium shadow">
+          🔒 Locked while campaign is paused
+        </span>
+      </div>
+    </div>
+  );
+}
+
 // ── Main EditCampaign ─────────────────────────────────────────────────────────
 export default function EditCampaign() {
   const navigate = useNavigate();
@@ -182,7 +146,11 @@ export default function EditCampaign() {
   const [errors, setErrors] = useState({});
   const [globalError, setGlobalError] = useState("");
   const [saveSuccess, setSaveSuccess] = useState(false);
+
+  // ── NEW: editMode state ───────────────────────────────────────────────────
   const [originalStatus, setOriginalStatus] = useState("draft");
+  const [originalPauseReason, setOriginalPauseReason] = useState("");
+  const [providerError, setProviderError] = useState(null);
 
   // Data
   const [lists, setLists] = useState([]);
@@ -227,7 +195,34 @@ export default function EditCampaign() {
     (t) => (t._id || t.id) === form.template_id,
   );
 
-  // ── Load campaign ─────────────────────────────────────────────────────────
+  // ── editMode derived from originalStatus + originalPauseReason (NEW 6c) ──
+  const editMode = useMemo(() => {
+    const LOCKED = [
+      "sending",
+      "queued",
+      "completed",
+      "sent",
+      "stopped",
+      "cancelled",
+      "failed",
+    ];
+    if (LOCKED.includes(originalStatus)) return "readonly";
+    if (originalStatus === "paused") {
+      return originalPauseReason === "provider_error_auto_pause"
+        ? "sender_only"
+        : "limited";
+    }
+    return "full";
+  }, [originalStatus, originalPauseReason]);
+
+  // ── Redirect readonly campaigns (NEW 6d) ──────────────────────────────────
+  useEffect(() => {
+    if (!loadingCampaign && editMode === "readonly") {
+      navigate(`/analytics/campaign/${campaignId}`, { replace: true });
+    }
+  }, [editMode, loadingCampaign, campaignId, navigate]);
+
+  // ── Load campaign + supporting data (NEW: 6a + 6b) ───────────────────────
   useEffect(() => {
     setLoadingCampaign(true);
     Promise.all([
@@ -239,7 +234,12 @@ export default function EditCampaign() {
     ])
       .then(([campRes, listsRes, segRes, tplRes, spRes]) => {
         const camp = campRes.data;
+
+        // ── NEW (6a + 6b): store editMode-driving state ───────────────────
         setOriginalStatus(camp.status || "draft");
+        setOriginalPauseReason(camp.pause_reason || "");
+        setProviderError(camp.provider_error || null);
+
         setForm({
           title: camp.title || "",
           subject: camp.subject || "",
@@ -258,7 +258,6 @@ export default function EditCampaign() {
         setSegments(Array.isArray(segData) ? segData : []);
         setTemplates(Array.isArray(tplRes.data) ? tplRes.data : []);
         setSenderProfiles(Array.isArray(spRes.data) ? spRes.data : []);
-        // Mark all steps as completed (existing campaign)
         setCompletedSteps([1, 2, 3, 4]);
       })
       .catch((err) =>
@@ -267,7 +266,7 @@ export default function EditCampaign() {
       .finally(() => setLoadingCampaign(false));
   }, [campaignId]);
 
-  // Template preview + fields
+  // ── Template preview + fields ─────────────────────────────────────────────
   useEffect(() => {
     if (!selectedTemplate) {
       setPreviewHtml("");
@@ -283,7 +282,6 @@ export default function EditCampaign() {
       else if (cj.mode === "visual" && cj.content) html = cj.content;
     }
     setPreviewHtml(html || "<p>No preview available</p>");
-
     setFieldsLoading(true);
     API.get(`/templates/${selectedTemplate._id || selectedTemplate.id}/fields`)
       .then((r) => setDynamicFields(Array.isArray(r.data) ? r.data : []))
@@ -291,7 +289,7 @@ export default function EditCampaign() {
       .finally(() => setFieldsLoading(false));
   }, [selectedTemplate]);
 
-  // Available fields from audience
+  // ── Available fields from audience ────────────────────────────────────────
   useEffect(() => {
     if (!form.target_lists.length && !form.target_segments.length) {
       setAvailableFields({ universal: ["email"], standard: [], custom: [] });
@@ -309,7 +307,7 @@ export default function EditCampaign() {
       .catch(() => {});
   }, [form.target_lists, form.target_segments]);
 
-  // Auto-map new fields when template changes (keep existing mappings)
+  // ── Auto-map new fields when template changes ────────────────────────────
   useEffect(() => {
     if (!dynamicFields.length) return;
     const norm = (s) => (s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -331,7 +329,7 @@ export default function EditCampaign() {
     setForm((prev) => {
       const next = { ...prev.field_map };
       dynamicFields.forEach((field) => {
-        if (next[field]?.trim()) return; // keep existing mapping
+        if (next[field]?.trim()) return;
         const n = norm(field);
         if (lookup[n]) {
           next[field] = lookup[n];
@@ -408,11 +406,22 @@ export default function EditCampaign() {
   const unmappedCount = dynamicFields.filter(
     (f) => !form.field_map[f]?.trim(),
   ).length;
-
   const isNonDraft =
     originalStatus !== "draft" && originalStatus !== "scheduled";
 
-  // ── Loading state ─────────────────────────────────────────────────────────
+  // ── Save button label (NEW 6g) ────────────────────────────────────────────
+  const saveLabel =
+    editMode === "sender_only"
+      ? "Save Sender Settings"
+      : editMode === "limited"
+        ? "Save Changes"
+        : submitting
+          ? "⏳ Saving…"
+          : saveSuccess
+            ? "✅ Saved!"
+            : "💾 Save Changes";
+
+  // ── Loading skeleton ──────────────────────────────────────────────────────
   if (loadingCampaign) {
     return (
       <div className="max-w-3xl mx-auto space-y-6 animate-pulse">
@@ -442,7 +451,8 @@ export default function EditCampaign() {
         </div>
       </div>
 
-      {isNonDraft && (
+      {/* Non-draft warning — only for non-error states (NEW 6e replaces this for error-paused) */}
+      {isNonDraft && editMode !== "sender_only" && editMode !== "limited" && (
         <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-start gap-3">
           <span className="text-amber-500 text-lg flex-shrink-0">⚠️</span>
           <div>
@@ -457,52 +467,22 @@ export default function EditCampaign() {
         </div>
       )}
 
-      <InputField label="Campaign Title" required error={errors.title}>
-        <input
-          className={inputCls(errors.title)}
-          placeholder="e.g., April Newsletter, Product Launch..."
-          value={form.title}
-          onChange={(e) => set("title", e.target.value)}
-          autoFocus
-        />
-      </InputField>
-
-      <InputField
-        label="Subject Line"
-        required
-        hint="what subscribers see in their inbox"
-        error={errors.subject}
-      >
-        <input
-          className={inputCls(errors.subject)}
-          placeholder="e.g., 🚀 Big news — you're going to love this"
-          value={form.subject}
-          onChange={(e) => set("subject", e.target.value)}
-        />
-        <p className="text-xs text-gray-400">
-          {form.subject.length} chars
-          {form.subject.length > 60 && " · may truncate on mobile"}
-        </p>
-      </InputField>
-
+      {/* Sender profiles */}
       {senderProfiles.length > 0 && (
-        <div className="bg-gray-50 rounded-xl p-4 border border-gray-200">
-          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
-            Quick fill from sender profile
+        <div>
+          <p className="text-sm font-medium text-gray-700 mb-2">
+            Saved Sender Profiles
           </p>
           <div className="flex flex-wrap gap-2">
             {senderProfiles.map((sp) => (
               <button
-                key={sp._id || sp.id}
+                key={sp._id || sp.name}
                 onClick={() => {
-                  set("sender_name", sp.name || sp.sender_name || "");
-                  set("sender_email", sp.email || sp.sender_email || "");
-                  set(
-                    "reply_to",
-                    sp.reply_to || sp.email || sp.sender_email || "",
-                  );
+                  set("sender_name", sp.sender_name || sp.name || "");
+                  set("sender_email", sp.sender_email || sp.email || "");
+                  set("reply_to", sp.reply_to || "");
                 }}
-                className="px-3 py-1.5 text-xs font-medium bg-white border border-gray-200 rounded-lg hover:border-indigo-300 hover:text-indigo-700 transition-colors"
+                className="text-xs px-3 py-1.5 border border-gray-200 rounded-lg hover:border-indigo-400 hover:bg-indigo-50 transition-colors"
               >
                 {sp.name || sp.sender_name}
               </button>
@@ -511,6 +491,31 @@ export default function EditCampaign() {
         </div>
       )}
 
+      <div className="space-y-4">
+        <InputField label="Campaign Title" required error={errors.title}>
+          {/* NEW 6h: disabled in sender_only mode */}
+          <input
+            className={`${inputCls(errors.title)} ${editMode === "sender_only" ? "bg-gray-100 cursor-not-allowed" : ""}`}
+            placeholder="e.g., Summer Sale 2025"
+            value={form.title}
+            onChange={(e) => set("title", e.target.value)}
+            disabled={editMode === "sender_only"}
+          />
+        </InputField>
+
+        <InputField label="Subject Line" required error={errors.subject}>
+          {/* NEW 6h: disabled in sender_only mode */}
+          <input
+            className={`${inputCls(errors.subject)} ${editMode === "sender_only" ? "bg-gray-100 cursor-not-allowed" : ""}`}
+            placeholder="e.g., Don't miss our biggest sale ever 🎉"
+            value={form.subject}
+            onChange={(e) => set("subject", e.target.value)}
+            disabled={editMode === "sender_only"}
+          />
+        </InputField>
+      </div>
+
+      {/* Sender fields — always editable in sender_only */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <InputField label="Sender Name" required error={errors.sender_name}>
           <input
@@ -559,45 +564,31 @@ export default function EditCampaign() {
         </div>
         {totalAudienceSize > 0 && (
           <div className="bg-indigo-50 border border-indigo-200 rounded-xl px-4 py-2 text-center">
-            <p className="text-xl font-bold text-indigo-700">
+            <p className="text-lg font-bold text-indigo-800">
               {fmt(totalAudienceSize)}
             </p>
-            <p className="text-xs text-indigo-500">estimated recipients</p>
+            <p className="text-xs text-indigo-600">recipients</p>
           </div>
         )}
       </div>
 
       {errors.audience && (
-        <div className="bg-red-50 border border-red-200 rounded-xl p-3 text-sm text-red-700">
-          ⚠ {errors.audience}
-        </div>
+        <p className="text-sm text-red-500 bg-red-50 border border-red-200 rounded-xl px-4 py-3">
+          {errors.audience}
+        </p>
       )}
 
+      {/* Lists */}
       {lists.length > 0 && (
         <div>
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="text-sm font-semibold text-gray-700">
-              📋 Subscriber Lists
-              {form.target_lists.length > 0 && (
-                <span className="ml-2 px-2 py-0.5 bg-indigo-100 text-indigo-700 rounded-full text-xs">
-                  {form.target_lists.length} selected
-                </span>
-              )}
-            </h3>
-            {form.target_lists.length > 0 && (
-              <button
-                onClick={() => set("target_lists", [])}
-                className="text-xs text-gray-400 hover:text-red-500"
-              >
-                Clear
-              </button>
-            )}
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5 max-h-64 overflow-y-auto pr-1">
+          <p className="text-sm font-semibold text-gray-700 mb-2">
+            Subscriber Lists ({lists.length})
+          </p>
+          <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
             {lists.map((l) => {
               const id = l._id || l.name;
               return (
-                <AudienceCard
+                <ListItem
                   key={id}
                   name={l.name || l._id}
                   count={l.total_count || l.count}
@@ -611,7 +602,6 @@ export default function EditCampaign() {
                         : [...form.target_lists, id],
                     )
                   }
-                  type="list"
                 />
               );
             })}
@@ -619,19 +609,15 @@ export default function EditCampaign() {
         </div>
       )}
 
+      {/* Segments */}
       {segments.length > 0 && (
         <div>
-          <h3 className="text-sm font-semibold text-gray-700 mb-3">
-            🎯 Segments
-            {form.target_segments.length > 0 && (
-              <span className="ml-2 px-2 py-0.5 bg-indigo-100 text-indigo-700 rounded-full text-xs">
-                {form.target_segments.length} selected
-              </span>
-            )}
-          </h3>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5 max-h-52 overflow-y-auto pr-1">
+          <p className="text-sm font-semibold text-gray-700 mb-2">
+            Segments ({segments.length})
+          </p>
+          <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
             {segments.map((sg) => (
-              <AudienceCard
+              <ListItem
                 key={sg._id}
                 name={sg.name}
                 count={sg.subscriber_count}
@@ -644,10 +630,15 @@ export default function EditCampaign() {
                       : [...form.target_segments, sg._id],
                   )
                 }
-                type="segment"
               />
             ))}
           </div>
+        </div>
+      )}
+
+      {lists.length === 0 && segments.length === 0 && (
+        <div className="text-center py-8 text-gray-400">
+          <p>No lists or segments found.</p>
         </div>
       )}
     </div>
@@ -655,233 +646,253 @@ export default function EditCampaign() {
 
   const renderStep3 = () => (
     <div className="space-y-6">
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-3 mb-2">
         <div className="w-10 h-10 bg-purple-100 rounded-xl flex items-center justify-center text-xl">
           🎨
         </div>
         <div>
           <h2 className="text-lg font-bold text-gray-900">Email Template</h2>
           <p className="text-sm text-gray-500">
-            Select the template to use for this campaign
+            Pick the template for this campaign
           </p>
         </div>
       </div>
 
       {errors.template_id && (
-        <div className="bg-red-50 border border-red-200 rounded-xl p-3 text-sm text-red-700">
-          ⚠ {errors.template_id}
-        </div>
+        <p className="text-sm text-red-500 bg-red-50 border border-red-200 rounded-xl px-4 py-3">
+          {errors.template_id}
+        </p>
       )}
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-72 overflow-y-auto pr-1">
-        {templates.map((t) => (
-          <TemplateCard
-            key={t._id || t.id}
-            template={t}
-            selected={form.template_id === (t._id || t.id)}
-            onClick={() => set("template_id", t._id || t.id)}
-          />
-        ))}
-      </div>
-
-      {selectedTemplate && previewHtml && (
-        <div className="border border-gray-200 rounded-xl overflow-hidden">
-          <div className="flex items-center justify-between px-4 py-3 bg-gray-50 border-b border-gray-200">
-            <p className="text-sm font-semibold text-gray-700">
-              Preview — {selectedTemplate.name}
-            </p>
-            <div className="flex gap-1">
-              {["desktop", "tablet", "mobile"].map((m) => (
-                <button
-                  key={m}
-                  onClick={() => setPreviewMode(m)}
-                  className={`px-2.5 py-1 text-xs rounded-lg font-medium transition-all ${
-                    previewMode === m
-                      ? "bg-indigo-600 text-white"
-                      : "text-gray-400 hover:bg-gray-200"
-                  }`}
-                >
-                  {m === "desktop" ? "🖥" : m === "tablet" ? "📟" : "📱"}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div className="bg-gray-100 p-4 flex justify-center overflow-hidden max-h-56">
-            <div
-              className={`bg-white shadow-sm overflow-auto ${
-                previewMode === "desktop"
-                  ? "w-full"
-                  : previewMode === "tablet"
-                    ? "w-[480px]"
-                    : "w-[320px]"
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-72 overflow-y-auto pr-1">
+        {templates.map((t) => {
+          const tid = t._id || t.id;
+          const isSelected = form.template_id === tid;
+          return (
+            <button
+              key={tid}
+              onClick={() => set("template_id", tid)}
+              className={`text-left p-4 rounded-xl border-2 transition-all ${
+                isSelected
+                  ? "border-indigo-500 bg-indigo-50"
+                  : "border-gray-200 hover:border-gray-300"
               }`}
-              style={{ maxHeight: "200px" }}
-              dangerouslySetInnerHTML={{ __html: previewHtml }}
-            />
-          </div>
-        </div>
-      )}
+            >
+              <p
+                className={`text-sm font-semibold truncate ${isSelected ? "text-indigo-800" : "text-gray-800"}`}
+              >
+                {t.name || "Untitled"}
+              </p>
+              {t.subject && (
+                <p className="text-xs text-gray-500 truncate mt-0.5">
+                  {t.subject}
+                </p>
+              )}
+              {isSelected && (
+                <span className="inline-block mt-2 text-xs bg-indigo-200 text-indigo-800 px-2 py-0.5 rounded-full">
+                  ✓ Selected
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 
   const renderStep4 = () => (
     <div className="space-y-6">
-      <div className="flex items-center gap-3">
-        <div className="w-10 h-10 bg-amber-100 rounded-xl flex items-center justify-center text-xl">
+      <div className="flex items-center gap-3 mb-2">
+        <div className="w-10 h-10 bg-blue-100 rounded-xl flex items-center justify-center text-xl">
           🔗
         </div>
         <div>
           <h2 className="text-lg font-bold text-gray-900">Field Mapping</h2>
           <p className="text-sm text-gray-500">
-            Map template variables to subscriber data
+            Connect template variables to subscriber data
           </p>
         </div>
       </div>
 
-      {fieldsLoading ? (
-        <div className="space-y-3">
-          {[...Array(3)].map((_, i) => (
-            <div
-              key={i}
-              className="h-20 bg-gray-100 rounded-xl animate-pulse"
-            />
-          ))}
+      {fieldsLoading && (
+        <div className="text-center py-8 text-gray-400 animate-pulse">
+          Analysing template fields…
         </div>
-      ) : dynamicFields.length === 0 ? (
-        <div className="bg-green-50 border border-green-200 rounded-xl p-5 text-center">
-          <p className="text-2xl mb-2">✅</p>
-          <p className="text-sm font-semibold text-green-800">
-            No dynamic fields
-          </p>
-          <p className="text-xs text-green-600 mt-1">
-            This template has no personalization variables.
-          </p>
+      )}
+
+      {!fieldsLoading && dynamicFields.length === 0 && (
+        <div className="text-center py-8 text-gray-400">
+          <p>No dynamic fields found in the selected template.</p>
         </div>
-      ) : (
-        <>
+      )}
+
+      {!fieldsLoading && dynamicFields.length > 0 && (
+        <div className="space-y-4">
           {unmappedCount > 0 && (
-            <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 flex items-center gap-2 text-sm text-amber-800">
-              ⚠ {unmappedCount} field{unmappedCount > 1 ? "s" : ""} still need
-              mapping
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-sm text-amber-700">
+              ⚠️ {unmappedCount} field{unmappedCount !== 1 ? "s" : ""} not yet
+              mapped. Unmapped fields will render as empty.
             </div>
           )}
-          <div className="space-y-3">
-            {dynamicFields.map((field) => {
-              const hasError = errors[`field_${field}`];
-              const isMapped = !!form.field_map[field]?.trim();
-              return (
-                <div
-                  key={field}
-                  className={`rounded-xl border-2 p-4 transition-all ${
-                    hasError
-                      ? "border-red-200 bg-red-50"
-                      : isMapped
-                        ? "border-green-200 bg-green-50"
-                        : "border-gray-200 bg-white"
-                  }`}
-                >
-                  <div className="flex items-center justify-between mb-2.5">
-                    <code
-                      className={`text-sm font-mono font-bold px-2 py-0.5 rounded-lg ${isMapped ? "bg-green-100 text-green-800" : "bg-gray-100 text-gray-700"}`}
-                    >
-                      {`{{${field}}}`}
-                    </code>
-                    {isMapped && !hasError && (
-                      <span className="text-xs text-green-600 font-medium">
-                        ✓ Mapped
-                      </span>
-                    )}
-                    {hasError && (
-                      <span className="text-xs text-red-500">⚠ Required</span>
-                    )}
-                  </div>
-                  <select
-                    value={form.field_map[field] || ""}
-                    onChange={(e) => setMap(field, e.target.value)}
-                    className={`w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 ${hasError ? "border-red-300" : "border-gray-200"}`}
-                  >
-                    <option value="">— Select a data source —</option>
-                    <option value="__DEFAULT__">
-                      Use fallback / default value
-                    </option>
-                    <option value="__EMPTY__">Leave empty</option>
-                    {availableFields.universal.length > 0 && (
-                      <optgroup label="Universal">
-                        {availableFields.universal.map((f) => (
-                          <option key={f} value={f}>
-                            {f}
-                          </option>
-                        ))}
-                      </optgroup>
-                    )}
-                    {availableFields.standard.length > 0 && (
-                      <optgroup label="Standard Fields">
-                        {availableFields.standard.map((f) => (
-                          <option key={f} value={`standard.${f}`}>
-                            {f}
-                          </option>
-                        ))}
-                      </optgroup>
-                    )}
-                    {availableFields.custom.length > 0 && (
-                      <optgroup label="Custom Fields">
-                        {availableFields.custom.map((f) => (
-                          <option key={f} value={`custom.${f}`}>
-                            {f}
-                          </option>
-                        ))}
-                      </optgroup>
-                    )}
-                  </select>
-                  {form.field_map[field] &&
-                    form.field_map[field] !== "__EMPTY__" && (
-                      <input
-                        type="text"
-                        placeholder={
-                          form.field_map[field] === "__DEFAULT__"
-                            ? `Default value for {{${field}}}`
-                            : "Fallback if subscriber's value is empty"
-                        }
-                        value={form.fallback_values[field] || ""}
-                        onChange={(e) => setFallback(field, e.target.value)}
-                        className="mt-2 w-full px-3 py-2 border border-indigo-200 bg-indigo-50 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
-                      />
-                    )}
+          {dynamicFields.map((field) => {
+            const allOptions = [
+              ...availableFields.universal,
+              ...availableFields.standard.map((f) => `standard.${f}`),
+              ...availableFields.custom.map((f) => `custom.${f}`),
+            ];
+            return (
+              <div key={field} className="flex items-center gap-3 flex-wrap">
+                <div className="bg-gray-100 border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono text-gray-800 flex-shrink-0">
+                  {`{{${field}}}`}
                 </div>
-              );
-            })}
-          </div>
-
-          <details className="bg-gray-50 rounded-xl border border-gray-200">
-            <summary className="px-4 py-3 text-xs text-gray-500 cursor-pointer font-semibold">
-              Available subscriber fields
-            </summary>
-            <div className="px-4 pb-4 space-y-1 text-xs text-gray-500">
-              <p>
-                Universal: {availableFields.universal.join(", ") || "email"}
-              </p>
-              <p>Standard: {availableFields.standard.join(", ") || "none"}</p>
-              <p>Custom: {availableFields.custom.join(", ") || "none"}</p>
-            </div>
-          </details>
-        </>
+                <span className="text-gray-400">→</span>
+                <select
+                  value={form.field_map[field] || ""}
+                  onChange={(e) => setMap(field, e.target.value)}
+                  className="flex-1 border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                >
+                  <option value="">— not mapped —</option>
+                  <option value="__EMPTY__">Leave empty</option>
+                  <option value="__DEFAULT__">Use fallback value</option>
+                  <optgroup label="Universal">
+                    {availableFields.universal.map((f) => (
+                      <option key={f} value={f}>
+                        {f}
+                      </option>
+                    ))}
+                  </optgroup>
+                  {availableFields.standard.length > 0 && (
+                    <optgroup label="Standard">
+                      {availableFields.standard.map((f) => (
+                        <option key={f} value={`standard.${f}`}>
+                          {f}
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
+                  {availableFields.custom.length > 0 && (
+                    <optgroup label="Custom">
+                      {availableFields.custom.map((f) => (
+                        <option key={f} value={`custom.${f}`}>
+                          {f}
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
+                </select>
+                <input
+                  type="text"
+                  placeholder="Fallback…"
+                  value={form.fallback_values[field] || ""}
+                  onChange={(e) => setFallback(field, e.target.value)}
+                  className="w-32 border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                />
+              </div>
+            );
+          })}
+        </div>
       )}
     </div>
   );
 
   const renderStep5 = () => (
     <div className="space-y-6">
-      <div className="flex items-center gap-3">
-        <div className="w-10 h-10 bg-rose-100 rounded-xl flex items-center justify-center text-xl">
+      <div className="flex items-center gap-3 mb-2">
+        <div className="w-10 h-10 bg-emerald-100 rounded-xl flex items-center justify-center text-xl">
           💾
         </div>
         <div>
           <h2 className="text-lg font-bold text-gray-900">Review & Save</h2>
           <p className="text-sm text-gray-500">
-            Confirm your changes before saving
+            Check everything looks right before saving
           </p>
         </div>
       </div>
+
+      {/* Summary */}
+      <div className="bg-gray-50 rounded-xl p-5 space-y-3 text-sm">
+        {[
+          ["Title", form.title],
+          ["Subject", form.subject],
+          [
+            "Sender",
+            form.sender_name
+              ? `${form.sender_name} <${form.sender_email}>`
+              : form.sender_email,
+          ],
+          ["Reply-To", form.reply_to || form.sender_email],
+          [
+            "Lists",
+            form.target_lists.length
+              ? `${form.target_lists.length} list(s)`
+              : "—",
+          ],
+          [
+            "Segments",
+            form.target_segments.length
+              ? `${form.target_segments.length} segment(s)`
+              : "—",
+          ],
+          [
+            "Template",
+            templates.find((t) => (t._id || t.id) === form.template_id)?.name ||
+              "—",
+          ],
+          [
+            "Mapped fields",
+            `${dynamicFields.length - unmappedCount} / ${dynamicFields.length}`,
+          ],
+        ].map(([label, value]) => (
+          <div key={label} className="flex gap-3">
+            <span className="text-gray-500 w-28 flex-shrink-0">{label}</span>
+            <span className="text-gray-900 font-medium">{value}</span>
+          </div>
+        ))}
+      </div>
+
+      {/* Preview */}
+      {previewHtml && (
+        <div>
+          <div className="flex items-center gap-2 mb-3">
+            <p className="text-sm font-semibold text-gray-700">Preview</p>
+            <div className="flex gap-1">
+              {["desktop", "tablet", "mobile"].map((m) => (
+                <button
+                  key={m}
+                  onClick={() => setPreviewMode(m)}
+                  className={`text-xs px-2.5 py-1 rounded-lg border transition-all ${
+                    previewMode === m
+                      ? "border-indigo-400 bg-indigo-50 text-indigo-700"
+                      : "border-gray-200 text-gray-500 hover:bg-gray-50"
+                  }`}
+                >
+                  {m === "desktop" ? "🖥" : m === "tablet" ? "📱" : "📲"}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="border border-gray-200 rounded-xl overflow-hidden">
+            <div
+              className="mx-auto transition-all duration-300"
+              style={{
+                maxWidth:
+                  previewMode === "desktop"
+                    ? "100%"
+                    : previewMode === "tablet"
+                      ? 640
+                      : 375,
+              }}
+            >
+              <iframe
+                srcDoc={previewHtml}
+                title="Email Preview"
+                className="w-full border-0"
+                style={{ height: 400 }}
+              />
+            </div>
+          </div>
+        </div>
+      )}
 
       {globalError && (
         <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-sm text-red-700">
@@ -889,151 +900,22 @@ export default function EditCampaign() {
         </div>
       )}
 
-      {saveSuccess && (
-        <div className="bg-green-50 border border-green-200 rounded-xl p-4 text-sm text-green-700 flex items-center gap-2">
-          ✅ Campaign saved! Redirecting…
-        </div>
-      )}
-
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div className="bg-gray-50 rounded-xl border border-gray-200 p-4 space-y-3">
-          <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider">
-            Campaign Details
-          </h3>
-          {[
-            ["Title", form.title],
-            ["Subject", form.subject],
-            ["Sender", `${form.sender_name} <${form.sender_email}>`],
-            ["Reply-To", form.reply_to || form.sender_email || "—"],
-            ["Status", originalStatus],
-          ].map(([label, value]) => (
-            <div key={label} className="flex gap-3">
-              <span className="text-xs text-gray-400 w-16 flex-shrink-0">
-                {label}
-              </span>
-              <span className="text-xs font-medium text-gray-800 break-all capitalize">
-                {value || "—"}
-              </span>
-            </div>
-          ))}
-        </div>
-
-        <div className="bg-gray-50 rounded-xl border border-gray-200 p-4 space-y-3">
-          <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider">
-            Audience & Template
-          </h3>
-          <div className="flex gap-3">
-            <span className="text-xs text-gray-400 w-16 flex-shrink-0">
-              Lists
-            </span>
-            <span className="text-xs font-medium text-gray-800">
-              {form.target_lists.length ? form.target_lists.join(", ") : "None"}
-            </span>
-          </div>
-          {form.target_segments.length > 0 && (
-            <div className="flex gap-3">
-              <span className="text-xs text-gray-400 w-16 flex-shrink-0">
-                Segments
-              </span>
-              <span className="text-xs font-medium text-gray-800">
-                {form.target_segments.length} selected
-              </span>
-            </div>
-          )}
-          <div className="flex gap-3">
-            <span className="text-xs text-gray-400 w-16 flex-shrink-0">
-              Template
-            </span>
-            <span className="text-xs font-medium text-gray-800">
-              {selectedTemplate?.name || "—"}
-            </span>
-          </div>
-          <div className="flex gap-3">
-            <span className="text-xs text-gray-400 w-16 flex-shrink-0">
-              Recipients
-            </span>
-            <span className="text-xs font-bold text-indigo-700">
-              {fmt(totalAudienceSize)}
-            </span>
-          </div>
-          <div className="flex gap-3">
-            <span className="text-xs text-gray-400 w-16 flex-shrink-0">
-              Fields
-            </span>
-            <span className="text-xs font-medium text-gray-800">
-              {dynamicFields.length} variable
-              {dynamicFields.length !== 1 ? "s" : ""}
-              {unmappedCount > 0
-                ? `, ${unmappedCount} unmapped`
-                : " (all mapped)"}
-            </span>
-          </div>
-        </div>
+      <div className="flex justify-end">
+        <button
+          onClick={handleSave}
+          disabled={submitting || saveSuccess}
+          className="px-8 py-3 bg-indigo-600 text-white font-bold text-sm rounded-xl hover:bg-indigo-700 shadow-md shadow-indigo-200 disabled:opacity-60 transition-all"
+        >
+          {saveLabel}
+        </button>
       </div>
 
-      {previewHtml && (
-        <div className="border border-gray-200 rounded-xl overflow-hidden">
-          <div className="px-4 py-3 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
-            <p className="text-sm font-semibold text-gray-700">Email Preview</p>
-            <div className="flex gap-1">
-              {["desktop", "tablet", "mobile"].map((m) => (
-                <button
-                  key={m}
-                  onClick={() => setPreviewMode(m)}
-                  className={`px-2.5 py-1 text-xs rounded-lg font-medium ${previewMode === m ? "bg-indigo-600 text-white" : "text-gray-400 hover:bg-gray-200"}`}
-                >
-                  {m === "desktop" ? "🖥" : m === "tablet" ? "📟" : "📱"}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div
-            className="bg-gray-100 p-4 flex justify-center overflow-hidden"
-            style={{ maxHeight: "260px" }}
-          >
-            <div
-              className={`bg-white shadow-sm overflow-auto ${
-                previewMode === "desktop"
-                  ? "w-full"
-                  : previewMode === "tablet"
-                    ? "w-[480px]"
-                    : "w-[320px]"
-              }`}
-              style={{ maxHeight: "220px" }}
-              dangerouslySetInnerHTML={{ __html: previewHtml }}
-            />
-          </div>
-        </div>
+      {isNonDraft && editMode === "full" && (
+        <p className="text-xs text-amber-600 text-center">
+          ⚠ This campaign is "{originalStatus}" — changes update metadata only.
+          Sent emails are unaffected.
+        </p>
       )}
-
-      {/* Save CTA */}
-      <div className="bg-gradient-to-br from-indigo-50 to-purple-50 border border-indigo-200 rounded-2xl p-6">
-        <div className="flex flex-col sm:flex-row gap-3">
-          <button
-            onClick={() => navigate("/campaigns")}
-            className="flex-1 py-3 px-6 bg-white border-2 border-gray-200 text-gray-700 font-semibold text-sm rounded-xl hover:border-gray-300 hover:bg-gray-50 transition-all"
-          >
-            ← Cancel
-          </button>
-          <button
-            onClick={handleSave}
-            disabled={submitting || saveSuccess}
-            className="flex-1 py-3 px-6 bg-indigo-600 text-white font-bold text-sm rounded-xl hover:bg-indigo-700 shadow-lg shadow-indigo-200 transition-all disabled:opacity-50"
-          >
-            {submitting
-              ? "⏳ Saving..."
-              : saveSuccess
-                ? "✅ Saved!"
-                : "💾 Save Changes"}
-          </button>
-        </div>
-        {isNonDraft && (
-          <p className="text-xs text-amber-600 mt-3 text-center">
-            ⚠ This campaign is "{originalStatus}" — changes will update
-            metadata only. Sent emails are unaffected.
-          </p>
-        )}
-      </div>
     </div>
   );
 
@@ -1045,6 +927,7 @@ export default function EditCampaign() {
     renderStep5,
   ];
 
+  // ── Main render ───────────────────────────────────────────────────────────
   return (
     <div className="max-w-3xl mx-auto">
       {/* Header */}
@@ -1061,11 +944,16 @@ export default function EditCampaign() {
                         originalStatus === "sent"
                       ? "bg-green-100 text-green-800"
                       : originalStatus === "paused"
-                        ? "bg-orange-100 text-orange-800"
+                        ? originalPauseReason === "provider_error_auto_pause"
+                          ? "bg-red-100 text-red-800"
+                          : "bg-orange-100 text-orange-800"
                         : "bg-gray-100 text-gray-600"
                 }`}
               >
-                {originalStatus}
+                {originalStatus === "paused" &&
+                originalPauseReason === "provider_error_auto_pause"
+                  ? "⚠️ Paused — Error"
+                  : originalStatus}
               </span>
             )}
           </div>
@@ -1081,49 +969,118 @@ export default function EditCampaign() {
         </button>
       </div>
 
-      {/* Step nav */}
-      <div className="mb-8">
-        <StepNav
-          current={step}
-          steps={STEPS}
-          onGoto={(s) => setStep(s)}
-          completedSteps={completedSteps}
-        />
-      </div>
+      {/* NEW (6e): Edit-mode banners above the step nav ─────────────────────── */}
+      {editMode === "sender_only" && (
+        <>
+          <ProviderErrorBanner
+            providerError={providerError}
+            isCampaign={true}
+            campaignId={campaignId}
+            onFixed={() => {
+              // Re-fetch so providerError clears and banner updates
+              API.get(`/campaigns/${campaignId}`)
+                .then((r) => {
+                  setProviderError(r.data.provider_error || null);
+                  setOriginalPauseReason(r.data.pause_reason || "");
+                })
+                .catch(() => {});
+            }}
+            onResumed={() => navigate("/campaigns")}
+          />
+          <div className="mb-6 bg-amber-50 border border-amber-300 rounded-xl p-4 text-sm text-amber-800">
+            <strong>⚠️ Sender-only edit mode.</strong> This campaign paused due
+            to a provider error. Only sender details can be changed. Update them
+            below, then resume from the campaign report.
+          </div>
+        </>
+      )}
 
-      {/* Progress */}
-      <div className="mb-8 bg-gray-100 rounded-full h-1.5">
-        <div
-          className="bg-indigo-500 h-1.5 rounded-full transition-all duration-500"
-          style={{ width: `${((step - 1) / (STEPS.length - 1)) * 100}%` }}
-        />
-      </div>
+      {editMode === "limited" && (
+        <div className="mb-6 bg-amber-50 border border-amber-300 rounded-xl p-4 text-sm text-amber-800">
+          <strong>⏸ Campaign is paused.</strong> You can update sender and
+          subject details. Audience and template cannot be changed while sending
+          is in progress.
+        </div>
+      )}
+
+      {/* Step nav — hidden in sender_only (only step 1 matters) (NEW 6e) */}
+      {editMode !== "sender_only" && (
+        <>
+          <div className="mb-8">
+            <StepNav
+              current={step}
+              steps={STEPS}
+              onGoto={(s) => setStep(s)}
+              completedSteps={completedSteps}
+            />
+          </div>
+          <div className="mb-8 bg-gray-100 rounded-full h-1.5">
+            <div
+              className="bg-indigo-500 h-1.5 rounded-full transition-all duration-500"
+              style={{ width: `${((step - 1) / (STEPS.length - 1)) * 100}%` }}
+            />
+          </div>
+        </>
+      )}
 
       {/* Card */}
       <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-8">
-        {stepRenderers[step - 1]()}
+        {/* Step 1 always shown */}
+        {(editMode === "sender_only" || step === 1) && renderStep1()}
 
-        {step < 5 && (
-          <div className="flex items-center justify-between mt-8 pt-6 border-t border-gray-100">
+        {/* Steps 2-5 hidden in sender_only (NEW 6e, 6f) */}
+        {editMode !== "sender_only" && (
+          <>
+            {step === 2 && (
+              <LockedOverlay locked={editMode === "limited"}>
+                {renderStep2()}
+              </LockedOverlay>
+            )}
+            {step === 3 && (
+              <LockedOverlay locked={editMode === "limited"}>
+                {renderStep3()}
+              </LockedOverlay>
+            )}
+            {step === 4 && renderStep4()}
+            {step === 5 && renderStep5()}
+          </>
+        )}
+
+        {/* Navigation buttons */}
+        {editMode === "sender_only" ? (
+          /* sender_only: single save button instead of wizard nav */
+          <div className="mt-8 pt-6 border-t border-gray-100 flex justify-end">
             <button
-              onClick={() => setStep((s) => s - 1)}
-              disabled={step === 1}
-              className="px-5 py-2.5 text-sm font-medium text-gray-600 border border-gray-200 rounded-xl hover:bg-gray-50 disabled:opacity-30 disabled:cursor-not-allowed"
+              onClick={handleSave}
+              disabled={submitting || saveSuccess}
+              className="px-8 py-3 bg-indigo-600 text-white font-bold text-sm rounded-xl hover:bg-indigo-700 shadow-md shadow-indigo-200 disabled:opacity-60"
             >
-              ← Back
+              {saveLabel}
             </button>
-            <div className="flex items-center gap-3">
-              <span className="text-xs text-gray-400">
-                {step} / {STEPS.length}
-              </span>
-              <button
-                onClick={handleNext}
-                className="px-6 py-2.5 text-sm font-bold text-white bg-indigo-600 rounded-xl hover:bg-indigo-700 shadow-md shadow-indigo-200"
-              >
-                Continue →
-              </button>
-            </div>
           </div>
+        ) : (
+          step < 5 && (
+            <div className="flex items-center justify-between mt-8 pt-6 border-t border-gray-100">
+              <button
+                onClick={() => setStep((s) => s - 1)}
+                disabled={step === 1}
+                className="px-5 py-2.5 text-sm font-medium text-gray-600 border border-gray-200 rounded-xl hover:bg-gray-50 disabled:opacity-30 disabled:cursor-not-allowed"
+              >
+                ← Back
+              </button>
+              <div className="flex items-center gap-3">
+                <span className="text-xs text-gray-400">
+                  {step} / {STEPS.length}
+                </span>
+                <button
+                  onClick={handleNext}
+                  className="px-6 py-2.5 text-sm font-bold text-white bg-indigo-600 rounded-xl hover:bg-indigo-700 shadow-md shadow-indigo-200"
+                >
+                  Continue →
+                </button>
+              </div>
+            </div>
+          )
         )}
       </div>
     </div>

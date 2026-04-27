@@ -1,9 +1,9 @@
+// frontend/src/pages/ABTestingDashboard.jsx
 import { useState, useEffect, useCallback, useMemo } from "react";
-import { useNavigate, Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import API from "../api";
 
-const fmt = (n) => Number(n ?? 0).toLocaleString();
-
+// ── Toast ─────────────────────────────────────────────────────────────────────
 function useToast() {
   const [toasts, setToasts] = useState([]);
   const show = useCallback((message, type = "info") => {
@@ -15,15 +15,20 @@ function useToast() {
   return { toasts, show, dismiss };
 }
 
-function ToastContainer({ toasts, dismiss }) {
+function ToastStack({ toasts, dismiss }) {
   return (
-    <div className="fixed top-4 right-4 z-50 space-y-2 pointer-events-none">
+    <div className="fixed bottom-4 right-4 z-50 space-y-2">
       {toasts.map((t) => (
         <div
           key={t.id}
           onClick={() => dismiss(t.id)}
-          className={`pointer-events-auto flex items-center gap-2 px-4 py-3 rounded-lg shadow-lg text-sm font-medium cursor-pointer max-w-sm
-            ${t.type === "success" ? "bg-green-600 text-white" : t.type === "error" ? "bg-red-600 text-white" : "bg-gray-800 text-white"}`}
+          className={`cursor-pointer px-4 py-3 rounded-xl text-sm font-medium shadow-lg ${
+            t.type === "success"
+              ? "bg-green-600 text-white"
+              : t.type === "error"
+                ? "bg-red-600 text-white"
+                : "bg-gray-800 text-white"
+          }`}
         >
           {t.type === "success" ? "✓" : t.type === "error" ? "✕" : "ℹ"}{" "}
           {t.message}
@@ -33,6 +38,7 @@ function ToastContainer({ toasts, dismiss }) {
   );
 }
 
+// ── Status style map ──────────────────────────────────────────────────────────
 const STATUS_STYLE = {
   running: "bg-blue-100  text-blue-800",
   completed: "bg-green-100 text-green-800",
@@ -41,6 +47,7 @@ const STATUS_STYLE = {
   draft: "bg-yellow-100 text-yellow-800",
 };
 
+// ── Main component ────────────────────────────────────────────────────────────
 export default function ABTestingDashboard() {
   const [abTests, setAbTests] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -54,6 +61,7 @@ export default function ABTestingDashboard() {
 
   const setRowLoading = (id, v) => setActionLoading((p) => ({ ...p, [id]: v }));
 
+  // ── Data fetch ────────────────────────────────────────────────────────────
   const fetchData = useCallback(async () => {
     try {
       setLoading(true);
@@ -72,6 +80,7 @@ export default function ABTestingDashboard() {
     fetchData();
   }, [fetchData]);
 
+  // ── Actions ───────────────────────────────────────────────────────────────
   const startTest = async (testId, testName) => {
     setRowLoading(testId, "starting");
     try {
@@ -125,6 +134,7 @@ export default function ABTestingDashboard() {
     }
   };
 
+  // ── Derived counts ────────────────────────────────────────────────────────
   const counts = useMemo(
     () => ({
       total: abTests.length,
@@ -136,6 +146,7 @@ export default function ABTestingDashboard() {
     [abTests],
   );
 
+  // ── Filtered list ─────────────────────────────────────────────────────────
   const filtered = useMemo(() => {
     let list = abTests;
     if (statusFilter) list = list.filter((t) => t.status === statusFilter);
@@ -150,6 +161,7 @@ export default function ABTestingDashboard() {
     return list;
   }, [abTests, statusFilter, search]);
 
+  // ── Loading state ─────────────────────────────────────────────────────────
   if (loading)
     return (
       <div className="flex items-center justify-center py-24 gap-3 text-gray-400">
@@ -158,48 +170,47 @@ export default function ABTestingDashboard() {
       </div>
     );
 
+  // ── Render ────────────────────────────────────────────────────────────────
   return (
     <div className="space-y-6">
-      <ToastContainer toasts={toasts} dismiss={dismiss} />
+      <ToastStack toasts={toasts} dismiss={dismiss} />
 
-      <div className="flex items-center justify-between gap-3 flex-wrap">
+      {/* Header */}
+      <div className="flex justify-between items-center">
+        <h2 className="text-2xl font-bold text-gray-900">🧪 A/B Testing</h2>
         <button
           onClick={() => navigate("/ab-testing/create")}
-          className="px-5 py-2.5 bg-blue-600 text-white text-sm font-semibold rounded-lg hover:bg-blue-700"
+          className="bg-violet-600 text-white px-5 py-2 rounded-lg hover:bg-violet-700 text-sm font-semibold"
         >
-          + Create A/B Test
-        </button>
-        <button
-          onClick={fetchData}
-          className="px-4 py-2 border border-gray-200 text-sm font-medium rounded-lg hover:bg-gray-50 text-gray-600"
-        >
-          🔄 Refresh
+          ✨ New Test
         </button>
       </div>
 
+      {/* Error */}
       {error && (
-        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm">
-          {error}{" "}
-          <button onClick={fetchData} className="underline ml-2">
+        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
+          {error}
+          <button onClick={fetchData} className="ml-2 underline text-sm">
             Retry
           </button>
         </div>
       )}
 
-      {/* stat cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+      {/* Stats */}
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
         {[
           {
             label: "Total",
             value: counts.total,
-            bg: "bg-blue-50   border-blue-200",
-            color: "text-blue-700",
+            bg: "bg-gray-50   border-gray-200",
+            color: "text-gray-800",
+            pulse: false,
           },
           {
             label: "Running",
             value: counts.running,
             bg: "bg-blue-50   border-blue-200",
-            color: "text-blue-700",
+            color: "text-blue-800",
             pulse: counts.running > 0,
           },
           {
@@ -207,18 +218,21 @@ export default function ABTestingDashboard() {
             value: counts.draft,
             bg: "bg-yellow-50 border-yellow-200",
             color: "text-yellow-700",
+            pulse: false,
           },
           {
             label: "Completed",
             value: counts.completed,
             bg: "bg-green-50  border-green-200",
             color: "text-green-700",
+            pulse: false,
           },
           {
             label: "Stopped",
             value: counts.stopped,
             bg: "bg-gray-50   border-gray-200",
             color: "text-gray-600",
+            pulse: false,
           },
         ].map((s) => (
           <div key={s.label} className={`rounded-xl border p-4 ${s.bg}`}>
@@ -237,7 +251,29 @@ export default function ABTestingDashboard() {
         ))}
       </div>
 
-      {/* table */}
+      {/* Filters */}
+      <div className="flex flex-wrap gap-3">
+        <input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search tests…"
+          className="border border-gray-200 rounded-lg px-3 py-2 text-sm w-52 focus:outline-none focus:ring-2 focus:ring-violet-400"
+        />
+        <select
+          value={statusFilter}
+          onChange={(e) => setStatusFilter(e.target.value)}
+          className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none"
+        >
+          <option value="">All statuses</option>
+          {["draft", "running", "completed", "stopped", "failed"].map((s) => (
+            <option key={s} value={s}>
+              {s}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      {/* Table */}
       <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
         <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-4 border-b border-gray-100">
           <h2 className="text-sm font-semibold text-gray-700">
@@ -248,58 +284,9 @@ export default function ABTestingDashboard() {
               </span>
             )}
           </h2>
-          <div className="flex items-center gap-2">
-            <select
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
-              className="px-3 py-1.5 text-sm border border-gray-200 rounded-lg bg-white text-gray-600"
-            >
-              <option value="">All statuses</option>
-              <option value="draft">Draft</option>
-              <option value="running">Running</option>
-              <option value="completed">Completed</option>
-              <option value="stopped">Stopped</option>
-            </select>
-            <div className="relative">
-              <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 text-xs">
-                🔍
-              </span>
-              <input
-                type="text"
-                placeholder="Search tests…"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="pl-7 pr-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 w-44"
-              />
-              {search && (
-                <button
-                  onClick={() => setSearch("")}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-300 hover:text-gray-500 text-xs"
-                >
-                  ✕
-                </button>
-              )}
-            </div>
-          </div>
         </div>
 
-        {abTests.length === 0 ? (
-          <div className="py-16 text-center">
-            <p className="text-3xl mb-2">🧪</p>
-            <p className="text-sm font-medium text-gray-700 mb-1">
-              No A/B tests yet
-            </p>
-            <p className="text-xs text-gray-400 mb-4">
-              Create your first test to start optimising campaigns
-            </p>
-            <button
-              onClick={() => navigate("/ab-testing/create")}
-              className="px-4 py-2 bg-blue-600 text-white text-sm font-semibold rounded-lg hover:bg-blue-700"
-            >
-              Create A/B Test
-            </button>
-          </div>
-        ) : filtered.length === 0 ? (
+        {filtered.length === 0 ? (
           <div className="py-12 text-center">
             <p className="text-sm text-gray-500">No tests match your filters</p>
             <button
@@ -326,7 +313,7 @@ export default function ABTestingDashboard() {
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Lists
                   </th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-28">
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-36">
                     Status
                   </th>
                   <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider w-20">
@@ -340,37 +327,59 @@ export default function ABTestingDashboard() {
               <tbody className="divide-y divide-gray-50">
                 {filtered.map((test) => {
                   const busy = actionLoading[test._id];
+
+                  // ── NEW: detect provider-error failure ────────────────────
+                  const isFailedByError =
+                    test.status === "failed" &&
+                    test.fail_reason === "provider_error_auto_fail";
+
                   return (
                     <tr
                       key={test._id}
                       className="hover:bg-gray-50 transition-colors"
                     >
+                      {/* Test name */}
                       <td className="px-5 py-3.5 font-medium text-gray-900">
                         {test.test_name}
                       </td>
+
+                      {/* Type */}
                       <td className="px-4 py-3.5">
                         <span className="px-2 py-0.5 bg-gray-100 text-gray-700 rounded text-xs capitalize">
                           {(test.test_type || "").replace("_", " ")}
                         </span>
                       </td>
+
+                      {/* Lists */}
                       <td className="px-4 py-3.5 text-xs text-gray-500 max-w-[120px] truncate">
                         {(test.target_lists || []).join(", ") || "—"}
                       </td>
+
+                      {/* Status — error-aware (CHANGED) */}
                       <td className="px-4 py-3.5">
                         <span
-                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${STATUS_STYLE[test.status] || STATUS_STYLE.draft}`}
+                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${
+                            STATUS_STYLE[test.status] || STATUS_STYLE.draft
+                          }`}
                         >
                           {test.status === "running" && (
                             <span className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-pulse" />
                           )}
-                          {test.status}
+                          {isFailedByError
+                            ? "✕ Failed — Provider Error"
+                            : test.status}
                         </span>
                       </td>
+
+                      {/* Sample */}
                       <td className="px-4 py-3.5 text-right tabular-nums text-xs text-gray-600">
-                        {fmt(test.sample_size)}
+                        {Number(test.sample_size || 0).toLocaleString()}
                       </td>
+
+                      {/* Actions */}
                       <td className="px-4 py-3.5">
                         <div className="flex items-center justify-end gap-1.5 flex-wrap">
+                          {/* Edit — draft only */}
                           {test.status === "draft" && (
                             <button
                               onClick={() =>
@@ -381,6 +390,8 @@ export default function ABTestingDashboard() {
                               ✏️ Edit
                             </button>
                           )}
+
+                          {/* Start — draft only */}
                           {test.status === "draft" && (
                             <button
                               onClick={() =>
@@ -392,6 +403,8 @@ export default function ABTestingDashboard() {
                               {busy === "starting" ? "⏳" : "Start"}
                             </button>
                           )}
+
+                          {/* Stop — running only */}
                           {test.status === "running" && (
                             <button
                               onClick={() => stopTest(test._id, test.test_name)}
@@ -401,6 +414,8 @@ export default function ABTestingDashboard() {
                               {busy === "stopping" ? "⏳" : "Stop"}
                             </button>
                           )}
+
+                          {/* Quick view results — running | completed */}
                           {(test.status === "running" ||
                             test.status === "completed") && (
                             <button
@@ -411,12 +426,22 @@ export default function ABTestingDashboard() {
                               {busy === "loading" ? "⏳" : "Quick View"}
                             </button>
                           )}
-                          <Link
-                            to={`/ab-tests/${test._id}/results`}
-                            className="px-2.5 py-1.5 text-xs font-medium border border-gray-200 rounded-lg hover:bg-gray-50 text-gray-600"
-                          >
-                            Full Report
-                          </Link>
+
+                          {/* Full report — running | completed | failed (CHANGED: added failed) */}
+                          {(test.status === "running" ||
+                            test.status === "completed" ||
+                            test.status === "failed") && (
+                            <Link
+                              to={`/ab-tests/${test._id}/results`}
+                              className="px-2.5 py-1.5 text-xs font-medium border border-gray-200 rounded-lg hover:bg-gray-50 text-gray-600"
+                            >
+                              {isFailedByError
+                                ? "⚠️ View Error"
+                                : "Full Report"}
+                            </Link>
+                          )}
+
+                          {/* Delete */}
                           <button
                             onClick={() => deleteTest(test._id, test.test_name)}
                             disabled={!!busy}
@@ -449,143 +474,108 @@ export default function ABTestingDashboard() {
               <div className="flex items-center gap-2">
                 <button
                   onClick={() => {
+                    const id = resultsModal.test_id;
                     setResultsModal(null);
-                    navigate(`/ab-tests/${resultsModal.test_id}/results`);
+                    navigate(`/ab-tests/${id}/results`);
                   }}
-                  className="px-3 py-1.5 bg-purple-600 text-white text-xs font-semibold rounded-lg hover:bg-purple-700"
+                  className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 text-sm font-medium"
                 >
-                  Full Report →
+                  Open Full Report
                 </button>
                 <button
                   onClick={() => setResultsModal(null)}
-                  className="text-gray-400 hover:text-gray-600 text-xl"
+                  className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-gray-100 text-gray-500 text-xl"
                 >
-                  ✕
+                  ×
                 </button>
               </div>
             </div>
-            <div className="p-6 space-y-4">
-              {/* meta */}
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 bg-gray-50 rounded-xl p-4 text-sm">
-                {[
-                  { label: "Status", value: resultsModal.status },
-                  {
-                    label: "Type",
-                    value: (resultsModal.test_type || "").replace("_", " "),
-                  },
-                  {
-                    label: "Sample Size",
-                    value: fmt(resultsModal.sample_size),
-                  },
-                  {
-                    label: "Lists",
-                    value: (resultsModal.target_lists || []).join(", ") || "—",
-                  },
-                ].map(({ label, value }) => (
-                  <div key={label}>
-                    <p className="text-xs text-gray-400 mb-0.5">{label}</p>
-                    <p className="font-semibold text-gray-800 capitalize">
-                      {value}
-                    </p>
-                  </div>
-                ))}
+
+            <div className="p-6 space-y-6">
+              {/* Test info */}
+              <div className="bg-gray-50 rounded-xl p-4">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                  {[
+                    ["Status", resultsModal.status],
+                    [
+                      "Test Type",
+                      (resultsModal.test_type || "").replace("_", " "),
+                    ],
+                    [
+                      "Sample",
+                      Number(resultsModal.sample_size || 0).toLocaleString(),
+                    ],
+                    [
+                      "Split",
+                      `${resultsModal.split_percentage}% / ${100 - resultsModal.split_percentage}%`,
+                    ],
+                  ].map(([l, v]) => (
+                    <div key={l}>
+                      <p className="text-gray-500 text-xs">{l}</p>
+                      <p className="font-semibold capitalize">{v}</p>
+                    </div>
+                  ))}
+                </div>
               </div>
 
-              {/* winner */}
-              {resultsModal.winner?.winner &&
-                resultsModal.winner.winner !== "TIE" && (
-                  <div className="bg-green-50 border border-green-200 rounded-xl p-4">
-                    <p className="font-bold text-green-800">
-                      🏆 Variant {resultsModal.winner.winner} is winning by{" "}
-                      {Number(resultsModal.winner.improvement ?? 0).toFixed(2)}%
-                    </p>
-                  </div>
-                )}
-              {resultsModal.winner?.winner === "TIE" && (
-                <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-4">
-                  <p className="font-bold text-yellow-800">
-                    🤝 Both variants equal — test inconclusive
-                  </p>
-                </div>
-              )}
-
-              {/* comparison */}
-              {resultsModal.results && (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="bg-gray-50 border-b border-gray-100">
+              {/* Variant comparison */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {["variant_a", "variant_b"].map((key, i) => {
+                  const v = resultsModal.results?.[key] || {};
+                  const label =
+                    i === 0 ? "Variant A (Control)" : "Variant B (Test)";
+                  const isWinner =
+                    resultsModal.winner?.winner === (i === 0 ? "A" : "B");
+                  return (
+                    <div
+                      key={key}
+                      className={`rounded-xl border-2 p-4 ${isWinner ? "border-green-400 bg-green-50" : "border-gray-200"}`}
+                    >
+                      <div className="flex items-center justify-between mb-3">
+                        <p className="text-sm font-bold text-gray-800">
+                          {label}
+                        </p>
+                        {isWinner && (
+                          <span className="bg-green-100 text-green-700 text-xs font-bold px-2 py-0.5 rounded-full">
+                            🏆 Winner
+                          </span>
+                        )}
+                      </div>
+                      <div className="space-y-1 text-sm">
                         {[
-                          "Variant",
-                          "Sent",
-                          "Opened",
-                          "Open Rate",
-                          "Clicked",
-                          "Click Rate",
-                        ].map((h) => (
-                          <th
-                            key={h}
-                            className={`px-4 py-2.5 text-xs font-medium text-gray-500 uppercase tracking-wider ${h === "Variant" ? "text-left" : "text-right"}`}
-                          >
-                            {h}
-                          </th>
+                          ["Sent", v.sent],
+                          ["Opened", v.opened],
+                          [
+                            "Open Rate",
+                            v.open_rate != null ? `${v.open_rate}%` : "—",
+                          ],
+                          ["Clicked", v.clicked],
+                          [
+                            "Click Rate",
+                            v.click_rate != null ? `${v.click_rate}%` : "—",
+                          ],
+                        ].map(([lbl, val]) => (
+                          <div key={lbl} className="flex justify-between">
+                            <span className="text-gray-500">{lbl}</span>
+                            <span className="font-semibold">{val ?? "—"}</span>
+                          </div>
                         ))}
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-50">
-                      {[
-                        {
-                          label: "Variant A",
-                          data: resultsModal.results.variant_a,
-                          color: "text-blue-700",
-                        },
-                        {
-                          label: "Variant B",
-                          data: resultsModal.results.variant_b,
-                          color: "text-orange-700",
-                        },
-                      ].map(({ label, data, color }) => (
-                        <tr key={label} className="hover:bg-gray-50">
-                          <td className={`px-4 py-3 font-semibold ${color}`}>
-                            {label}
-                          </td>
-                          <td className="px-4 py-3 text-right tabular-nums">
-                            {fmt(data?.sent)}
-                          </td>
-                          <td className="px-4 py-3 text-right tabular-nums">
-                            {fmt(data?.opened)}
-                          </td>
-                          <td className="px-4 py-3 text-right font-medium">
-                            {Number(data?.open_rate ?? 0).toFixed(2)}%
-                          </td>
-                          <td className="px-4 py-3 text-right tabular-nums">
-                            {fmt(data?.clicked)}
-                          </td>
-                          <td className="px-4 py-3 text-right font-medium">
-                            {Number(data?.click_rate ?? 0).toFixed(2)}%
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
 
-              {/* significance */}
-              {resultsModal.statistical_significance && (
-                <div className="bg-blue-50 border border-blue-100 rounded-xl p-4 text-sm">
-                  <p className="font-semibold text-blue-800 mb-1">
-                    Statistical Significance
-                  </p>
-                  <p className="text-blue-700">
-                    Confidence:{" "}
-                    <strong className="uppercase">
-                      {resultsModal.statistical_significance.confidence_level}
-                    </strong>
-                    {" · "}Total samples:{" "}
-                    <strong>
-                      {fmt(resultsModal.statistical_significance.total_samples)}
-                    </strong>
+              {/* Winner */}
+              {resultsModal.winner?.winner && (
+                <div className="bg-green-50 border border-green-200 rounded-xl p-4">
+                  <p className="font-semibold text-green-800">
+                    🏆 Variant {resultsModal.winner.winner} wins
+                    {resultsModal.winner.improvement != null && (
+                      <span className="ml-2 font-normal text-green-600 text-sm">
+                        (+{resultsModal.winner.improvement}% improvement)
+                      </span>
+                    )}
                   </p>
                 </div>
               )}
