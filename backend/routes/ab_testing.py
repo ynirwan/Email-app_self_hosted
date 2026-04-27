@@ -91,6 +91,7 @@ class ABTestCreate(BaseModel):
 class CompleteTestRequest(BaseModel):
     apply_to_campaign: bool = True
 
+
 def _safe_provider_error(pe):
     """Serialise provider_error for JSON — handles datetime fields."""
     if not pe:
@@ -100,7 +101,6 @@ def _safe_provider_error(pe):
         out["detected_at"] = out["detected_at"].isoformat()
     return out
 
-    
 
 # ============================================================
 # UTILITY: ObjectId → str
@@ -383,31 +383,30 @@ def calculate_statistical_significance(results: Dict) -> Dict:
 
 
 @router.get("/ab-tests")
-        async def get_all_ab_tests():
-            try:
-                ab_tests_collection = get_ab_tests_collection()
-                tests = []
+async def get_all_ab_tests():
+    try:
+        ab_tests_collection = get_ab_tests_collection()
+        tests = []
 
-                cursor = ab_tests_collection.find().sort("created_at", -1)
-                async for test in cursor:
-                    test = convert_objectid_to_str(test)
+        cursor = ab_tests_collection.find().sort("created_at", -1)
+        async for test in cursor:
+            test = convert_objectid_to_str(test)
 
-                    # ── NEW: expose provider_error + fail_reason so the dashboard
-                    #         can show "✕ Failed — Provider Error" badges ────────────
-                    test["provider_error"] = _safe_provider_error(test.get("provider_error"))
-                    test["fail_reason"]    = test.get("fail_reason")
+            # expose provider_error + fail_reason for dashboard error badges
+            test["provider_error"] = _safe_provider_error(test.get("provider_error"))
+            test["fail_reason"] = test.get("fail_reason")
 
-                    tests.append(test)
+            tests.append(test)
 
-                logger.info(f"Retrieved {len(tests)} A/B tests")
-                return {
-                    "tests": tests,
-                    "total": len(tests),
-                }
+        logger.info(f"Retrieved {len(tests)} A/B tests")
+        return {
+            "tests": tests,
+            "total": len(tests),
+        }
 
-            except Exception as e:
-                logger.error(f"Failed to list A/B tests: {e}")
-                raise HTTPException(status_code=500, detail="Failed to retrieve A/B tests")
+    except Exception as e:
+        logger.error(f"Failed to list A/B tests: {e}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve A/B tests")
 
 
 @router.get("/ab-tests/lists")
@@ -549,6 +548,8 @@ async def create_ab_test(test: ABTestCreate):
         raise HTTPException(
             status_code=500, detail=f"Failed to create A/B test: {str(e)}"
         )
+
+
 @router.put("/ab-tests/{test_id}")
 async def update_ab_test(test_id: str, test: ABTestCreate):
     """
@@ -571,7 +572,10 @@ async def update_ab_test(test_id: str, test: ABTestCreate):
             )
 
         if not test.target_lists and not test.target_segments:
-            raise HTTPException(status_code=400, detail="At least one target list or segment is required")
+            raise HTTPException(
+                status_code=400,
+                detail="At least one target list or segment is required",
+            )
         if not test.template_id:
             raise HTTPException(status_code=400, detail="Template is required")
         if not test.subject.strip():
@@ -633,8 +637,9 @@ async def update_ab_test(test_id: str, test: ABTestCreate):
         raise
     except Exception as e:
         logger.error(f"Failed to update A/B test {test_id}: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to update A/B test: {str(e)}")
-
+        raise HTTPException(
+            status_code=500, detail=f"Failed to update A/B test: {str(e)}"
+        )
 
 
 @router.get("/ab-tests/{test_id}")
@@ -677,7 +682,9 @@ async def start_ab_test(test_id: str):
             raise HTTPException(status_code=400, detail="A/B test has no template_id")
 
         if not ObjectId.is_valid(template_id):
-            raise HTTPException(status_code=400, detail=f"Invalid template_id '{template_id}'")
+            raise HTTPException(
+                status_code=400, detail=f"Invalid template_id '{template_id}'"
+            )
 
         templates_col = get_templates_collection()
         template = await templates_col.find_one({"_id": ObjectId(template_id)})
@@ -689,6 +696,7 @@ async def start_ab_test(test_id: str):
 
         try:
             from tasks.campaign.snapshot_utils import build_snapshot
+
             snapshot = build_snapshot(template, test)
         except ValueError as ve:
             raise HTTPException(status_code=422, detail=str(ve))
@@ -782,7 +790,7 @@ async def get_ab_test_results(test_id: str):
             "winner": winner,
             "winner_info": winner,
             "provider_error": _safe_provider_error(test.get("provider_error")),
-            "fail_reason":    test.get("fail_reason"),
+            "fail_reason": test.get("fail_reason"),
             "statistical_significance": significance,
             "start_date": test.get("start_date"),
             "end_date": test.get("end_date"),
@@ -821,9 +829,11 @@ async def get_winner_send_progress(test_id: str):
         # Try Redis first (written by send_winner_batch)
         try:
             from core.redis_client import get_redis
+
             r = get_redis()
             progress_key = f"ab_winner_send_progress:{test_id}"
             import json
+
             raw = r.get(progress_key)
             if raw:
                 data = json.loads(raw)
@@ -873,6 +883,7 @@ async def stop_winner_send(test_id: str):
     """Set a stop flag so send_winner_batch halts after the current batch."""
     try:
         from core.redis_client import get_redis
+
         r = get_redis()
         r.setex(f"ab_winner_send_stop:{test_id}", 86400, "1")
 
@@ -881,7 +892,12 @@ async def stop_winner_send(test_id: str):
             raise HTTPException(status_code=400, detail="Invalid test ID")
         await col.update_one(
             {"_id": ObjectId(test_id)},
-            {"$set": {"winner_send_status": "stopped", "updated_at": datetime.utcnow()}},
+            {
+                "$set": {
+                    "winner_send_status": "stopped",
+                    "updated_at": datetime.utcnow(),
+                }
+            },
         )
         return {"message": "Winner send stop signal sent", "test_id": test_id}
     except HTTPException:

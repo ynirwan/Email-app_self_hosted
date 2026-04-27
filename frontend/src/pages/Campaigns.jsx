@@ -61,6 +61,7 @@ function CampaignActions({
   onSend,
   onSchedule,
   onCancelSchedule,
+  onPause,
   onStop,
   onDelete,
   onTest,
@@ -129,6 +130,13 @@ function CampaignActions({
         )}
 
       {/* Sending actions */}
+      {isSending &&
+        btn(
+          "⏸ Pause",
+          () => onPause(c._id),
+          "text-orange-600 hover:text-orange-800",
+        )}
+
       {isSending &&
         btn("🛑 Stop", () => onStop(c._id), "text-red-600 hover:text-red-800")}
 
@@ -358,6 +366,22 @@ export default function Campaigns() {
     }
   };
 
+  const handlePause = async (id) => {
+    const c = campaigns.find((x) => x._id === id);
+    if (
+      !c ||
+      !window.confirm(`Pause campaign "${c.title}"? You can resume it later.`)
+    )
+      return;
+    try {
+      await API.post(`/campaigns/${id}/pause`);
+      alert("Campaign paused.");
+      await fetchCampaigns();
+    } catch (e) {
+      alert(e.response?.data?.detail || "Pause failed");
+    }
+  };
+
   const handleStop = async (id) => {
     const c = campaigns.find((x) => x._id === id);
     if (
@@ -548,6 +572,7 @@ export default function Campaigns() {
                         onSchedule={openScheduleModal}
                         onCancelSchedule={handleCancelSchedule}
                         onStop={handleStop}
+                        onPause={handlePause}
                         onDelete={handleDelete}
                         onTest={openTestModal}
                       />
