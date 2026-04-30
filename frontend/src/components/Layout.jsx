@@ -1,8 +1,9 @@
+// frontend/src/components/Layout.jsx
 import { useLocation, Outlet, NavLink } from "react-router-dom";
 import Sidebar from "./Sidebar";
 import { UserProvider } from "../contexts/UserContext";
+import SettingsProvider from "../contexts/SettingsProvider";
 
-// page title map — used in the topbar breadcrumb
 const PAGE_TITLES = {
   "/": { title: "Dashboard", icon: "🏠" },
   "/analytics": { title: "Analytics", icon: "📊" },
@@ -28,9 +29,7 @@ const isEditorRoute = (path) =>
   path.includes("/automation/edit");
 
 function getPageMeta(pathname) {
-  // exact match first
   if (PAGE_TITLES[pathname]) return PAGE_TITLES[pathname];
-  // prefix match (longest wins)
   const match = Object.keys(PAGE_TITLES)
     .filter((k) => k !== "/" && pathname.startsWith(k))
     .sort((a, b) => b.length - a.length)[0];
@@ -39,20 +38,15 @@ function getPageMeta(pathname) {
 
 function Topbar({ pathname }) {
   const meta = getPageMeta(pathname);
-
   return (
     <header className="h-14 flex-shrink-0 bg-white border-b border-gray-200 flex items-center px-4 md:px-6 gap-3">
-      {/* page identity */}
       <div className="flex items-center gap-2 flex-1 min-w-0">
         <span className="text-lg">{meta.icon}</span>
         <h1 className="text-base font-semibold text-gray-900 truncate">
           {meta.title}
         </h1>
       </div>
-
-      {/* right side actions */}
       <div className="flex items-center gap-2 flex-shrink-0">
-        {/* quick-nav shortcuts — only shown on dashboard */}
         {pathname === "/" && (
           <div className="hidden sm:flex items-center gap-1">
             <NavLink
@@ -63,8 +57,6 @@ function Topbar({ pathname }) {
             </NavLink>
           </div>
         )}
-
-        {/* settings cog shortcut */}
         <NavLink
           to="/settings/email"
           className={({ isActive }) =>
@@ -89,19 +81,21 @@ export default function Layout() {
 
   return (
     <UserProvider>
-      <div className="min-h-screen bg-gray-50 flex">
-        <Sidebar />
-
-        {/* right panel */}
-        <div className="flex-1 min-w-0 flex flex-col min-h-screen">
-          {!isEditor && <Topbar pathname={pathname} />}
-          <main
-            className={`flex-1 min-w-0 overflow-auto ${isEditor ? "" : "p-4 md:p-8"}`}
-          >
-            <Outlet />
-          </main>
+      <SettingsProvider>
+        <div className="min-h-screen bg-gray-50 flex">
+          <Sidebar />
+          <div className="flex-1 min-w-0 flex flex-col min-h-screen">
+            {!isEditor && <Topbar pathname={pathname} />}
+            <main
+              className={`flex-1 min-w-0 overflow-auto ${
+                isEditor ? "" : "p-4 md:p-8"
+              }`}
+            >
+              <Outlet />
+            </main>
+          </div>
         </div>
-      </div>
+      </SettingsProvider>
     </UserProvider>
   );
 }

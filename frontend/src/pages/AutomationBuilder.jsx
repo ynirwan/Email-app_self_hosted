@@ -58,6 +58,12 @@ const AutomationBuilder = () => {
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
   const [validationErrors, setValidationErrors] = useState([]);
+  const [lists, setLists] = useState([]);
+  const [loadingLists, setLoadingLists] = useState(false);
+  const [audienceMode, setAudienceMode] = useState('both'); // 'lists' | 'segments' | 'both'
+  const safeTargetLists = Array.isArray(workflow.target_lists) ? workflow.target_lists : [];
+
+
   const [expandedSections, setExpandedSections] = useState({
     basic: true,
     advanced: false,
@@ -95,6 +101,21 @@ const AutomationBuilder = () => {
   const safeTemplates = Array.isArray(templates) ? templates : [];
   const safeSegments = Array.isArray(segments) ? segments : [];
 
+  useEffect(() => {
+    setLoadingLists(true);
+    API.get('/subscribers/lists')
+      .then((res) => {
+        const data = res?.data ?? res;
+        setLists(Array.isArray(data) ? data : []);
+      })
+      .catch((err) => {
+        console.error('Failed to load subscriber lists:', err);
+        setLists([]);
+      })
+      .finally(() => setLoadingLists(false));
+  }, []);
+
+  
   useEffect(() => {
     fetchTemplatesAndSegments();
     if (isEditing) {
@@ -292,6 +313,7 @@ const AutomationBuilder = () => {
 
     return payload;
   };
+  
 
   // ⭐ FIXED: addStep function with subject_line
   const addStep = (stepType = 'email') => {
@@ -344,6 +366,18 @@ const AutomationBuilder = () => {
     }));
   };
 
+  const toggleTargetList = (listId) => {
+    setWorkflow((prev) => {
+      const current = Array.isArray(prev.target_lists) ? prev.target_lists : [];
+      return {
+        ...prev,
+        target_lists: current.includes(listId)
+          ? current.filter((id) => id !== listId)
+          : [...current, listId],
+      };
+    });
+  };
+  
   const toggleTargetSegment = (segmentId) => {
     setWorkflow(prev => ({
       ...prev,
@@ -606,26 +640,134 @@ const AutomationBuilder = () => {
         <div className="mt-6">
           <label className="block text-sm font-medium mb-3 flex items-center gap-2">
             <Target size={18} />
-            Target Segments (Optional)
+            Target Audience (Optional)
+            <span className="text-xs text-gray-500 font-normal">
+              Leave empty to target all active subscribers
+            </span>
           </label>
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-            {safeSegments.map(segment => (
-              <label
-                key={segment.id}
-                className="flex items-center space-x-2 p-3 border rounded-lg cursor-pointer hover:bg-gray-50"
+
+          {/* Audience mode toggle — matches CreateCampaign.jsx pattern */}
+          <div className="flex gap-2 mb-4 p-1 bg-gray-100 rounded-lg w-fit">
+            {['lists', 'segments', 'both'].map((mode) => (
+              <button
+                key={mode}
+                type="button"
+                onClick={() => setAudienceMode(mode)}
+                className={`px-4 py-2 text-sm font-medium rounded-md transition ${
+                  audienceMode === mode
+                    ? 'bg-white text-blue-700 shadow-sm'
+                    : 'text-gray-600 hover:text-gray-900'
+                }`}
               >
-                <input
-                  type="checkbox"
-                  checked={safeTargetSegments.includes(segment.id)}
-                  onChange={() => toggleTargetSegment(segment.id)}
-                  className="w-4 h-4 text-blue-600"
-                />
-                <span className="text-sm">{segment.name}</span>
-              </label>
+                {mode === 'lists' ? '📋 Lists Only'
+                  : mode === 'segments' ? '🎯 Segments Only'
+                  : '📋🎯 Both'}
+              </button>
             ))}
           </div>
-          {safeSegments.length === 0 && (
-            <p className="text-sm text-gray-500 italic">No segments available</p>
+
+          {/* Lists picker */}
+          {(audienceMode === 'lists' || audienceMode === 'both') && (
+            <div className="mb-4">
+              <h4 className="font-semibold mb-2 text-sm flex items-center gap-2">
+                📋 Subscriber Lists
+                <span className="text-xs font-normal text-blue-600">
+                  ({lists.length} available)
+                </span>
+              </h4>
+              <div className="max-h-48 overflow-auto border rounded-lg p-3 bg-gray-50">
+                {loadingLists ? (
+                  <p className="text-sm text-gray-500">Loading lists…</p>
+                ) : lists.length === 0 ? (
+                  <p className="text-sm text-gray-500 italic">
+                    No subscriber lists available. Create one in the Subscribers section.
+                  </p>
+                ) : (
+                  lists.map((list) => (
+                    <label
+                      key={list._id}
+                      className="flex items-center mb-2 cursor-pointer hover:bg-white p-2 rounded"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={safeTargetLists.includes(list._id)}
+                        onChange={() => toggleTargetList(list._id)}
+                        className="mr-3 w-4 h-4 text-blue-600"
+                      />
+                      <span className="font-medium text-sm">{list._id}</span>
+                      <span className="ml-2 text-xs text-gray-500">
+                        ({list.active_count ?? list.count ?? 0} active)
+                      </span>
+                    </label>
+                  ))
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Segments picker */}
+          {(audienceMode === 'segments' || audienceMode === 'both') && (
+            <div className="mb-4">
+              <h4 className="font-semibold mb-2 text-sm flex items-center gap-2">
+                🎯 Targeted Segments
+                <span className="text-xs font-normal text-purple-600">
+                  ({safeSegments.length} available)
+                </span>
+              </h4>
+              <div className="max-h-48 overflow-auto border rounded-lg p-3 bg-gray-50">
+                {safeSegments.length === 0 ? (
+                  <div className="text-sm text-gray-500 italic">
+                    No segments available.{' '}
+                    <button
+                      type="button"
+                      onClick={() => window.open('/segmentation', '_blank')}
+                      className="text-blue-600 hover:underline"
+                    >
+                      Create a segment
+                    </button>
+                  </div>
+                ) : (
+                  safeSegments.map((segment) => (
+                    <label
+                      key={segment.id || segment._id}
+                      className="flex items-start cursor-pointer hover:bg-white p-2 rounded"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={safeTargetSegments.includes(segment.id || segment._id)}
+                        onChange={() => toggleTargetSegment(segment.id || segment._id)}
+                        className="mr-3 mt-0.5 w-4 h-4 text-purple-600"
+                      />
+                      <div className="flex-1">
+                        <div className="text-sm font-medium">{segment.name}</div>
+                        {segment.description && (
+                          <div className="text-xs text-gray-500">{segment.description}</div>
+                        )}
+                        {(segment.subscriber_count !== undefined) && (
+                          <div className="text-xs text-gray-400">
+                            {segment.subscriber_count.toLocaleString()} subscribers
+                          </div>
+                        )}
+                      </div>
+                    </label>
+                  ))
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Audience summary */}
+          {(safeTargetLists.length > 0 || safeTargetSegments.length > 0) && (
+            <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
+              <p className="text-sm font-medium text-blue-900 mb-1">
+                Selected: {safeTargetLists.length} list{safeTargetLists.length !== 1 ? 's' : ''},{' '}
+                {safeTargetSegments.length} segment{safeTargetSegments.length !== 1 ? 's' : ''}
+              </p>
+              <p className="text-xs text-blue-700">
+                Subscribers in <strong>any</strong> selected list <strong>or</strong> segment will be
+                eligible for this automation.
+              </p>
+            </div>
           )}
         </div>
       </CollapsibleSection>

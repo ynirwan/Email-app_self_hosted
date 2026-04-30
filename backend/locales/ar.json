@@ -1,0 +1,11 @@
+{
+  "campaign.scheduled": "تم جدولة حملتك في {when}.",
+  "campaign.sent": "تم إرسال حملتك إلى {count} مستلم.",
+  "campaign.paused": "تم إيقاف حملتك مؤقتاً.",
+  "campaign.failed": "فشلت حملتك: {reason}",
+  "automation.started": "بدأت الأتمتة للمشترك {subscriber}.",
+  "errors.invalid_timezone": "المنطقة الزمنية غير صالحة. يرجى اختيار منطقة IANA صالحة.",
+  "errors.invalid_language": "رمز اللغة غير مدعوم.",
+  "errors.unauthorized": "غير مصرح لك بتنفيذ هذا الإجراء.",
+  "errors.not_found": "لم يتم العثور على المورد المطلوب."
+}

@@ -62,6 +62,7 @@ function CampaignActions({
   onSchedule,
   onCancelSchedule,
   onPause,
+  onResume,
   onStop,
   onDelete,
   onTest,
@@ -151,7 +152,12 @@ function CampaignActions({
       )}
 
       {/* Manual pause: allow limited edit */}
-      {isPausedManual && lnk("📝 Edit", `/campaigns/${c._id}/edit`)}
+      {isPausedManual &&
+        btn(
+          "▶ Resume",
+          () => onResume(c._id),
+          "text-green-600 hover:text-green-800",
+        )}
 
       {/* Test email — always available */}
       {btn("📨 Test", () => onTest(c), "text-indigo-600 hover:text-indigo-800")}
@@ -382,6 +388,17 @@ export default function Campaigns() {
     }
   };
 
+  const handleResume = async (id) => {
+    const c = campaigns.find((x) => x._id === id);
+    if (!c || !window.confirm(`Resume "${c.title}"?`)) return;
+    try {
+      await API.post(`/campaigns/${id}/resume`);
+      await fetchCampaigns();
+    } catch (e) {
+      alert(e.response?.data?.detail || "Resume failed");
+    }
+  };
+
   const handleStop = async (id) => {
     const c = campaigns.find((x) => x._id === id);
     if (
@@ -571,8 +588,9 @@ export default function Campaigns() {
                         onSend={openSendModal}
                         onSchedule={openScheduleModal}
                         onCancelSchedule={handleCancelSchedule}
-                        onStop={handleStop}
                         onPause={handlePause}
+                        onResume={handleResume}
+                        onStop={handleStop}
                         onDelete={handleDelete}
                         onTest={openTestModal}
                       />
@@ -644,9 +662,16 @@ export default function Campaigns() {
               <input
                 type="date"
                 value={scheduleDate}
+                min={new Date().toISOString().split("T")[0]}
                 onChange={(e) => setScheduleDate(e.target.value)}
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
               />
+              {scheduleDate && scheduleTime && (
+                <p className="text-sm text-purple-600 bg-purple-50 p-2 rounded">
+                  Will send on:{" "}
+                  {new Date(`${scheduleDate}T${scheduleTime}`).toLocaleString()}
+                </p>
+              )}
             </div>
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">

@@ -1,0 +1,11 @@
+{
+  "campaign.scheduled": "Ваша кампания запланирована на {when}.",
+  "campaign.sent": "Ваша кампания отправлена {count} получателям.",
+  "campaign.paused": "Ваша кампания приостановлена.",
+  "campaign.failed": "Ошибка кампании: {reason}",
+  "automation.started": "Автоматизация запущена для {subscriber}.",
+  "errors.invalid_timezone": "Неверный часовой пояс. Выберите корректный IANA-часовой пояс.",
+  "errors.invalid_language": "Неподдерживаемый код языка.",
+  "errors.unauthorized": "У вас нет прав для выполнения этого действия.",
+  "errors.not_found": "Запрашиваемый ресурс не найден."
+}

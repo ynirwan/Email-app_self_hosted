@@ -1971,64 +1971,122 @@ async def delete_list_enhanced(
 @router.post("/", dependencies=[Depends(rate_limit_check)])
 @PerformanceMonitor.track_operation("add_subscriber")
 async def add_single_subscriber(subscriber: SubscriberIn, request: Request):
-    """Add single subscriber for your frontend"""
+    """
+    Add a single subscriber to a list.
+
+    FastAPI has already validated the body into a SubscriberIn instance
+    via the type annotation, so we use `subscriber` directly. Do NOT
+    re-instantiate SubscriberIn(**subscriber) — that fails because
+    `subscriber` is a model instance, not a mapping.
+    """
     try:
-        from schemas.subscriber_schema import SubscriberIn
-
-        # Validate with Pydantic
-        validated = SubscriberIn(**subscriber)
-
         subscribers_collection = get_subscribers_collection()
-        # email = subscriber.email.strip().lower()
-        email = validated.email.strip().lower()
 
+        # Email is already normalized by SubscriberIn's validator, but
+        # belt-and-suspenders normalization here is cheap and safe.
+        email = subscriber.email.strip().lower()
+        list_name = subscriber.list
+
+        # Duplicate guard: same email cannot exist twice in the same list.
         existing = await subscribers_collection.find_one(
-            {"email": email, "list": validated.list}
+            {"email": email, "list": list_name},
+            projection={"_id": 1},
         )
         if existing:
             raise HTTPException(
-                status_code=400, detail="Subscriber already exists in this list"
+                status_code=400,
+                detail="Subscriber already exists in this list",
             )
 
-        doc = {
-            "list": validated.list,
-            "email": email,
-            "status": validated.status or "active",
-            "created_at": datetime.utcnow(),
-            "updated_at": datetime.utcnow(),
-            "standard_fields": validated.standard_fields or {},
-            "custom_fields": validated.custom_fields or {},
-        }
-
-        result = await subscribers_collection.insert_one(doc)
-        doc["_id"] = str(result.inserted_id)
-
-        await log_activity(
-            action="create",
-            entity_type="subscriber",
-            entity_id=str(result.inserted_id),
-            user_action=f"Added subscriber {email} to list '{subscriber.list}'",
-            after_data={
-                "email": email,
-                "list": subscriber.list,
-                "status": doc["status"],
-                "standard_fields": doc["standard_fields"],
-                "custom_fields": doc["custom_fields"],
-            },
-            metadata={
-                "ip_address": str(request.client.host) if request.client else "unknown",
-                "list_name": subscriber.list,
-                "email": email,
-            },
+        now = datetime.utcnow()
+        status_value = (
+            subscriber.status.value
+            if hasattr(subscriber.status, "value")
+            else (subscriber.status or "active")
         )
 
-        return doc
+        doc = {
+            "list": list_name,
+            "email": email,
+            "status": status_value,
+            "created_at": now,
+            "updated_at": now,
+            "standard_fields": subscriber.standard_fields or {},
+            "custom_fields": subscriber.custom_fields or {},
+        }
+
+        try:
+            result = await subscribers_collection.insert_one(doc)
+        except DuplicateKeyError:
+            # A unique index race lost — treat as already-exists rather
+            # than 500. This protects against concurrent inserts.
+            raise HTTPException(
+                status_code=400,
+                detail="Subscriber already exists in this list",
+            )
+
+        subscriber_id = str(result.inserted_id)
+
+        # Audit log — never let logging failure break the user request.
+        try:
+            await log_activity(
+                action="create",
+                entity_type="subscriber",
+                entity_id=subscriber_id,
+                user_action=f"Added subscriber {email} to list '{list_name}'",
+                after_data={
+                    "email": email,
+                    "list": list_name,
+                    "status": status_value,
+                    "standard_fields": doc["standard_fields"],
+                    "custom_fields": doc["custom_fields"],
+                },
+                metadata={
+                    "ip_address": (
+                        str(request.client.host) if request.client else "unknown"
+                    ),
+                    "list_name": list_name,
+                    "email": email,
+                },
+            )
+        except Exception as audit_err:
+            logger.warning(
+                "Audit logging failed for subscriber create",
+                extra={
+                    "subscriber_id": subscriber_id,
+                    "email": email,
+                    "list": list_name,
+                    "error": str(audit_err),
+                },
+            )
+
+        # Return a JSON-safe response. The raw `doc` contains a datetime
+        # and (after insert) an ObjectId that aren't directly serializable
+        # in all configurations.
+        return {
+            "_id": subscriber_id,
+            "list": list_name,
+            "email": email,
+            "status": status_value,
+            "standard_fields": doc["standard_fields"],
+            "custom_fields": doc["custom_fields"],
+            "created_at": now.isoformat(),
+            "updated_at": now.isoformat(),
+        }
 
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Add subscriber failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(
+            "Add subscriber failed",
+            extra={
+                "email": getattr(subscriber, "email", None),
+                "list": getattr(subscriber, "list", None),
+                "error": str(e),
+                "trace": traceback.format_exc(),
+            },
+        )
+        raise HTTPException(status_code=500, detail="Failed to add subscriber")
 
 
 @router.put("/{subscriber_id}")

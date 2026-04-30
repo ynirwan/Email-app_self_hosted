@@ -1,6 +1,7 @@
+# backend/routes/auth.py
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Depends, Request, status
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, validator
 from core.auth import (
     hash_password,
     verify_password,
@@ -8,6 +9,8 @@ from core.auth import (
     decode_jwt_token,
     get_current_user,
 )
+from core.i18n import SUPPORTED_LANGUAGES, normalize_language
+from core.timezone import is_valid_timezone, DEFAULT_TIMEZONE
 from database import get_users_collection
 from bson import ObjectId
 from datetime import datetime
@@ -34,6 +37,25 @@ class UserUpdate(BaseModel):
     timezone: Optional[str] = None
     language: Optional[str] = None
 
+    @validator("timezone")
+    def _check_tz(cls, v):
+        if v is None:
+            return v
+        if not is_valid_timezone(v):
+            raise ValueError("Invalid timezone. Use a valid IANA name like 'Europe/Berlin'.")
+        return v
+
+    @validator("language")
+    def _check_lang(cls, v):
+        if v is None:
+            return v
+        normalized = normalize_language(v)
+        if normalized != v.strip().lower().split("-")[0]:
+            raise ValueError(
+                f"Unsupported language. Choose one of: {', '.join(SUPPORTED_LANGUAGES)}"
+            )
+        return normalized
+
 
 class PasswordChange(BaseModel):
     current_password: str
@@ -57,7 +79,7 @@ async def register(user: UserRegister):
             "password": hashed,
             "created_at": datetime.utcnow(),
             "is_active": True,
-            "timezone": "UTC",
+            "timezone": DEFAULT_TIMEZONE,
             "language": "en",
         }
         result = await users_collection.insert_one(user_doc)
@@ -72,6 +94,8 @@ async def register(user: UserRegister):
                 "email": user.email,
             },
         }
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Registration failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -96,6 +120,8 @@ async def login(user: UserLogin):
                 "email": db_user["email"],
             },
         }
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Login failed: {e}")
         raise HTTPException(status_code=500, detail="Login failed")
@@ -103,7 +129,13 @@ async def login(user: UserLogin):
 
 @router.get("/me")
 async def get_profile(current_user: dict = Depends(get_current_user)):
-    """Return current user profile. Auth enforced by get_current_user dependency."""
+    """
+    Return the current user profile. The dict includes timezone & language
+    so the frontend can apply them globally without a second request.
+    Defaults are filled in for older accounts that pre-date these fields.
+    """
+    current_user.setdefault("timezone", DEFAULT_TIMEZONE)
+    current_user.setdefault("language", "en")
     return current_user
 
 
@@ -121,7 +153,7 @@ async def update_profile(
             {"_id": ObjectId(current_user["_id"])},
             {"$set": {**update_dict, "updated_at": datetime.utcnow()}},
         )
-        return {"message": "Profile updated successfully"}
+        return {"message": "Profile updated successfully", "updated": update_dict}
     except HTTPException:
         raise
     except Exception as e:

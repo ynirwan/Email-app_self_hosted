@@ -1,0 +1,21 @@
+{
+  "campaign.scheduled": "您的活动已安排在 {when}。",
+  "campaign.sent": "您的活动已发送给 {count} 位收件人。",
+  "campaign.paused": "您的活动已暂停。",
+  "campaign.failed": "您的活动失败:{reason}",
+  "automation.started": "已为 {subscriber} 启动自动化。",
+  "errors.invalid_timezone": "无效的时区。请选择有效的 IANA 时区。",
+  "errors.invalid_language": "不支持的语言代码。",
+  "errors.unauthorized": "您无权执行此操作。",
+  "errors.not_found": "未找到请求的资源。"
+}{
+  "campaign.scheduled": "आपका अभियान {when} के लिए निर्धारित है।",
+  "campaign.sent": "आपका अभियान {count} प्राप्तकर्ताओं को भेजा गया।",
+  "campaign.paused": "आपका अभियान रोक दिया गया है।",
+  "campaign.failed": "आपका अभियान विफल हुआ: {reason}",
+  "automation.started": "{subscriber} के लिए स्वचालन शुरू हुआ।",
+  "errors.invalid_timezone": "अमान्य समय क्षेत्र। कृपया मान्य IANA समय क्षेत्र चुनें।",
+  "errors.invalid_language": "असमर्थित भाषा कोड।",
+  "errors.unauthorized": "आप यह कार्य करने के लिए अधिकृत नहीं हैं।",
+  "errors.not_found": "अनुरोधित संसाधन नहीं मिला।"
+}

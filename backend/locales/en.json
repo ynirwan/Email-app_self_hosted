@@ -1,0 +1,11 @@
+{
+  "campaign.scheduled": "Your campaign is scheduled for {when}.",
+  "campaign.sent": "Your campaign was sent to {count} recipients.",
+  "campaign.paused": "Your campaign has been paused.",
+  "campaign.failed": "Your campaign failed: {reason}",
+  "automation.started": "Automation started for {subscriber}.",
+  "errors.invalid_timezone": "Invalid timezone. Please choose a valid IANA timezone.",
+  "errors.invalid_language": "Unsupported language code.",
+  "errors.unauthorized": "You are not authorized to perform this action.",
+  "errors.not_found": "The requested resource was not found."
+}

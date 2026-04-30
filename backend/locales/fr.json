@@ -1,0 +1,11 @@
+{
+  "campaign.scheduled": "Votre campagne est programmée pour {when}.",
+  "campaign.sent": "Votre campagne a été envoyée à {count} destinataires.",
+  "campaign.paused": "Votre campagne a été suspendue.",
+  "campaign.failed": "Votre campagne a échoué : {reason}",
+  "automation.started": "Automatisation démarrée pour {subscriber}.",
+  "errors.invalid_timezone": "Fuseau horaire invalide. Choisissez un fuseau IANA valide.",
+  "errors.invalid_language": "Code de langue non pris en charge.",
+  "errors.unauthorized": "Vous n'êtes pas autorisé à effectuer cette action.",
+  "errors.not_found": "La ressource demandée est introuvable."
+}

@@ -36,6 +36,15 @@ class EmailConfig(BaseModel):
             raise ValueError('Sender name is required')
         return v.strip()
 
+    @validator("reply_to", pre=True, always=True)
+    def normalize_empty_reply_to(cls, v):
+        if v is None:
+            return None
+        if isinstance(v, str) and v.strip() == "":
+            return None
+        return v
+
+
 
 class AutomationStepCreate(BaseModel):
     """Step configuration for automation"""

@@ -1,0 +1,11 @@
+{
+  "campaign.scheduled": "Ihre Kampagne ist für {when} geplant.",
+  "campaign.sent": "Ihre Kampagne wurde an {count} Empfänger gesendet.",
+  "campaign.paused": "Ihre Kampagne wurde pausiert.",
+  "campaign.failed": "Ihre Kampagne ist fehlgeschlagen: {reason}",
+  "automation.started": "Automatisierung für {subscriber} gestartet.",
+  "errors.invalid_timezone": "Ungültige Zeitzone. Bitte wählen Sie eine gültige IANA-Zeitzone.",
+  "errors.invalid_language": "Sprachcode nicht unterstützt.",
+  "errors.unauthorized": "Sie sind nicht berechtigt, diese Aktion auszuführen.",
+  "errors.not_found": "Die angeforderte Ressource wurde nicht gefunden."
+}

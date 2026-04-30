@@ -1,0 +1,11 @@
+{
+  "campaign.scheduled": "आपका अभियान {when} के लिए निर्धारित है।",
+  "campaign.sent": "आपका अभियान {count} प्राप्तकर्ताओं को भेजा गया।",
+  "campaign.paused": "आपका अभियान रोक दिया गया है।",
+  "campaign.failed": "आपका अभियान विफल हुआ: {reason}",
+  "automation.started": "{subscriber} के लिए स्वचालन शुरू हुआ।",
+  "errors.invalid_timezone": "अमान्य समय क्षेत्र। कृपया मान्य IANA समय क्षेत्र चुनें।",
+  "errors.invalid_language": "असमर्थित भाषा कोड।",
+  "errors.unauthorized": "आप यह कार्य करने के लिए अधिकृत नहीं हैं।",
+  "errors.not_found": "अनुरोधित संसाधन नहीं मिला।"
+}
