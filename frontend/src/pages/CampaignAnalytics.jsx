@@ -7,16 +7,6 @@ import { useSettings } from "../contexts/SettingsContext";
 // ── Helpers ───────────────────────────────────────────────────────────────────
 const fmt = (n) => Number(n ?? 0).toLocaleString();
 const pct = (n) => `${Number(n ?? 0).toFixed(1)}%`;
-const fmtD = (iso) =>
-  iso
-    ? new Date(iso).toLocaleString(undefined, {
-        month: "short",
-        day: "numeric",
-        year: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
-      })
-    : "—";
 
 const parseDevice = (ua = "") => {
   const u = ua.toLowerCase();
@@ -740,7 +730,7 @@ function DetailRow({ row, metric }) {
           {row.ip_address || "—"}
         </td>
         <td className="px-4 py-3 text-xs text-gray-500 whitespace-nowrap">
-          {fmtD(row.timestamp)}
+          {formatDateTime(row.timestamp)}
         </td>
         <td className="px-4 py-3">
           <span className="text-xs text-gray-500">{row.total_count || 1}×</span>
@@ -850,7 +840,7 @@ function MiniTable({ rows, total, type, onViewAll }) {
                     {row.ip_address || "—"}
                   </td>
                   <td className="px-3 py-2 text-gray-400 whitespace-nowrap">
-                    {fmtD(row.timestamp)}
+                    {formatDateTime(row.timestamp)}
                   </td>
                   <td className="px-3 py-2">
                     <span
@@ -964,7 +954,7 @@ function ActivityFeed({ events, limit = 10 }) {
               </div>
 
               <div className="flex gap-3 mt-0.5">
-                <p className="text-xs text-gray-400">{fmtD(ev.timestamp)}</p>
+                <p className="text-xs text-gray-400">{formatDateTime(ev.timestamp)}</p>
                 {ev.ip_address && (
                   <p className="text-xs text-gray-300 font-mono">
                     {ev.ip_address}
@@ -1122,11 +1112,11 @@ const CampaignDetails = ({ campaign }) => (
         ["Lists", campaign?.target_lists?.join(", ") || "None"],
         ["Target", fmt(campaign?.target_list_count)],
         ["Sent", fmt(campaign?.sent_count)],
-        ["Created", fmtD(campaign?.created_at)],
-        ["Started", fmtD(campaign?.started_at)],
+        ["Created", formatDateTime(campaign?.created_at)],
+        ["Started", formatDateTime(campaign?.started_at)],
         [
           "Completed",
-          campaign?.completed_at ? fmtD(campaign.completed_at) : "In progress",
+          campaign?.completed_at ? formatDateTime(campaign.completed_at) : "In progress",
         ],
       ].map(([label, value]) => (
         <div key={label}>

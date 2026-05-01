@@ -672,7 +672,7 @@ export default function Campaigns() {
               {scheduleDate && scheduleTime && (
                 <p className="text-sm text-purple-600 bg-purple-50 p-2 rounded">
                   Will send on:{" "}
-                  {new Date(`${scheduleDate}T${scheduleTime}`).toLocaleString()}
+                  {formatDateTime(`${scheduleDate}T${scheduleTime}`)}
                 </p>
               )}
             </div>

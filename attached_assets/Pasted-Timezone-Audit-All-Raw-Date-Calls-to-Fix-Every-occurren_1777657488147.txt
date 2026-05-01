@@ -1,0 +1,55 @@
+Timezone Audit — All Raw Date Calls to Fix
+Every occurrence of new Date(...).toLocaleString(), .toLocaleDateString(), .toLocaleTimeString()
+that bypasses the user's saved timezone. Replace with useSettings() formatters.
+
+1. frontend/src/pages/Campaigns.jsx
+Add useSettings hook at the top of the component:
+jsxconst { formatDateTime, formatDate } = useSettings();
+Line A — scheduled time (uses .toLocaleString())
+jsx// BEFORE
+{new Date(c.scheduled_time).toLocaleString()}
+
+// AFTER
+{formatDateTime(c.scheduled_time)}
+Line B — created_at (uses .toLocaleDateString())
+jsx// BEFORE
+{c.created_at ? new Date(c.created_at).toLocaleDateString() : '-'}
+
+// AFTER
+{c.created_at ? formatDate(c.created_at) : '-'}
+
+2. frontend/src/pages/CampaignAnalytics.jsx
+Two separate locations:
+2a — File-level fmtD helper (top of file)
+This helper uses .toLocaleString(undefined, ...) — it ignores the user's saved timezone.
+Delete it and replace all call sites with formatDateTime from useSettings().
+js// BEFORE (delete this entire helper)
+const fmtD = (iso) =>
+  iso
+    ? new Date(iso).toLocaleString(undefined, {
+        month: "short", day: "numeric", year: "numeric",
+        hour: "2-digit", minute: "2-digit",
+      })
+    : "—";
+Add at the top of the component:
+jsxconst { formatDateTime, formatDate } = useSettings();
+2b — Campaign details grid (created_at, started_at, completed_at)
+jsx// BEFORE
+value={campaign?.created_at ? new Date(campaign.created_at).toLocaleString() : 'Unknown'}
+value={campaign?.started_at ? new Date(campaign.started_at).toLocaleString() : 'Not started'}
+value={campaign?.completed_at ? new Date(campaign.completed_at).toLocaleString() : 'In progress'}
+
+// AFTER
+value={campaign?.created_at ? formatDateTime(campaign.created_at) : 'Unknown'}
+value={campaign?.started_at ? formatDateTime(campaign.started_at) : 'Not started'}
+value={campaign?.completed_at ? formatDateTime(campaign.completed_at) : 'In progress'}
+2c — Timeline section (started_at, last_batch_at, completed_at)
+jsx// BEFORE
+value={campaign?.started_at ? new Date(campaign.started_at).toLocaleString() : 'Not started'}
+value={campaign?.last_batch_at ? new Date(campaign.last_batch_at).toLocaleString() : 'N/A'}
+value={campaign?.completed_at ? new Date(campaign.completed_at).toLocaleString() : 'In progress'}
+
+// AFTER
+value={campaign?.started_at ? formatDateTime(campaign.started_at) : 'Not started'}
+value={campaign?.last_batch_at ? formatDateTime(campaign.last_batch_at) : 'N/A'}
+value={campaign?.completed_at ? formatDateTime(campaign.completed_at
