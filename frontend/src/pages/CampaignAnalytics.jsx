@@ -678,6 +678,7 @@ function StatPill({ label, value, color }) {
 }
 
 function DetailRow({ row, metric }) {
+  const { formatDateTime } = useSettings();
   const [exp, setExp] = useState(false);
   const device = row.device || parseDevice(row.user_agent || "");
   const colSpan = metric === "clicked" ? 7 : 6;
@@ -767,6 +768,7 @@ function DetailRow({ row, metric }) {
 
 // ── MiniTable ─────────────────────────────────────────────────────────────────
 function MiniTable({ rows, total, type, onViewAll }) {
+  const { formatDateTime } = useSettings();
   if (!rows.length) {
     return (
       <div className="text-center py-12">
@@ -901,6 +903,7 @@ const EV_CFG = {
 };
 
 function ActivityFeed({ events, limit = 10 }) {
+  const { formatDateTime } = useSettings();
   const items = (events || []).slice(0, limit);
 
   if (!items.length) {
