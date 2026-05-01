@@ -2,6 +2,7 @@ import React, { useEffect, useState, useRef, useCallback } from 'react';
 import API from '../api';
 import EmailEditor from '../components/EmailEditor';
 import { Eye, X, Monitor, Smartphone, Tablet, Copy } from 'lucide-react';
+import { useSettings } from "../contexts/SettingsContext";
 
 // ─── helpers ────────────────────────────────────────────────
 const fmtDate = (iso) => {
@@ -45,6 +46,7 @@ function ToastContainer({ toasts, dismiss }) {
 }
 
 export default function TemplatesPage() {
+  const { t, formatDate } = useSettings();
   const [templates, setTemplates]         = useState([]);
   const [loading, setLoading]             = useState(false);
   const [errorMsg, setErrorMsg]           = useState('');
@@ -117,7 +119,7 @@ export default function TemplatesPage() {
   const handleEdit = (template) => { setEditTemplate(template); setIsDirty(false); };
 
   const handleDelete = async (template) => {
-    if (!confirm(`Delete "${template.name}"?`)) return;
+    if (!confirm(t('templates.deleteConfirm'))) return;
     try {
       await API.delete(`/templates/${template._id || template.id}`);
       setTemplates(prev => prev.filter(t => (t._id || t.id) !== (template._id || template.id)));
@@ -209,12 +211,12 @@ export default function TemplatesPage() {
             </div>
             <div className="flex items-center justify-between px-5 py-3 border-t bg-gray-50 flex-shrink-0">
               <p className="text-xs text-gray-400">
-                {previewTemplate.updated_at ? `Updated ${new Date(previewTemplate.updated_at).toLocaleDateString()}` : ''}
+                {previewTemplate.updated_at ? `Updated ${formatDate(previewTemplate.updated_at)}` : ''}
               </p>
               <div className="flex gap-2">
                 <button onClick={() => { setPreviewTemplate(null); handleEdit(previewTemplate); }}
                   className="px-4 py-2 bg-blue-600 text-white text-sm font-semibold rounded-lg hover:bg-blue-700">
-                  Edit Template
+                  {t('templates.edit')}
                 </button>
                 <button onClick={() => setPreviewTemplate(null)}
                   className="px-4 py-2 border text-sm font-medium rounded-lg hover:bg-gray-100">
@@ -245,7 +247,7 @@ export default function TemplatesPage() {
               </button>
               <button onClick={handleSave} disabled={saving}
                 className="px-5 py-2 bg-blue-600 text-white text-sm font-semibold rounded-lg hover:bg-blue-700 disabled:opacity-50">
-                {saving ? 'Saving…' : 'Save Template'}
+                {saving ? t('common.saving') : t('common.save')}
               </button>
             </div>
           </div>
@@ -285,7 +287,7 @@ export default function TemplatesPage() {
           <div className="flex flex-wrap items-center justify-between gap-3">
             <button onClick={handleCreate}
               className="px-5 py-2.5 bg-blue-600 text-white text-sm font-semibold rounded-lg hover:bg-blue-700 transition-colors">
-              + Create Template
+              + {t('templates.create')}
             </button>
             <div className="flex items-center gap-2">
               <select value={modeFilter} onChange={e => setModeFilter(e.target.value)}
@@ -318,15 +320,15 @@ export default function TemplatesPage() {
             <div className="bg-white rounded-xl border border-gray-200 py-16 text-center shadow-sm">
               <p className="text-3xl mb-2">📄</p>
               <p className="text-sm font-medium text-gray-700 mb-1">
-                {search || modeFilter ? 'No templates match your filters' : 'No templates yet'}
+                {search || modeFilter ? 'No templates match your filters' : t('templates.empty')}
               </p>
               {(search || modeFilter)
                 ? <button onClick={() => { setSearch(''); setModeFilter(''); }} className="text-xs text-blue-600 mt-1 hover:underline">Clear filters</button>
-                : <p className="text-xs text-gray-400 mt-1 mb-4">Click "Create Template" to build your first email template</p>
+                : <p className="text-xs text-gray-400 mt-1 mb-4">Click "{t('templates.create')}" to build your first email template</p>
               }
               {!search && !modeFilter && (
                 <button onClick={handleCreate} className="px-4 py-2 bg-blue-600 text-white text-sm font-semibold rounded-lg hover:bg-blue-700">
-                  Create Template
+                  {t('templates.create')}
                 </button>
               )}
             </div>
@@ -358,10 +360,10 @@ export default function TemplatesPage() {
                         )}
                         <p className="text-xs text-gray-300 mt-1">
                           {template.created_at && (
-                            <span>Created {fmtDate(template.created_at)}</span>
+                            <span>Created {formatDate(template.created_at)}</span>
                           )}
                           {template.updated_at && template.updated_at !== template.created_at && (
-                            <span className="ml-2 text-gray-400">· Edited {fmtDate(template.updated_at)}</span>
+                            <span className="ml-2 text-gray-400">· Edited {formatDate(template.updated_at)}</span>
                           )}
                         </p>
                       </div>

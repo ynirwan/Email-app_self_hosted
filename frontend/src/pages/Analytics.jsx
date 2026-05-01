@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { Link } from "react-router-dom";
 import API from "../api";
+import { useSettings } from "../contexts/SettingsContext";
 
 const fmt = (n) => Number(n ?? 0).toLocaleString();
 const pct = (n) => `${Number(n ?? 0).toFixed(1)}%`;
@@ -33,7 +34,7 @@ function StatCard({ label, value, sub, color, icon }) {
   );
 }
 
-function CampaignRow({ campaign }) {
+function CampaignRow({ campaign, formatDate }) {
   const analytics = campaign.analytics || {};
   const sent = analytics.total_sent || 0;
   const openRate = analytics.open_rate || 0;
@@ -98,7 +99,7 @@ function CampaignRow({ campaign }) {
         </div>
       </td>
       <td className="px-4 py-3.5 text-right text-xs text-gray-400 whitespace-nowrap">
-        {fmtD(
+        {formatDate(
           campaign.completed_at || campaign.started_at || campaign.created_at,
         )}
       </td>
@@ -221,6 +222,7 @@ function ABWinnerRow({ test }) {
 }
 
 export default function Analytics() {
+  const { t, formatDate } = useSettings();
   const [days, setDays] = useState(30);
   const [data, setData] = useState(null);
   const [abTests, setAbTests] = useState([]);
@@ -367,8 +369,8 @@ export default function Analytics() {
             onChange={(e) => setDays(Number(e.target.value))}
             className="px-3 py-2 text-sm border border-gray-200 rounded-lg bg-white focus:ring-2 focus:ring-blue-400"
           >
-            <option value={7}>Last 7 days</option>
-            <option value={30}>Last 30 days</option>
+            <option value={7}>{t('analytics.last7Days')}</option>
+            <option value={30}>{t('analytics.last30Days')}</option>
             <option value={90}>Last 90 days</option>
             <option value={365}>Last year</option>
           </select>
@@ -391,25 +393,25 @@ export default function Analytics() {
           sub={`Last ${days} days`}
         />
         <StatCard
-          label="Emails Sent"
+          label={t('analytics.totalSent')}
           value={fmt(summary.total_emails_sent)}
           icon="📧"
           color="green"
           sub="Across all campaigns"
         />
         <StatCard
-          label="Avg Open Rate"
+          label={t('analytics.openRate')}
           value={pct(summary.average_open_rate)}
           icon="👁️"
           color="purple"
-          sub={`${fmt(summary.total_opens)} opens`}
+          sub={`${fmt(summary.total_opens)} ${t('analytics.opens')}`}
         />
         <StatCard
-          label="Avg Click Rate"
+          label={t('analytics.clickRate')}
           value={pct(summary.average_click_rate)}
           icon="👆"
           color="rose"
-          sub={`${fmt(summary.total_clicks)} clicks`}
+          sub={`${fmt(summary.total_clicks)} ${t('analytics.clicks')}`}
         />
       </div>
 
@@ -422,7 +424,7 @@ export default function Analytics() {
           <div className="space-y-3 max-w-lg">
             <div className="flex items-center gap-3">
               <span className="text-xs text-gray-500 w-24 flex-shrink-0">
-                Avg Open Rate
+                {t('analytics.openRate')}
               </span>
               <div className="flex-1 bg-blue-100 rounded-full h-2 overflow-hidden">
                 <div
@@ -438,7 +440,7 @@ export default function Analytics() {
             </div>
             <div className="flex items-center gap-3">
               <span className="text-xs text-gray-500 w-24 flex-shrink-0">
-                Avg Click Rate
+                {t('analytics.clickRate')}
               </span>
               <div className="flex-1 bg-purple-100 rounded-full h-2 overflow-hidden">
                 <div
@@ -527,13 +529,13 @@ export default function Analytics() {
                       Status
                     </th>
                     <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Sent
+                      {t('analytics.totalSent')}
                     </th>
                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-40">
-                      Open Rate
+                      {t('analytics.openRate')}
                     </th>
                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-40">
-                      Click Rate
+                      {t('analytics.clickRate')}
                     </th>
                     <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
                       Date
@@ -543,7 +545,7 @@ export default function Analytics() {
                 </thead>
                 <tbody>
                   {campaigns.map((c) => (
-                    <CampaignRow key={c._id} campaign={c} />
+                    <CampaignRow key={c._id} campaign={c} formatDate={formatDate} />
                   ))}
                 </tbody>
               </table>
@@ -596,13 +598,13 @@ export default function Analytics() {
                   <p className="text-xl font-bold text-blue-700">
                     {pct(abAvgOpen)}
                   </p>
-                  <p className="text-xs text-gray-400 mt-0.5">Avg Open Rate</p>
+                  <p className="text-xs text-gray-400 mt-0.5">{t('analytics.openRate')}</p>
                 </div>
                 <div className="text-center">
                   <p className="text-xl font-bold text-pink-700">
                     {pct(abAvgClick)}
                   </p>
-                  <p className="text-xs text-gray-400 mt-0.5">Avg Click Rate</p>
+                  <p className="text-xs text-gray-400 mt-0.5">{t('analytics.clickRate')}</p>
                 </div>
               </div>
 

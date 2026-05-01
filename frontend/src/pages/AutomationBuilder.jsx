@@ -7,9 +7,11 @@ import {
   Edit3, ChevronDown, ChevronUp, Info, Check, X
 } from 'lucide-react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { useSettings } from "../contexts/SettingsContext";
 import API from '../api';
 
 const AutomationBuilder = () => {
+  const { t } = useSettings();
   const navigate = useNavigate();
   const { id } = useParams();
   const isEditing = Boolean(id);
@@ -494,7 +496,7 @@ const AutomationBuilder = () => {
       <div className="sticky top-0 z-20 bg-white border border-gray-200 rounded-xl shadow-sm px-5 py-3 flex items-center justify-between gap-3">
         <div className="flex items-center gap-2 text-sm text-gray-600">
           {workflow.advanced_mode && <Zap className="text-yellow-500" size={16} />}
-          <span className="font-medium">{isEditing ? 'Edit Automation' : 'New Automation'}</span>
+          <span className="font-medium">{t('automation.builder.title')}</span>
           {workflow.name && <span className="text-gray-400">— {workflow.name}</span>}
         </div>
         <div className="flex items-center gap-2">
@@ -595,7 +597,7 @@ const AutomationBuilder = () => {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <div>
             <label className="block text-sm font-medium mb-2">
-              Automation Name <span className="text-red-500">*</span>
+              {t('automation.form.name') || 'Automation Name'} <span className="text-red-500">*</span>
             </label>
             <input
               type="text"

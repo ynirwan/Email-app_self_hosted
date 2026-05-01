@@ -3,6 +3,7 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import API from "../api";
 import ProviderErrorBanner from "../components/ProviderErrorBanner";
+import { useSettings } from "../contexts/SettingsContext";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 const fmt = (n) => Number(n ?? 0).toLocaleString();
@@ -136,6 +137,7 @@ function LockedOverlay({ locked, children }) {
 
 // ── Main EditCampaign ─────────────────────────────────────────────────────────
 export default function EditCampaign() {
+  const { t, formatDate } = useSettings();
   const navigate = useNavigate();
   const { id: campaignId } = useParams();
 
@@ -492,7 +494,7 @@ export default function EditCampaign() {
       )}
 
       <div className="space-y-4">
-        <InputField label="Campaign Title" required error={errors.title}>
+        <InputField label={t('campaign.form.name')} required error={errors.title}>
           {/* NEW 6h: disabled in sender_only mode */}
           <input
             className={`${inputCls(errors.title)} ${editMode === "sender_only" ? "bg-gray-100 cursor-not-allowed" : ""}`}
@@ -503,7 +505,7 @@ export default function EditCampaign() {
           />
         </InputField>
 
-        <InputField label="Subject Line" required error={errors.subject}>
+        <InputField label={t('campaign.form.subject')} required error={errors.subject}>
           {/* NEW 6h: disabled in sender_only mode */}
           <input
             className={`${inputCls(errors.subject)} ${editMode === "sender_only" ? "bg-gray-100 cursor-not-allowed" : ""}`}
@@ -517,7 +519,7 @@ export default function EditCampaign() {
 
       {/* Sender fields — always editable in sender_only */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <InputField label="Sender Name" required error={errors.sender_name}>
+        <InputField label={t('campaign.form.fromName')} required error={errors.sender_name}>
           <input
             className={inputCls(errors.sender_name)}
             placeholder="e.g., Acme Team"
@@ -525,7 +527,7 @@ export default function EditCampaign() {
             onChange={(e) => set("sender_name", e.target.value)}
           />
         </InputField>
-        <InputField label="Sender Email" required error={errors.sender_email}>
+        <InputField label={t('campaign.form.fromEmail')} required error={errors.sender_email}>
           <input
             type="email"
             className={inputCls(errors.sender_email)}
@@ -934,7 +936,7 @@ export default function EditCampaign() {
       <div className="flex items-center justify-between mb-8">
         <div>
           <div className="flex items-center gap-2 mb-0.5">
-            <h1 className="text-2xl font-bold text-gray-900">Edit Campaign</h1>
+            <h1 className="text-2xl font-bold text-gray-900">{t('campaign.form.edit')}</h1>
             {originalStatus !== "draft" && (
               <span
                 className={`text-xs px-2.5 py-1 rounded-full font-semibold ${

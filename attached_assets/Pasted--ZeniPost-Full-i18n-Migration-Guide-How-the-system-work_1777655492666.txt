@@ -1,0 +1,790 @@
+# ZeniPost — Full i18n Migration Guide
+
+## How the system works
+
+- `SettingsContext` / `SettingsProvider` expose `t(key, vars?)` and all date/number formatters.
+- Every component gets the hook with **one import** and **one destructure**.
+- Locale JSON keys follow dot-notation namespacing: `"page.section.label"`.
+- The Sidebar is already done — it is the reference implementation.
+
+---
+
+## Universal import (same in every file)
+
+```js
+import { useSettings } from "../contexts/SettingsContext";
+```
+
+> Adjust the relative path depth as needed (`"../../contexts/SettingsContext"` for files two levels deep).
+
+## Universal hook call (inside every component function)
+
+```js
+const { t, formatDate, formatDateTime, formatRelative, formatNumber } = useSettings();
+```
+
+Only destructure what the file actually uses. At minimum every file needs `t`.
+
+---
+
+## Key namespace conventions already in the locale files
+
+| Prefix | Purpose |
+|---|---|
+| `common.*` | Buttons, states shared everywhere (Save, Cancel, Loading…) |
+| `nav.*` | Sidebar labels (already done) |
+| `settings.*` | Profile / password / email settings page |
+| `campaigns.*` | Campaign statuses and labels |
+| `analytics.*` | Metric labels |
+
+Add new keys in this same dot-notation style. Add them to **all 8 locale files** (`en`, `es`, `fr`, `de`, `zh`, `hi`, `ar`, `ru`).
+
+---
+
+## File-by-file changes
+
+The rule for every file is:
+
+1. Add the import at the top (alongside existing imports).
+2. Add the hook call as the first line inside the component.
+3. Replace every hardcoded user-visible string with `t("key")`.
+4. Replace every `new Date(...).toLocaleString()` / manual date string with `formatDate()` / `formatDateTime()` / `formatRelative()`.
+
+---
+
+### `frontend/src/pages/Dashboard.jsx`
+
+**Add import:**
+```js
+import { useSettings } from "../contexts/SettingsContext";
+```
+
+**Add inside component:**
+```js
+const { t, formatDate, formatDateTime, formatNumber } = useSettings();
+```
+
+**Line replacements (strings → keys):**
+
+| Old hardcoded string | Replace with |
+|---|---|
+| `"Dashboard"` (page title) | `t("nav.dashboard")` |
+| `"Overview & Stats"` / subtitle | `t("nav.dashboard.sub")` |
+| `"Total Sent"` | `t("analytics.totalSent")` |
+| `"Opens"` | `t("analytics.opens")` |
+| `"Clicks"` | `t("analytics.clicks")` |
+| `"Delivered"` | `t("analytics.delivered")` |
+| `"Loading…"` | `t("common.loading")` |
+| Any `new Date(x).toLocaleDateString()` | `formatDate(x)` |
+| Any `new Date(x).toLocaleString()` | `formatDateTime(x)` |
+
+**New keys to add to all locale files:**
+```json
+"dashboard.recentCampaigns": "Recent Campaigns",
+"dashboard.noData": "No data yet"
+```
+
+---
+
+### `frontend/src/pages/Analytics.jsx`
+
+**Add import:**
+```js
+import { useSettings } from "../contexts/SettingsContext";
+```
+
+**Add inside component:**
+```js
+const { t, formatDate, formatNumber } = useSettings();
+```
+
+**Line replacements:**
+
+| Old string | Replace with |
+|---|---|
+| `"Analytics"` (heading) | `t("nav.analytics")` |
+| `"Reports & Insights"` | `t("nav.analytics.sub")` |
+| `"Total Sent"` | `t("analytics.totalSent")` |
+| `"Opens"` | `t("analytics.opens")` |
+| `"Clicks"` | `t("analytics.clicks")` |
+| `"Delivered"` | `t("analytics.delivered")` |
+| `"Draft"` | `t("campaigns.draft")` |
+| `"Scheduled"` | `t("campaigns.scheduled")` |
+| `"Sending"` | `t("campaigns.sending")` |
+| `"Completed"` | `t("campaigns.completed")` |
+| `"Failed"` | `t("campaigns.failed")` |
+| `"Loading…"` | `t("common.loading")` |
+| Any `.toLocaleDateString()` | `formatDate(x)` |
+| Any number display like `(1234).toLocaleString()` | `formatNumber(n)` |
+
+**New keys to add:**
+```json
+"analytics.dateRange": "Date Range",
+"analytics.last30Days": "Last 30 days",
+"analytics.last7Days": "Last 7 days",
+"analytics.openRate": "Open Rate",
+"analytics.clickRate": "Click Rate",
+"analytics.noResults": "No campaigns match your filters"
+```
+
+---
+
+### `frontend/src/pages/CampaignAnalytics.jsx`
+
+**Add import:**
+```js
+import { useSettings } from "../contexts/SettingsContext";
+```
+
+**Add inside component:**
+```js
+const { t, formatDate, formatDateTime, formatNumber } = useSettings();
+```
+
+**Line replacements:**
+
+| Old string | Replace with |
+|---|---|
+| `"Campaign Analytics"` | `t("analytics.campaignTitle")` |
+| `"Total Sent"` | `t("analytics.totalSent")` |
+| `"Opens"` | `t("analytics.opens")` |
+| `"Clicks"` | `t("analytics.clicks")` |
+| `"Delivered"` | `t("analytics.delivered")` |
+| `"Bounces"` | `t("analytics.bounces")` |
+| `"Unsubscribes"` | `t("analytics.unsubscribes")` |
+| Date strings | `formatDateTime(x)` |
+| Number displays | `formatNumber(n)` |
+
+**New keys to add:**
+```json
+"analytics.campaignTitle": "Campaign Analytics",
+"analytics.bounces": "Bounces",
+"analytics.unsubscribes": "Unsubscribes",
+"analytics.complaints": "Complaints"
+```
+
+---
+
+### `frontend/src/pages/Campaigns.jsx`
+
+**Add import:**
+```js
+import { useSettings } from "../contexts/SettingsContext";
+```
+
+**Add inside component:**
+```js
+const { t, formatDate, formatDateTime } = useSettings();
+```
+
+**Line replacements:**
+
+| Old string | Replace with |
+|---|---|
+| `"Campaigns"` (heading) | `t("campaigns.title")` |
+| `"Create Campaign"` | `t("campaigns.create")` |
+| `"Draft"` | `t("campaigns.draft")` |
+| `"Scheduled"` | `t("campaigns.scheduled")` |
+| `"Sending"` | `t("campaigns.sending")` |
+| `"Completed"` | `t("campaigns.completed")` |
+| `"Failed"` | `t("campaigns.failed")` |
+| `"Loading…"` | `t("common.loading")` |
+| `"Delete"` button | `t("common.delete")` |
+| `"Cancel"` button | `t("common.cancel")` |
+| Scheduled date display | `formatDateTime(x)` |
+
+**New keys to add:**
+```json
+"campaigns.all": "All",
+"campaigns.search": "Search campaigns…",
+"campaigns.empty": "No campaigns yet. Create your first one.",
+"campaigns.deleteConfirm": "Are you sure you want to delete this campaign?",
+"campaigns.recipients": "Recipients",
+"campaigns.scheduledFor": "Scheduled for {when}"
+```
+
+---
+
+### `frontend/src/pages/CreateCampaign.jsx`
+
+**Add import:**
+```js
+import { useSettings } from "../contexts/SettingsContext";
+```
+
+**Add inside component:**
+```js
+const { t } = useSettings();
+```
+
+**Line replacements:**
+
+| Old string | Replace with |
+|---|---|
+| `"Create Campaign"` (heading) | `t("campaigns.create")` |
+| `"Save"` / `"Save Draft"` | `t("common.save")` |
+| `"Cancel"` | `t("common.cancel")` |
+| `"Loading…"` / `"Saving…"` | `t("common.saving")` |
+| Form field labels (Subject, From Name, etc.) | add keys under `campaign.form.*` |
+
+**New keys to add:**
+```json
+"campaign.form.name": "Campaign Name",
+"campaign.form.subject": "Subject Line",
+"campaign.form.fromName": "From Name",
+"campaign.form.fromEmail": "From Email",
+"campaign.form.preheader": "Preheader Text",
+"campaign.form.audience": "Audience",
+"campaign.form.template": "Template",
+"campaign.form.scheduleAt": "Schedule For",
+"campaign.form.sendNow": "Send Now",
+"campaign.form.saveDraft": "Save Draft"
+```
+
+---
+
+### `frontend/src/pages/EditCampaign.jsx`
+
+**Add import:**
+```js
+import { useSettings } from "../contexts/SettingsContext";
+```
+
+**Add inside component:**
+```js
+const { t, formatDateTime } = useSettings();
+```
+
+Same replacements as `CreateCampaign.jsx` plus:
+
+| Old string | Replace with |
+|---|---|
+| `"Edit Campaign"` | `t("campaign.form.edit")` |
+| `"Update"` / `"Save Changes"` | `t("common.save")` |
+
+**New keys to add:**
+```json
+"campaign.form.edit": "Edit Campaign"
+```
+
+---
+
+### `frontend/src/pages/TemplatesPage.jsx`
+
+**Add import:**
+```js
+import { useSettings } from "../contexts/SettingsContext";
+```
+
+**Add inside component:**
+```js
+const { t, formatDate } = useSettings();
+```
+
+**Line replacements:**
+
+| Old string | Replace with |
+|---|---|
+| `"Templates"` (heading) | `t("nav.templates")` |
+| `"Email Templates"` | `t("nav.templates.sub")` |
+| `"Create Template"` | `t("templates.create")` |
+| `"Delete"` | `t("common.delete")` |
+| `"Loading…"` | `t("common.loading")` |
+| Date displays | `formatDate(x)` |
+
+**New keys to add:**
+```json
+"templates.create": "Create Template",
+"templates.edit": "Edit Template",
+"templates.empty": "No templates yet.",
+"templates.deleteConfirm": "Delete this template?",
+"templates.fields": "{count} field",
+"templates.fields_plural": "{count} fields"
+```
+
+---
+
+### `frontend/src/pages/Subscribers.jsx`
+
+**Add import:**
+```js
+import { useSettings } from "../contexts/SettingsContext";
+```
+
+**Add inside component:**
+```js
+const { t, formatDate, formatNumber } = useSettings();
+```
+
+**Line replacements:**
+
+| Old string | Replace with |
+|---|---|
+| `"Subscribers"` (heading) | `t("nav.subscribers")` |
+| `"Manage Contacts"` | `t("nav.subscribers.sub")` |
+| `"Loading…"` | `t("common.loading")` |
+| `"Delete"` | `t("common.delete")` |
+| `"Cancel"` | `t("common.cancel")` |
+| Count display | `formatNumber(n)` |
+| Date added | `formatDate(x)` |
+
+**New keys to add:**
+```json
+"subscribers.import": "Import Subscribers",
+"subscribers.export": "Export",
+"subscribers.search": "Search subscribers…",
+"subscribers.total": "{count} subscriber",
+"subscribers.total_plural": "{count} subscribers",
+"subscribers.status.active": "Active",
+"subscribers.status.unsubscribed": "Unsubscribed",
+"subscribers.status.bounced": "Bounced",
+"subscribers.empty": "No subscribers yet."
+```
+
+---
+
+### `frontend/src/pages/SubscriberListView.jsx`
+
+**Add import:**
+```js
+import { useSettings } from "../contexts/SettingsContext";
+```
+
+**Add inside component:**
+```js
+const { t, formatDate } = useSettings();
+```
+
+Same pattern as `Subscribers.jsx` — replace list-level labels, date renders, and action button text.
+
+---
+
+### `frontend/src/pages/Segmentation.jsx`
+
+**Add import:**
+```js
+import { useSettings } from "../contexts/SettingsContext";
+```
+
+**Add inside component:**
+```js
+const { t, formatDate } = useSettings();
+```
+
+**Line replacements:**
+
+| Old string | Replace with |
+|---|---|
+| `"Segmentation"` | `t("nav.segments")` |
+| `"Target Groups"` | `t("nav.segments.sub")` |
+| `"Create Segment"` | `t("segments.create")` |
+| `"Delete"` | `t("common.delete")` |
+| `"Loading…"` | `t("common.loading")` |
+| Date displays | `formatDate(x)` |
+
+**New keys to add:**
+```json
+"segments.create": "Create Segment",
+"segments.edit": "Edit Segment",
+"segments.empty": "No segments yet.",
+"segments.contacts": "{count} contacts",
+"segments.deleteConfirm": "Delete this segment?"
+```
+
+---
+
+### `frontend/src/pages/SuppressionManagement.jsx`
+
+**Add import:**
+```js
+import { useSettings } from "../contexts/SettingsContext";
+```
+
+**Add inside component:**
+```js
+const { t, formatDate } = useSettings();
+```
+
+**Line replacements:**
+
+| Old string | Replace with |
+|---|---|
+| `"Suppressions"` | `t("nav.suppressions")` |
+| `"Blocked Emails"` | `t("nav.suppressions.sub")` |
+| `"Add Suppression"` | `t("suppressions.add")` |
+| `"Delete"` | `t("common.delete")` |
+| `"Loading…"` | `t("common.loading")` |
+| `"Previous"` / `"Next"` pagination | `t("common.previous")` / `t("common.next")` |
+| `"Page {n} of {total}"` | `t("common.page", { n, total })` |
+| Date displays | `formatDate(x)` |
+
+**New keys to add:**
+```json
+"suppressions.add": "Add Suppression",
+"suppressions.import": "Import",
+"suppressions.bulkCheck": "Bulk Check",
+"suppressions.reason.bounce": "Bounce",
+"suppressions.reason.complaint": "Complaint",
+"suppressions.reason.manual": "Manual",
+"suppressions.reason.unsubscribe": "Unsubscribe",
+"suppressions.empty": "No suppressions found.",
+"common.previous": "Previous",
+"common.next": "Next",
+"common.page": "Page {n} of {total}",
+"common.showing": "Showing {from}–{to} results"
+```
+
+---
+
+### `frontend/src/pages/ABTestingDashboard.jsx`
+
+**Add import:**
+```js
+import { useSettings } from "../contexts/SettingsContext";
+```
+
+**Add inside component:**
+```js
+const { t, formatDate, formatNumber } = useSettings();
+```
+
+**Line replacements:**
+
+| Old string | Replace with |
+|---|---|
+| `"A/B Testing"` | `t("nav.abTesting")` |
+| `"Test & Optimize"` | `t("nav.abTesting.sub")` |
+| `"Create A/B Test"` | `t("abtest.create")` |
+| `"Winner"` | `t("abtest.winner")` |
+| `"Running"` / `"Completed"` | `t("abtest.running")` / `t("abtest.completed")` |
+| Date displays | `formatDate(x)` |
+| Stat numbers | `formatNumber(n)` |
+
+**New keys to add:**
+```json
+"abtest.create": "Create A/B Test",
+"abtest.winner": "Winner",
+"abtest.running": "Running",
+"abtest.completed": "Completed",
+"abtest.draft": "Draft",
+"abtest.empty": "No A/B tests yet.",
+"abtest.variants": "Variants",
+"abtest.sendWinner": "Send Winner"
+```
+
+---
+
+### `frontend/src/pages/ABTestCreator.jsx`
+
+**Add import:**
+```js
+import { useSettings } from "../contexts/SettingsContext";
+```
+
+**Add inside component:**
+```js
+const { t } = useSettings();
+```
+
+Replace form field labels, button text (Save, Cancel), and heading with `t()` keys under `abtest.form.*`.
+
+**New keys to add:**
+```json
+"abtest.form.name": "Test Name",
+"abtest.form.variantA": "Variant A",
+"abtest.form.variantB": "Variant B",
+"abtest.form.splitRatio": "Split Ratio",
+"abtest.form.winnerCriteria": "Winner Criteria",
+"abtest.form.duration": "Test Duration (hours)"
+```
+
+---
+
+### `frontend/src/pages/ABTestResults.jsx`
+
+**Add import:**
+```js
+import { useSettings } from "../contexts/SettingsContext";
+```
+
+**Add inside component:**
+```js
+const { t, formatDate, formatNumber } = useSettings();
+```
+
+Replace metric headings (`Opens`, `Clicks`, `Sent`) and date labels using existing `analytics.*` and `common.*` keys.
+
+---
+
+### `frontend/src/pages/AutomationDashboard.jsx`
+
+**Add import:**
+```js
+import { useSettings } from "../contexts/SettingsContext";
+```
+
+**Add inside component:**
+```js
+const { t, formatDate } = useSettings();
+```
+
+**Line replacements:**
+
+| Old string | Replace with |
+|---|---|
+| `"Automation"` | `t("nav.automation")` |
+| `"Email Automation"` | `t("nav.automation.sub")` |
+| `"Create Automation"` | `t("automation.create")` |
+| `"Active"` / `"Paused"` / `"Draft"` | `t("automation.active")` / `t("automation.paused")` / `t("automation.draft")` |
+| `"Delete"` | `t("common.delete")` |
+| Date displays | `formatDate(x)` |
+
+**New keys to add:**
+```json
+"automation.create": "Create Automation",
+"automation.active": "Active",
+"automation.paused": "Paused",
+"automation.draft": "Draft",
+"automation.empty": "No automations yet.",
+"automation.subscribers": "{count} active subscribers",
+"automation.steps": "{count} steps"
+```
+
+---
+
+### `frontend/src/pages/AutomationBuilder.jsx`
+
+**Add import:**
+```js
+import { useSettings } from "../contexts/SettingsContext";
+```
+
+**Add inside component:**
+```js
+const { t } = useSettings();
+```
+
+Replace step type labels, button text, and form field labels. These tend to be inline so work through the file top-to-bottom replacing every string literal in JSX.
+
+**New keys to add:**
+```json
+"automation.builder.title": "Automation Builder",
+"automation.step.email": "Send Email",
+"automation.step.wait": "Wait",
+"automation.step.condition": "Condition",
+"automation.step.addStep": "Add Step",
+"automation.step.waitHours": "Wait {hours} hours",
+"automation.step.subject": "Subject",
+"automation.step.template": "Template"
+```
+
+---
+
+### `frontend/src/pages/AutomationAnalytics.jsx`
+
+**Add import:**
+```js
+import { useSettings } from "../contexts/SettingsContext";
+```
+
+**Add inside component:**
+```js
+const { t, formatNumber } = useSettings();
+```
+
+Replace metric labels using existing `analytics.*` keys. Add automation-specific ones:
+
+```json
+"automation.analytics.enrolled": "Enrolled",
+"automation.analytics.completed": "Completed",
+"automation.analytics.active": "Currently Active",
+"automation.analytics.unsubscribed": "Unsubscribed"
+```
+
+---
+
+### `frontend/src/pages/AutomationCampaignAnalytics.jsx`
+
+Same pattern as `AutomationAnalytics.jsx`. Combine `analytics.*` keys with `automation.analytics.*` keys.
+
+---
+
+### `frontend/src/pages/SettingsPage.jsx`
+
+**Add import:**
+```js
+import { useSettings } from "../contexts/SettingsContext";
+```
+
+**Add inside component:**
+```js
+const { t } = useSettings();
+```
+
+**Line replacements (settings keys already exist in all locale files):**
+
+| Old string | Replace with |
+|---|---|
+| `"Profile Information"` | `t("settings.profile")` |
+| `"Name"` | `t("settings.name")` |
+| `"Email"` | `t("settings.email")` |
+| `"Timezone"` | `t("settings.timezone")` |
+| `"Language"` | `t("settings.language")` |
+| `"Change Password"` | `t("settings.password.title")` |
+| `"Current Password"` | `t("settings.password.current")` |
+| `"New Password"` | `t("settings.password.new")` |
+| `"Confirm New Password"` | `t("settings.password.confirm")` |
+| `"Save"` | `t("common.save")` |
+| `"Saving…"` | `t("common.saving")` |
+| `"Profile updated successfully"` | `t("settings.profile.updated")` |
+| `"Password changed successfully"` | `t("settings.password.updated")` |
+| `"Passwords do not match"` | `t("settings.password.mismatch")` |
+
+---
+
+### `frontend/src/pages/EmailSettings.jsx`
+
+**Add import:**
+```js
+import { useSettings } from "../contexts/SettingsContext";
+```
+
+**Add inside component:**
+```js
+const { t } = useSettings();
+```
+
+**New keys to add:**
+```json
+"emailSettings.title": "Email Settings",
+"emailSettings.provider": "Email Provider",
+"emailSettings.smtpHost": "SMTP Host",
+"emailSettings.smtpPort": "SMTP Port",
+"emailSettings.username": "Username",
+"emailSettings.password": "Password",
+"emailSettings.fromName": "Default From Name",
+"emailSettings.fromEmail": "Default From Email",
+"emailSettings.testEmail": "Send Test Email",
+"emailSettings.saved": "Email settings saved",
+"emailSettings.testSent": "Test email sent"
+```
+
+---
+
+### `frontend/src/pages/DomainSettings.jsx`
+
+**Add import:**
+```js
+import { useSettings } from "../contexts/SettingsContext";
+```
+
+**Add inside component:**
+```js
+const { t } = useSettings();
+```
+
+**New keys to add:**
+```json
+"domainSettings.title": "Domain Settings",
+"domainSettings.addDomain": "Add Domain",
+"domainSettings.verify": "Verify",
+"domainSettings.verified": "Verified",
+"domainSettings.pending": "Pending Verification",
+"domainSettings.dnsRecords": "DNS Records",
+"domainSettings.nextSteps": "Next Steps"
+```
+
+---
+
+### `frontend/src/components/AuditTrail.jsx`
+
+**Add import:**
+```js
+import { useSettings } from "../contexts/SettingsContext";
+```
+
+**Add inside component:**
+```js
+const { t, formatDateTime } = useSettings();
+```
+
+**Line replacements:**
+
+| Old string | Replace with |
+|---|---|
+| `"Audit Trail"` | `t("nav.audit")` |
+| `"Activity Logs"` | `t("nav.audit.sub")` |
+| `"Loading…"` | `t("common.loading")` |
+| Date/time displays | `formatDateTime(x)` |
+
+**New keys to add:**
+```json
+"audit.action": "Action",
+"audit.actor": "User",
+"audit.resource": "Resource",
+"audit.timestamp": "Time",
+"audit.empty": "No audit events found.",
+"audit.search": "Search logs…"
+```
+
+---
+
+## Shared keys already in all locale files (use without adding)
+
+These are safe to use right now in any file:
+
+```
+common.save        common.cancel       common.delete
+common.loading     common.saving       common.error
+common.success
+
+settings.profile   settings.name       settings.email
+settings.timezone  settings.language
+settings.password.title   settings.password.current
+settings.password.new     settings.password.confirm
+settings.profile.updated  settings.password.updated
+settings.password.mismatch
+
+campaigns.title    campaigns.create
+campaigns.draft    campaigns.scheduled   campaigns.sending
+campaigns.completed  campaigns.failed
+
+analytics.totalSent  analytics.opens  analytics.clicks  analytics.delivered
+
+nav.dashboard      nav.analytics      nav.subscribers   nav.segments
+nav.suppressions   nav.campaigns      nav.templates     nav.abTesting
+nav.automation     nav.audit          nav.settings
+(and all .sub variants)
+```
+
+---
+
+## Adding new keys — checklist
+
+When you add a key to `en.json`, add it to all 8 files:
+
+- `frontend/src/locales/en.json` ← source of truth
+- `frontend/src/locales/es.json`
+- `frontend/src/locales/fr.json`
+- `frontend/src/locales/de.json`
+- `frontend/src/locales/zh.json`
+- `frontend/src/locales/hi.json`
+- `frontend/src/locales/ar.json`
+- `frontend/src/locales/ru.json`
+
+If you skip a language, `t()` will fall back to English automatically — no crash. But complete the translations before shipping.
+
+---
+
+## RTL note
+
+Arabic (`ar`) sets `document.dir = "rtl"` automatically via `SettingsProvider`. You don't need to handle this per-component. Just avoid hardcoding `left`/`right` in inline styles; use Tailwind's `rtl:` variants if directional adjustments are needed.
+
+---
+
+## Quick sanity test after each file
+
+1. Switch language to `fr` or `zh` in Settings.
+2. Navigate to the updated page.
+3. Every visible string should render in the selected language.
+4. If any string is still in English and isn't a proper noun or data value, it's a missed key.

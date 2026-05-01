@@ -733,12 +733,12 @@ app.include_router(
     setting.router, prefix="/api/settings", tags=["Settings"], dependencies=_auth_dep
 )
 
-app.include_router(
-    tracking.settings_router,
-    prefix="/api/settings",
-    tags=["Settings"],
-    dependencies=_auth_dep,
-)
+#app.include_router(
+#    tracking.settings_router,
+#    prefix="/api/settings",
+#    tags=["Settings"],
+#    dependencies=_auth_dep,
+#)
 
 app.include_router(
     domains.router, prefix="/api/domains", tags=["Domains"], dependencies=_auth_dep
@@ -757,6 +757,8 @@ app.include_router(
     tags=["Email Settings"],
     dependencies=_auth_dep,
 )
+
+
 
 app.include_router(
     suppressions.router,

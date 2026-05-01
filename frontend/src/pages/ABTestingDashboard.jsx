@@ -1,6 +1,7 @@
 // frontend/src/pages/ABTestingDashboard.jsx
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import { useSettings } from "../contexts/SettingsContext";
 import API from "../api";
 
 // ── Toast ─────────────────────────────────────────────────────────────────────
@@ -49,6 +50,7 @@ const STATUS_STYLE = {
 
 // ── Main component ────────────────────────────────────────────────────────────
 export default function ABTestingDashboard() {
+  const { t, formatDate } = useSettings();
   const [abTests, setAbTests] = useState([]);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState({});
@@ -182,7 +184,7 @@ export default function ABTestingDashboard() {
           onClick={() => navigate("/ab-testing/create")}
           className="bg-violet-600 text-white px-5 py-2 rounded-lg hover:bg-violet-700 text-sm font-semibold"
         >
-          ✨ New Test
+          ✨ {t('abtest.create')}
         </button>
       </div>
 
@@ -245,7 +247,7 @@ export default function ABTestingDashboard() {
               )}
             </p>
             <p className="text-xs font-medium text-gray-500 mt-0.5">
-              {s.label}
+              {t('abtest.variants')}
             </p>
           </div>
         ))}
@@ -288,7 +290,7 @@ export default function ABTestingDashboard() {
 
         {filtered.length === 0 ? (
           <div className="py-12 text-center">
-            <p className="text-sm text-gray-500">No tests match your filters</p>
+            <p className="text-sm text-gray-500">{t('abtest.empty')}</p>
             <button
               onClick={() => {
                 setSearch("");
@@ -367,13 +369,13 @@ export default function ABTestingDashboard() {
                           )}
                           {isFailedByError
                             ? "✕ Failed — Provider Error"
-                            : test.status}
+                            : t(`abtest.${test.status}`) || test.status}
                         </span>
                       </td>
 
                       {/* Sample */}
                       <td className="px-4 py-3.5 text-right tabular-nums text-xs text-gray-600">
-                        {Number(test.sample_size || 0).toLocaleString()}
+                        {formatDate(test.sample_size)}
                       </td>
 
                       {/* Actions */}
@@ -400,7 +402,7 @@ export default function ABTestingDashboard() {
                               disabled={!!busy}
                               className="px-2.5 py-1.5 text-xs font-medium border border-green-200 rounded-lg hover:bg-green-50 text-green-700 disabled:opacity-50"
                             >
-                              {busy === "starting" ? "⏳" : "Start"}
+                              {busy === "starting" ? "⏳" : t('abtest.sendWinner')}
                             </button>
                           )}
 

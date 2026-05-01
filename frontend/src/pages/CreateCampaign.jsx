@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import API from "../api";
+import { useSettings } from "../contexts/SettingsContext";
 
 // ── Tiny helpers ──────────────────────────────────────────────────────────────
 const fmt = (n) => Number(n ?? 0).toLocaleString();
@@ -182,6 +183,7 @@ function AudienceCard({
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 export default function CreateCampaign() {
+  const { t } = useSettings();
   const navigate = useNavigate();
   const [step, setStep] = useState(1);
   const [completedSteps, setCompletedSteps] = useState([]);
@@ -446,7 +448,7 @@ export default function CreateCampaign() {
         </div>
       </div>
 
-      <InputField label="Campaign Title" required error={errors.title}>
+      <InputField label={t('campaign.form.name')} required error={errors.title}>
         <input
           className={inputCls(errors.title)}
           placeholder="e.g., April Newsletter, Product Launch..."
@@ -457,7 +459,7 @@ export default function CreateCampaign() {
       </InputField>
 
       <InputField
-        label="Subject Line"
+        label={t('campaign.form.subject')}
         required
         hint="what subscribers see in their inbox"
         error={errors.subject}
@@ -501,7 +503,7 @@ export default function CreateCampaign() {
       )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <InputField label="Sender Name" required error={errors.sender_name}>
+        <InputField label={t('campaign.form.fromName')} required error={errors.sender_name}>
           <input
             className={inputCls(errors.sender_name)}
             placeholder="e.g., Acme Team"
@@ -509,7 +511,7 @@ export default function CreateCampaign() {
             onChange={(e) => set("sender_name", e.target.value)}
           />
         </InputField>
-        <InputField label="Sender Email" required error={errors.sender_email}>
+        <InputField label={t('campaign.form.fromEmail')} required error={errors.sender_email}>
           <input
             type="email"
             className={inputCls(errors.sender_email)}
@@ -1067,14 +1069,14 @@ export default function CreateCampaign() {
             disabled={submitting}
             className="flex-1 py-3 px-6 bg-white border-2 border-gray-200 text-gray-700 font-semibold text-sm rounded-xl hover:border-gray-300 hover:bg-gray-50 transition-all disabled:opacity-50"
           >
-            💾 Save as Draft
+            {t('campaign.form.saveDraft')}
           </button>
           <button
             onClick={() => handleSubmit(true)}
             disabled={submitting}
             className="flex-1 py-3 px-6 bg-indigo-600 text-white font-bold text-sm rounded-xl hover:bg-indigo-700 shadow-lg shadow-indigo-200 hover:shadow-indigo-300 transition-all disabled:opacity-50"
           >
-            {submitting ? "⏳ Creating..." : "🚀 Create & Send Now"}
+            {submitting ? "⏳ Creating..." : t('campaign.form.sendNow')}
           </button>
         </div>
         <p className="text-xs text-gray-400 mt-3 text-center">

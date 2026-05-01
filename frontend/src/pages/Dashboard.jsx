@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import API from "../api";
 import { useUser } from "../contexts/UserContext";
+import { useSettings } from "../contexts/SettingsContext";
 
 // ─── tiny helpers ────────────────────────────────────────────
 const fmt = (n) => Number(n ?? 0).toLocaleString();
@@ -143,6 +144,7 @@ function RateBar({ label, value, color, max = 100 }) {
 // ─── Main Dashboard ──────────────────────────────────────────
 export default function Dashboard() {
   const { user, userLoading } = useUser();
+  const { t, formatDate, formatRelative } = useSettings();
   const navigate = useNavigate();
 
   const [stats, setStats] = useState(null);
@@ -301,7 +303,7 @@ export default function Dashboard() {
             {user?.email}
             {lastUpdated && (
               <span className="ml-3 text-gray-400">
-                · Updated {timeAgo(lastUpdated)}
+                · Updated {formatRelative(lastUpdated)}
                 {s.sending_campaigns > 0 && " · auto-refreshing"}
               </span>
             )}
@@ -435,7 +437,7 @@ export default function Dashboard() {
         <section className="lg:col-span-3 bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
           <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
             <h2 className="text-sm font-semibold text-gray-700">
-              Recent Campaigns
+              {t('dashboard.recentCampaigns')}
             </h2>
             <Link
               to="/campaigns"
@@ -449,7 +451,7 @@ export default function Dashboard() {
             <div className="px-5 py-10 text-center">
               <p className="text-3xl mb-2">📭</p>
               <p className="text-sm text-gray-500">
-                No completed campaigns yet
+                {t('dashboard.noData')}
               </p>
               <Link
                 to="/campaigns"
@@ -479,7 +481,7 @@ export default function Dashboard() {
                     </p>
                     {c.sent_at && (
                       <p className="text-xs text-gray-400">
-                        {new Date(c.sent_at).toLocaleDateString()}
+                        {formatDate(c.sent_at)}
                       </p>
                     )}
                   </div>

@@ -9,22 +9,23 @@
 import { useEffect, useState, useCallback, useMemo } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import API from "../api";
+import { useSettings } from "../contexts/SettingsContext";
 
 // ── Status badge ──────────────────────────────────────────────────────────────
-function StatusBadge({ status, pauseReason }) {
+function StatusBadge({ status, pauseReason, t }) {
   const isPausedByError =
     status === "paused" && pauseReason === "provider_error_auto_pause";
 
   const MAP = {
-    draft: { cls: "bg-yellow-100 text-yellow-800", label: "📝 Draft" },
-    scheduled: { cls: "bg-purple-100 text-purple-800", label: "🕐 Scheduled" },
-    sending: { cls: "bg-blue-100   text-blue-800", label: "📤 Sending" },
+    draft: { cls: "bg-yellow-100 text-yellow-800", label: `📝 ${t('campaigns.draft')}` },
+    scheduled: { cls: "bg-purple-100 text-purple-800", label: `🕐 ${t('campaigns.scheduled')}` },
+    sending: { cls: "bg-blue-100   text-blue-800", label: `📤 ${t('campaigns.sending')}` },
     queued: { cls: "bg-blue-100   text-blue-800", label: "⏳ Queued" },
-    completed: { cls: "bg-green-100  text-green-800", label: "✅ Completed" },
-    sent: { cls: "bg-green-100  text-green-800", label: "✅ Sent" },
+    completed: { cls: "bg-green-100  text-green-800", label: `✅ ${t('campaigns.completed')}` },
+    sent: { cls: "bg-green-100  text-green-800", label: `✅ ${t('campaigns.completed')}` },
     stopped: { cls: "bg-gray-100   text-gray-700", label: "🛑 Stopped" },
     cancelled: { cls: "bg-gray-100   text-gray-700", label: "✕ Cancelled" },
-    failed: { cls: "bg-red-100    text-red-800", label: "❌ Failed" },
+    failed: { cls: "bg-red-100    text-red-800", label: `❌ ${t('campaigns.failed')}` },
     paused: isPausedByError
       ? { cls: "bg-red-100 text-red-800", label: "⚠️ Paused — Error" }
       : { cls: "bg-orange-100 text-orange-800", label: "⏸ Paused" },
@@ -236,6 +237,7 @@ const BtnSecondary = ({ children, onClick }) => (
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 export default function Campaigns() {
+  const { t, formatDate, formatDateTime } = useSettings();
   const [campaigns, setCampaigns] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -362,7 +364,7 @@ export default function Campaigns() {
   };
 
   const handleDelete = async (id) => {
-    if (!window.confirm("Delete this campaign? This cannot be undone.")) return;
+    if (!window.confirm(t('campaigns.deleteConfirm'))) return;
     try {
       await API.delete(`/campaigns/${id}`);
       alert("Campaign deleted.");
@@ -456,12 +458,12 @@ export default function Campaigns() {
     <div className="space-y-6">
       {/* Header */}
       <div className="flex justify-between items-center">
-        <h2 className="text-2xl font-bold text-gray-900">📢 Campaigns</h2>
+        <h2 className="text-2xl font-bold text-gray-900">📢 {t('campaigns.title')}</h2>
         <button
           onClick={() => navigate("/campaigns/create")}
           className="bg-blue-600 text-white px-5 py-2 rounded-lg hover:bg-blue-700 text-sm font-semibold"
         >
-          ✨ Create Campaign
+          ✨ {t('campaigns.create')}
         </button>
       </div>
 
@@ -501,7 +503,7 @@ export default function Campaigns() {
         <input
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search campaigns…"
+          placeholder={t('campaigns.search')}
           className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 w-56"
         />
         <select
@@ -509,7 +511,7 @@ export default function Campaigns() {
           onChange={(e) => setStatusFilter(e.target.value)}
           className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none"
         >
-          <option value="">All statuses</option>
+          <option value="">{t('campaigns.all')}</option>
           {[
             "draft",
             "scheduled",
@@ -521,7 +523,7 @@ export default function Campaigns() {
             "failed",
           ].map((s) => (
             <option key={s} value={s}>
-              {s}
+              {t(`campaigns.${s}`)}
             </option>
           ))}
         </select>
@@ -537,7 +539,7 @@ export default function Campaigns() {
 
         {filtered.length === 0 ? (
           <div className="py-16 text-center text-gray-400">
-            <p className="text-lg mb-2">No campaigns found</p>
+            <p className="text-lg mb-2">{t('campaigns.empty')}</p>
             <p className="text-sm">
               {campaigns.length === 0
                 ? "Create your first campaign to get started."
@@ -573,13 +575,14 @@ export default function Campaigns() {
                       <StatusBadge
                         status={c.status}
                         pauseReason={c.pause_reason}
+                        t={t}
                       />
                     </Td>
                     <Td>{(c.target_list_count || 0).toLocaleString()}</Td>
                     <Td>{(c.sent_count || 0).toLocaleString()}</Td>
                     <Td>
                       {c.created_at
-                        ? new Date(c.created_at).toLocaleDateString()
+                        ? formatDate(c.created_at)
                         : "—"}
                     </Td>
                     <Td>

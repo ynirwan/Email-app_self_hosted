@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import API from "../api";
 import ProviderErrorBanner from "../components/ProviderErrorBanner";
+import { useSettings } from "../contexts/SettingsContext";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 const fmt = (n) => Number(n ?? 0).toLocaleString();
@@ -95,6 +96,7 @@ const METRIC_CFG = {
 
 // ── Main component ────────────────────────────────────────────────────────────
 export default function CampaignAnalytics() {
+  const { t, formatDate, formatDateTime } = useSettings();
   const { campaignId } = useParams();
   const navigate = useNavigate();
 
@@ -156,7 +158,7 @@ export default function CampaignAnalytics() {
   );
 
   // ── Metric modal opener ─────────────────────────────────────────────────────
-  const openModal = async (metric) => {
+  const openModal = async (metric, translate) => {
     setModal({
       metric,
       rows: [],
@@ -164,15 +166,16 @@ export default function CampaignAnalytics() {
       total_unique: 0,
       total_duplicate: 0,
       loading: true,
+      t: translate
     });
 
     try {
       const res = await API.get(
         `/analytics/campaigns/${campaignId}/detail?metric=${metric}&limit=200`,
       );
-      setModal({ metric, ...res.data, loading: false });
+      setModal({ metric, ...res.data, loading: false, t: translate });
     } catch {
-      setModal((m) => ({ ...m, loading: false, error: true }));
+      setModal((m) => ({ ...m, loading: false, error: true, t: translate }));
     }
   };
 
@@ -231,7 +234,7 @@ export default function CampaignAnalytics() {
           <div>
             <div className="flex items-center gap-3 flex-wrap">
               <h1 className="text-lg font-bold text-gray-900">
-                {campaign?.title || "Campaign Analytics"}
+                {campaign?.title || t('analytics.campaignTitle')}
               </h1>
               <StatusBadge
                 status={campaign?.status}
@@ -339,7 +342,7 @@ export default function CampaignAnalytics() {
             ].map(([l, v]) => (
               <div key={l}>
                 <p className="text-xs text-gray-500 mb-0.5">{l}</p>
-                <p className="text-gray-800">{fmtD(v)}</p>
+                <p className="text-gray-800">{formatDateTime(v)}</p>
               </div>
             ))}
           </div>
@@ -361,13 +364,13 @@ export default function CampaignAnalytics() {
               metric: "opened",
               total: analytics?.total_opened || 0,
               rate: analytics?.open_rate || 0,
-              rateLabel: "open rate",
+              rateLabel: t('analytics.openRate'),
             },
             {
               metric: "clicked",
               total: analytics?.total_clicked || 0,
               rate: analytics?.click_rate || 0,
-              rateLabel: "click rate",
+              rateLabel: t('analytics.clickRate'),
             },
             {
               metric: "delivered",
@@ -379,14 +382,14 @@ export default function CampaignAnalytics() {
                     (analytics?.total_bounced || 0),
                 ),
               rate: analytics?.delivery_rate || 0,
-              rateLabel: "delivery",
+              rateLabel: t('analytics.delivered'),
             },
           ].map(({ metric, total, rate, rateLabel }) => {
             const cfg = METRIC_CFG[metric];
             return (
               <button
                 key={metric}
-                onClick={() => openModal(metric)}
+                onClick={() => openModal(metric, t)}
                 className={`${cfg.bg} border ${cfg.border} rounded-xl p-5 text-center hover:shadow-md transition-all cursor-pointer group relative`}
               >
                 <div className="absolute top-2 right-2 text-gray-300 group-hover:text-gray-500 text-xs">
@@ -394,7 +397,7 @@ export default function CampaignAnalytics() {
                 </div>
                 <p className="text-2xl mb-2">{cfg.icon}</p>
                 <p className="text-xs font-medium text-gray-500 mb-1">
-                  {cfg.label}
+                  {t(`analytics.${cfg.label.toLowerCase()}`)}
                 </p>
                 <p className={`text-3xl font-bold tabular-nums ${cfg.color}`}>
                   {fmt(total)}
@@ -430,7 +433,7 @@ export default function CampaignAnalytics() {
               return (
                 <button
                   key={metric}
-                  onClick={() => openModal(metric)}
+                  onClick={() => openModal(metric, t)}
                   className="bg-white border border-red-100 rounded-xl p-4 text-center hover:shadow-md transition-all cursor-pointer group relative"
                 >
                   <div className="absolute top-2 right-2 text-gray-300 group-hover:text-gray-500 text-xs">
@@ -438,7 +441,7 @@ export default function CampaignAnalytics() {
                   </div>
                   <p className="text-xl mb-1">{cfg.icon}</p>
                   <p className="text-xs font-medium text-gray-500">
-                    {cfg.label}
+                    {metric === 'spam_report' ? 'Spam Reports' : t(`analytics.${cfg.label.toLowerCase()}`)}
                   </p>
                   <p className={`text-2xl font-bold tabular-nums ${cfg.color}`}>
                     {fmt(total)}
@@ -491,7 +494,7 @@ export default function CampaignAnalytics() {
                 total={panelTotal}
                 type={panel === "openers" ? "open" : "click"}
                 onViewAll={() =>
-                  openModal(panel === "openers" ? "opened" : "clicked")
+                  openModal(panel === "openers" ? "opened" : "clicked", t)
                 }
               />
             ))}
@@ -516,6 +519,7 @@ export default function CampaignAnalytics() {
 // ── MetricDetailModal ─────────────────────────────────────────────────────────
 function MetricDetailModal({ modal, onClose, onDownload, downloading }) {
   const cfg = METRIC_CFG[modal.metric] || {};
+  const t = modal.t;
   const [filter, setFilter] = useState("all");
   const [search, setSearch] = useState("");
 
@@ -538,7 +542,7 @@ function MetricDetailModal({ modal, onClose, onDownload, downloading }) {
             <span className="text-2xl">{cfg.icon}</span>
             <div>
               <h2 className="text-base font-bold text-gray-900">
-                {cfg.label} Detail
+                {modal.metric === 'spam_report' ? 'Spam Reports' : t(`analytics.${cfg.label.toLowerCase()}`)} Detail
               </h2>
               {!modal.loading && (
                 <p className="text-xs text-gray-400">

@@ -510,57 +510,77 @@ async def validate_email_limits(limits: SendingLimits):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
+
+
 class TrackingSettings(BaseModel):
-    open_tracking_enabled: bool = True
-    click_tracking_enabled: bool = True
-    unsubscribe_tracking_enabled: bool = True  # always write unsub events
-    track_unique_only: bool = True  # only count first open/click per subscriber
+    open_tracking_enabled:        bool           = True
+    click_tracking_enabled:       bool           = True
+    unsubscribe_tracking_enabled: bool           = True
+    track_unique_only:            bool           = True
+    open_tracking_domain:         Optional[str]  = ""
+    click_tracking_domain:        Optional[str]  = ""
+    unsubscribe_domain:           Optional[str]  = ""
 
 
 _TRACKING_DEFAULTS = {
-    "open_tracking_enabled": True,
-    "click_tracking_enabled": True,
+    "open_tracking_enabled":        True,
+    "click_tracking_enabled":       True,
     "unsubscribe_tracking_enabled": True,
-    "track_unique_only": True,
+    "track_unique_only":            True,
+    "open_tracking_domain":         "",
+    "click_tracking_domain":        "",
+    "unsubscribe_domain":           "",
 }
 
 
+def _clean_tracking_domain(val: Optional[str]) -> str:
+    if not val:
+        return ""
+    return (
+        val.strip().lower()
+        .replace("https://", "")
+        .replace("http://", "")
+        .rstrip("/")
+    )
+
+
 async def get_tracking_settings_doc() -> dict:
-    """Internal helper — returns the raw settings doc with defaults applied."""
     col = get_settings_collection()
-    doc = await col.find_one({"type": "tracking"})
+    doc = await col.find_one({"type": "tracking"}) or {}
     merged = dict(_TRACKING_DEFAULTS)
-    if doc:
-        for k in _TRACKING_DEFAULTS:
-            if k in doc:
-                merged[k] = doc[k]
+    for k in _TRACKING_DEFAULTS:
+        if k in doc:
+            merged[k] = doc[k]
     return merged
 
 
 @router.get("/tracking")
 async def get_tracking_settings():
-    """Return current tracking feature flags."""
     try:
         return await get_tracking_settings_doc()
     except Exception as e:
-        raise HTTPException(
-            status_code=500, detail=f"Failed to load tracking settings: {e}"
-        )
+        raise HTTPException(500, detail=f"Failed to load tracking settings: {e}")
 
 
 @router.put("/tracking")
 async def update_tracking_settings(payload: TrackingSettings, request: Request):
-    """Persist tracking feature flags."""
     try:
-        col = get_settings_collection()
+        col       = get_settings_collection()
         audit_col = get_audit_collection()
-        now = datetime.utcnow()
+        now       = datetime.utcnow()
+        before    = await get_tracking_settings_doc()
 
-        before = await get_tracking_settings_doc()
-
-        update_data = payload.dict()
-        update_data["type"] = "tracking"
-        update_data["updated_at"] = now
+        update_data = {
+            "type":                         "tracking",
+            "updated_at":                   now,
+            "open_tracking_enabled":        payload.open_tracking_enabled,
+            "click_tracking_enabled":       payload.click_tracking_enabled,
+            "unsubscribe_tracking_enabled": payload.unsubscribe_tracking_enabled,
+            "track_unique_only":            payload.track_unique_only,
+            "open_tracking_domain":         _clean_tracking_domain(payload.open_tracking_domain),
+            "click_tracking_domain":        _clean_tracking_domain(payload.click_tracking_domain),
+            "unsubscribe_domain":           _clean_tracking_domain(payload.unsubscribe_domain),
+        }
 
         await col.update_one(
             {"type": "tracking"},
@@ -568,30 +588,22 @@ async def update_tracking_settings(payload: TrackingSettings, request: Request):
             upsert=True,
         )
 
-        # Audit log
         try:
-            await audit_col.insert_one(
-                {
-                    "timestamp": now,
-                    "action": "update_tracking_settings",
-                    "entity_type": "settings",
-                    "entity_id": "tracking",
-                    "user_action": "Updated tracking feature flags",
-                    "before_data": before,
-                    "after_data": update_data,
-                    "metadata": {
-                        "ip_address": str(request.client.host)
-                        if request.client
-                        else "unknown",
-                    },
-                }
-            )
+            await audit_col.insert_one({
+                "timestamp":   now,
+                "action":      "update_tracking_settings",
+                "entity_type": "settings",
+                "entity_id":   "tracking",
+                "before_data": before,
+                "after_data":  update_data,
+                "metadata":    {
+                    "ip_address": str(request.client.host) if request.client else "unknown"
+                },
+            })
         except Exception:
-            pass  # audit failure must never block the save
+            pass
 
         return {"status": "saved", **update_data}
 
     except Exception as e:
-        raise HTTPException(
-            status_code=500, detail=f"Failed to save tracking settings: {e}"
-        )
+        raise HTTPException(500, detail=f"Failed to save tracking settings: {e}")

@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useSettings } from "../contexts/SettingsContext";
 import { TrendingUp, Users, Mail, CheckCircle, Activity, Download } from 'lucide-react';
 import {
   BarChart, Bar, PieChart, Pie, Cell,
@@ -29,6 +30,7 @@ const StatCard = ({ icon, title, value, subtitle, color }) => {
 };
 
 export default function AutomationAnalytics() {
+  const { t, formatDate } = useSettings();
   const [loading, setLoading]                   = useState(true);
   const [overview, setOverview]                 = useState(null);
   const [rulesPerformance, setRulesPerformance] = useState([]);
@@ -144,16 +146,16 @@ export default function AutomationAnalytics() {
       {/* overview stat cards */}
       {overview && (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-          <StatCard icon={<Users className="text-blue-600" size={20} />} title="Total Workflows"
+          <StatCard icon={<Users className="text-blue-600" size={20} />} title={t('automation.analytics.enrolled') || "Workflows Started"}
             value={overview.workflows.total_started}
             subtitle={`${overview.workflows.completion_rate}% completion`} color="blue" />
-          <StatCard icon={<CheckCircle className="text-green-600" size={20} />} title="Completed"
+          <StatCard icon={<CheckCircle className="text-green-600" size={20} />} title={t('automation.analytics.completed') || "Completed"}
             value={overview.workflows.completed}
             subtitle={`${overview.workflows.in_progress} in progress`} color="green" />
-          <StatCard icon={<Mail className="text-purple-600" size={20} />} title="Emails Sent"
+          <StatCard icon={<Mail className="text-purple-600" size={20} />} title={t('analytics.totalSent')}
             value={overview.emails.total_sent}
             subtitle={`${overview.emails.failure_rate}% failure rate`} color="purple" />
-          <StatCard icon={<TrendingUp className="text-orange-600" size={20} />} title="Active Rules"
+          <StatCard icon={<TrendingUp className="text-orange-600" size={20} />} title={t('automation.analytics.active') || "Active Rules"}
             value={overview.automation_rules.active}
             subtitle={`of ${overview.automation_rules.total} total`} color="orange" />
         </div>

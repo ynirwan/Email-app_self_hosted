@@ -125,7 +125,21 @@ Preferred communication style: Simple, everyday language.
 - Log rotation: 10MB per file, 5 backups kept
 - Console output also preserved for live monitoring
 
-## Recent Changes (2026-03-10)
+## Recent Changes (2026-05-01)
+
+- **Full i18n Migration**: All frontend pages now use the i18n system via `useSettings` / `t()` from `SettingsContext`
+  - All 8 locale files updated with complete key sets: `en`, `es`, `fr`, `de`, `zh`, `hi`, `ar`, `ru`
+  - New key groups added: `campaigns.*`, `campaign.form.*`, `analytics.*`, `dashboard.*`, `templates.*`, `subscribers.*`, `segments.*`, `suppressions.*`, `abtest.*`, `automation.*`, `emailSettings.*`, `domainSettings.*`, `audit.*`, `common.previous/next/page/showing`
+  - 21 page/component files migrated: Dashboard, Analytics, CampaignAnalytics, Campaigns, CreateCampaign, EditCampaign, TemplatesPage, Subscribers, SubscriberListView, Segmentation, SuppressionManagement, ABTestingDashboard, ABTestCreator, AutomationDashboard, AutomationBuilder, AutomationAnalytics, AutomationCampaignAnalytics, EmailSettings, DomainSettings, AuditTrail
+  - Date/time formatting now uses `formatDate()` / `formatDateTime()` / `formatRelative()` helpers (timezone + locale-aware)
+
+- **task_config.py Consolidation Complete**: All task modules now exclusively import from `task_settings`, not from `core.config.settings`
+  - Fixed `provider_manager.py`: replaced `settings.MASTER_ENCRYPTION_KEY`, `settings.REDIS_URL`, `settings.MOCK_EMAIL_SENDING`
+  - Fixed `suppression_tasks.py` and `ses_webhook_tasks.py`: removed unused `from core.config import settings` imports
+  - Removed duplicate field definitions from `task_config.py` (`REDIS_URL`, `REDIS_KEY_PREFIX`, `LOG_LEVEL`, `MASTER_ENCRYPTION_KEY`, `MOCK_EMAIL_SENDING` were defined twice)
+  - `DLQ_RETENTION_DAYS` converted from property to plain class attribute to avoid Python descriptor conflict
+
+## Previous Changes (2026-03-10)
 - **Active Subscriber Count Display**: Enhanced subscriber list view to show both total and active subscriber counts
   - Backend endpoint `/api/subscribers/lists` now returns `total_count` and `active_count` for each list
   - Frontend displays: "X total" and "Y active" for each list in the subscriber management table

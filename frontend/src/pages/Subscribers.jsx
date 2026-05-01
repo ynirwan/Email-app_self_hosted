@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from "uuid";
 import API from "../api";
 import Papa from "papaparse";
 import { useNavigate } from "react-router-dom";
+import { useSettings } from "../contexts/SettingsContext";
 
 function useDebounce(value, delay) {
   const [debouncedValue, setDebouncedValue] = useState(value);
@@ -53,39 +54,17 @@ function Pagination({ page, totalPages, total, onChange }) {
   return (
     <div className="flex items-center justify-between mt-4 px-1">
       <p className="text-sm text-gray-500">
-        Page {page} of {totalPages} · <strong>{fmt(total)}</strong> subscribers
+        {t('common.page')} {page} {t('common.showing').split(' ')[1]} {totalPages} · <strong>{fmt(total)}</strong> {t('subscribers.total_plural').split(' ')[1]}
       </p>
       <div className="flex gap-1">
         {[
-          ["«", 1],
-          ["‹", page - 1],
+          [t('common.previous'), page - 1],
+          [t('common.next'), page + 1],
         ].map(([label, target]) => (
           <button
             key={label}
             onClick={() => onChange(target)}
-            disabled={page === 1}
-            className="px-2.5 py-1 text-xs border rounded disabled:opacity-40 hover:bg-gray-50"
-          >
-            {label}
-          </button>
-        ))}
-        {pages.map((p) => (
-          <button
-            key={p}
-            onClick={() => onChange(p)}
-            className={`px-2.5 py-1 text-xs border rounded ${p === page ? "bg-blue-600 text-white border-blue-600" : "hover:bg-gray-50"}`}
-          >
-            {p}
-          </button>
-        ))}
-        {[
-          ["›", page + 1],
-          ["»", totalPages],
-        ].map(([label, target]) => (
-          <button
-            key={label}
-            onClick={() => onChange(target)}
-            disabled={page === totalPages}
+            disabled={page === (label === t('common.previous') ? 1 : totalPages)}
             className="px-2.5 py-1 text-xs border rounded disabled:opacity-40 hover:bg-gray-50"
           >
             {label}
@@ -462,6 +441,7 @@ function AddSubscriberModal({
 // ─── Main Component ───────────────────────────────────────────────────────────
 export default function Subscribers() {
   const navigate = useNavigate();
+  const { t, formatDate } = useSettings();
 
   const [subscribers, setSubscribers] = useState([]);
   const [searchTerm, setSearchTerm] = useState("");
@@ -1095,7 +1075,7 @@ export default function Subscribers() {
           onClick={() => setShowUploadModal(true)}
           className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white text-sm font-semibold rounded-lg hover:bg-blue-700 transition-colors"
         >
-          📤 Upload CSV
+          📤 {t('subscribers.import')}
         </button>
         <button
           onClick={() => {
@@ -1143,7 +1123,7 @@ export default function Subscribers() {
           <div className="py-12 text-center">
             <p className="text-3xl mb-2">📋</p>
             <p className="text-sm font-medium text-gray-700">
-              No subscriber lists yet
+              {t('subscribers.empty')}
             </p>
             <p className="text-xs text-gray-400 mt-1 mb-4">
               Upload a CSV to create your first list
@@ -1200,7 +1180,7 @@ export default function Subscribers() {
                         {isProcessing && (
                           <span className="inline-flex items-center gap-1 text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">
                             <span className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-pulse" />
-                            {job.status === "pending" ? "Queued" : "Processing"}
+                            {job.status === "pending" ? t('campaigns.scheduled') : t('campaigns.sending')}
                           </span>
                         )}
                         {isFailed && (
@@ -1232,13 +1212,13 @@ export default function Subscribers() {
                           }
                           className="px-3 py-1.5 text-xs font-medium border border-gray-200 rounded-lg hover:bg-gray-50 text-gray-600 transition-colors"
                         >
-                          View
+                          {t('campaigns.form.edit')}
                         </button>
                         <button
                           onClick={() => handleExportList(list._id)}
                           className="px-3 py-1.5 text-xs font-medium border border-gray-200 rounded-lg hover:bg-gray-50 text-gray-600 transition-colors"
                         >
-                          Export
+                          {t('subscribers.export')}
                         </button>
                         {isFailed && (
                           <button
@@ -1288,7 +1268,7 @@ export default function Subscribers() {
               <tfoot>
                 <tr className="bg-gray-50 border-t-2 border-gray-200">
                   <td className="px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                    Total ({lists.length} lists)
+                    {t('common.page').split(' ')[0]} ({lists.length} lists)
                   </td>
                   <td className="px-4 py-3 text-right tabular-nums font-bold text-gray-800">
                     {fmt(totalAcrossLists)}
@@ -1345,7 +1325,7 @@ export default function Subscribers() {
               </span>
               <input
                 type="text"
-                placeholder="Search by email, name…"
+                placeholder={t('subscribers.search')}
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 className="pl-7 pr-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 w-52"
@@ -1378,7 +1358,7 @@ export default function Subscribers() {
                 <>
                   <p className="text-2xl mb-2">🔍</p>
                   <p className="font-medium text-gray-600">
-                    No subscribers match your filters
+                    {t('subscribers.empty')}
                   </p>
                   <button
                     onClick={() => {

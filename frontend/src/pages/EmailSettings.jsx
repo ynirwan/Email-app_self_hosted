@@ -1,8 +1,10 @@
 // frontend/src/pages/EmailSettings.jsx
 import { useState, useEffect } from "react";
+import { useSettings } from "../contexts/SettingsContext";
 import API from "../api";
 
 export default function EmailSettings() {
+  const { t } = useSettings();
   const [systemInfo, setSystemInfo] = useState(null);
   const [settings, setSettings] = useState({
     smtp_choice: "managed",
@@ -199,7 +201,7 @@ export default function EmailSettings() {
       await API.put("/email/settings", payload);
       setSaveMsg({
         type: "success",
-        text: "Email settings saved successfully!",
+        text: t('emailSettings.saved') || "Email settings saved successfully!",
       });
       setPasswordEdited(false);
       // FIX: don't call fetchData() here — it would overwrite state with the
@@ -400,7 +402,7 @@ export default function EmailSettings() {
           {/* Provider selector */}
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1.5">
-              Select Provider
+              {t('emailSettings.provider')}
             </label>
             <select
               className="w-full px-3 py-2.5 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500"

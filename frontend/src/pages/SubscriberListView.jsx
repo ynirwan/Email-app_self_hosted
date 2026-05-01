@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
+import { useSettings } from "../contexts/SettingsContext";
 import API from "../api";
 
 // ─── helpers ─────────────────────────────────────────────────
@@ -66,23 +67,17 @@ function Pagination({ page, totalPages, total, onChange }) {
     return (
         <div className="flex items-center justify-between px-5 py-3 border-t border-gray-100">
             <p className="text-sm text-gray-500">
-                Page {page} of {totalPages} · <strong>{fmt(total)}</strong>{" "}
-                subscribers
+                {t('common.page')} {page} {t('common.showing').split(' ')[1]} {totalPages} · <strong>{fmt(total)}</strong>{" "}
+                {t('subscribers.total_plural').split(' ')[1]}
             </p>
             <div className="flex gap-1">
-                {[
-                    ["«", 1],
-                    ["‹", page - 1],
-                ].map(([label, target]) => (
-                    <button
-                        key={label}
-                        onClick={() => onChange(target)}
-                        disabled={page === 1}
-                        className="px-2.5 py-1 text-xs border rounded disabled:opacity-40 hover:bg-gray-50"
-                    >
-                        {label}
-                    </button>
-                ))}
+                <button
+                    onClick={() => onChange(page - 1)}
+                    disabled={page === 1}
+                    className="px-2.5 py-1 text-xs border rounded disabled:opacity-40 hover:bg-gray-50"
+                >
+                    {t('common.previous')}
+                </button>
                 {pages.map((p) => (
                     <button
                         key={p}
@@ -92,19 +87,13 @@ function Pagination({ page, totalPages, total, onChange }) {
                         {p}
                     </button>
                 ))}
-                {[
-                    ["›", page + 1],
-                    ["»", totalPages],
-                ].map(([label, target]) => (
-                    <button
-                        key={label}
-                        onClick={() => onChange(target)}
-                        disabled={page === totalPages}
-                        className="px-2.5 py-1 text-xs border rounded disabled:opacity-40 hover:bg-gray-50"
-                    >
-                        {label}
-                    </button>
-                ))}
+                <button
+                    onClick={() => onChange(page + 1)}
+                    disabled={page === totalPages}
+                    className="px-2.5 py-1 text-xs border rounded disabled:opacity-40 hover:bg-gray-50"
+                >
+                    {t('common.next')}
+                </button>
             </div>
         </div>
     );
@@ -114,6 +103,7 @@ function Pagination({ page, totalPages, total, onChange }) {
 export default function SubscriberListView() {
     const { listName } = useParams();
     const navigate = useNavigate();
+    const { t, formatDate } = useSettings();
 
     const [subscribers, setSubscribers] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -191,7 +181,7 @@ export default function SubscriberListView() {
     }, [debouncedSearch, statusFilter]);
 
     const handleDelete = async (id) => {
-        if (!confirm("Delete this subscriber?")) return;
+        if (!confirm(t('common.delete') + "?")) return;
         try {
             await API.delete(`/subscribers/${id}`);
             showToast("Subscriber deleted", "success");
@@ -283,7 +273,7 @@ export default function SubscriberListView() {
                     onClick={handleExport}
                     className="flex items-center gap-2 px-4 py-2 border border-gray-200 text-sm font-medium rounded-lg hover:bg-gray-50 text-gray-600 transition-colors"
                 >
-                    📥 Export CSV
+                    📥 {t('subscribers.export')}
                 </button>
             </div>
 
@@ -297,7 +287,7 @@ export default function SubscriberListView() {
                         </span>
                         <input
                             type="text"
-                            placeholder="Search by email or name…"
+                            placeholder={t('subscribers.search')}
                             value={searchTerm}
                             onChange={(e) => setSearchTerm(e.target.value)}
                             className="pl-7 pr-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 w-full"
@@ -361,9 +351,7 @@ export default function SubscriberListView() {
                             {searchTerm || statusFilter ? "🔍" : "👥"}
                         </p>
                         <p className="text-sm font-medium text-gray-700">
-                            {searchTerm || statusFilter
-                                ? "No subscribers match your filters"
-                                : "No subscribers in this list"}
+                            {t('subscribers.empty')}
                         </p>
                         {(searchTerm || statusFilter) && (
                             <button
@@ -430,7 +418,10 @@ export default function SubscriberListView() {
                                             <span
                                                 className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium whitespace-nowrap ${STATUS_STYLE[sub.status] || STATUS_STYLE.inactive}`}
                                             >
-                                                {sub.status}
+                                                {sub.status === 'active' ? t('subscribers.status.active') : 
+                                                 sub.status === 'unsubscribed' ? t('subscribers.status.unsubscribed') :
+                                                 sub.status === 'bounced' ? t('subscribers.status.bounced') :
+                                                 sub.status}
                                             </span>
                                         </td>
                                         {visibleCustomKeys.map((k) => {
@@ -452,7 +443,7 @@ export default function SubscriberListView() {
                                             );
                                         })}
                                         <td className="px-4 py-3 text-xs text-gray-400 text-right whitespace-nowrap">
-                                            {fmtD(sub.created_at)}
+                                            {formatDate(sub.created_at)}
                                         </td>
                                         <td className="px-4 py-3 text-right">
                                             <div className="flex items-center justify-end gap-2">

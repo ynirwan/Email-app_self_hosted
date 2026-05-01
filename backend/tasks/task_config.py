@@ -193,21 +193,14 @@ class TaskSettings:
         os.getenv("MOCK_EMAIL_SENDING", "false").lower() == "true"
     )
 
-    # ===== DLQ RETENTION (days alias of DLQ_MAX_AGE_HOURS) =====
-    @property
-    def DLQ_RETENTION_DAYS(self) -> int:
-        return max(1, self.DLQ_MAX_AGE_HOURS // 24)
-
-
-    # ===== EXTRA SETTINGS NEEDED BY TASKS =====
-    REDIS_URL: str = os.getenv("REDIS_URL", "redis://redis:6379/0")
-    REDIS_KEY_PREFIX: str = os.getenv("REDIS_KEY_PREFIX", "email_marketing")
-    LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
-    MASTER_ENCRYPTION_KEY: str = os.getenv("MASTER_ENCRYPTION_KEY", "")
-    MOCK_EMAIL_SENDING: bool = os.getenv("MOCK_EMAIL_SENDING", "false").lower() == "true"
+    # ===== DLQ RETENTION =====
     DLQ_RETENTION_DAYS: int = int(os.getenv("DLQ_RETENTION_DAYS", "30"))
+
+    # ===== APP URLS =====
     APP_BASE_URL: str = os.getenv("APP_BASE_URL", "http://localhost:8000")
     UNSUBSCRIBE_DOMAIN: str = os.getenv("UNSUBSCRIBE_DOMAIN", "localhost:8000")
+
+    # ===== TRACKING FLAGS =====
     TRACK_LINK_CLICKS: bool = os.getenv("TRACK_LINK_CLICKS", "true").lower() == "true"
     TRACK_EMAIL_OPENS: bool = os.getenv("TRACK_EMAIL_OPENS", "true").lower() == "true"
 

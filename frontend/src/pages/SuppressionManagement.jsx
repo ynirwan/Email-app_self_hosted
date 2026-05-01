@@ -7,9 +7,11 @@ import {
   Calendar, BarChart3
 } from 'lucide-react';
 import API from '../api.js';
+import { useSettings } from '../contexts/SettingsContext';
 
 const SuppressionManagement = () => {
   const [suppressions, setSuppressions] = useState([]);
+  const { t, formatDate } = useSettings();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
@@ -626,7 +628,7 @@ const SuppressionManagement = () => {
               className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
             >
               <Plus className="h-4 w-4" />
-              Add Suppression
+              {t('suppressions.add')}
             </button>
 
             <button
@@ -634,7 +636,7 @@ const SuppressionManagement = () => {
               className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
             >
               <Upload className="h-4 w-4" />
-              Import CSV
+              {t('suppressions.import')}
             </button>
 
             <button
@@ -642,7 +644,7 @@ const SuppressionManagement = () => {
               className="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
             >
               <Download className="h-4 w-4" />
-              Export
+              {t('subscribers.export')}
             </button>
 
             <button
@@ -650,7 +652,7 @@ const SuppressionManagement = () => {
               className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors"
             >
               <Bell className="h-4 w-4" />
-              Bulk Check
+              {t('suppressions.bulkCheck')}
             </button>
 
             <button
@@ -714,7 +716,7 @@ const SuppressionManagement = () => {
         ) : suppressions.length === 0 ? (
           <div className="p-8 text-center">
             <Mail className="h-12 w-12 mx-auto mb-4 text-gray-400" />
-            <p className="text-gray-600">No suppressions found</p>
+            <p className="text-gray-600">{t('suppressions.empty')}</p>
             {searchTerm && (
               <button
                 onClick={() => setSearchTerm('')}
@@ -832,7 +834,7 @@ const SuppressionManagement = () => {
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                           <div className="flex items-center">
                             <Calendar className="h-4 w-4 mr-1" />
-                            {new Date(suppression.created_at).toLocaleDateString()}
+                            {formatDate(suppression.created_at)}
                           </div>
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap">
@@ -873,17 +875,17 @@ const SuppressionManagement = () => {
                   disabled={currentPage === 1}
                   className="px-3 py-1 border rounded text-sm disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-100"
                 >
-                  Previous
+                  {t('common.previous')}
                 </button>
                 <span className="px-3 py-1 text-sm">
-                  Page {currentPage} of {totalPages}
+                  {t('common.page')} {currentPage} {t('common.showing').split(' ')[1]} {totalPages}
                 </span>
                 <button
                   onClick={() => setCurrentPage(currentPage + 1)}
                   disabled={suppressions.length < itemsPerPage}
                   className="px-3 py-1 border rounded text-sm disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-100"
                 >
-                  Next
+                  {t('common.next')}
                 </button>
               </div>
             </div>

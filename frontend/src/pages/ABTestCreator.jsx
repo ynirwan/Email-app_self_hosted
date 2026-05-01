@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useCallback } from "react";
 import { useNavigate, useParams } from "react-router-dom";
+import { useSettings } from "../contexts/SettingsContext";
 import API from "../api";
 
 // ── Steps ─────────────────────────────────────────────────────────────────────
@@ -245,6 +246,7 @@ function VariantCard({
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 const ABTestCreator = ({ editMode = false }) => {
+  const { t } = useSettings();
   const navigate = useNavigate();
   const { testId } = useParams();
 
@@ -567,7 +569,7 @@ const ABTestCreator = ({ editMode = false }) => {
         </div>
       </div>
 
-      <InputField label="Test Name" required error={errors.test_name}>
+      <InputField label={t('abtest.form.name')} required error={errors.test_name}>
         <input
           className={inputCls(errors.test_name)}
           autoFocus
@@ -622,7 +624,7 @@ const ABTestCreator = ({ editMode = false }) => {
         )}
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <InputField label="Subject Line" required error={errors.subject}>
+          <InputField label={t('campaign.form.subject')} required error={errors.subject}>
             <input
               className={inputCls(errors.subject)}
               placeholder="Your base subject line"
@@ -1097,7 +1099,7 @@ const ABTestCreator = ({ editMode = false }) => {
           <div>
             <div className="flex justify-between mb-2">
               <span className="text-sm font-semibold text-gray-700">
-                Traffic Split
+                {t('abtest.form.splitRatio')}
               </span>
               <span className="text-sm text-gray-500">
                 A: {testConfig.split_percentage}% · B:{" "}
@@ -1141,14 +1143,14 @@ const ABTestCreator = ({ editMode = false }) => {
               />
               {totalAudienceSize > 0 && (
                 <p className="text-xs text-gray-400 mt-1">
-                  Max: {fmt(totalAudienceSize)}
+                  Max: {formatDate(totalAudienceSize)}
                 </p>
               )}
             </div>
 
             <div>
               <label className="block text-sm font-semibold text-gray-700 mb-1.5">
-                Winner Criteria
+                {t('abtest.form.winnerCriteria')}
               </label>
               <select
                 value={testConfig.winner_criteria}
@@ -1162,7 +1164,7 @@ const ABTestCreator = ({ editMode = false }) => {
 
             <div>
               <label className="block text-sm font-semibold text-gray-700 mb-1.5">
-                Duration
+                {t('abtest.form.duration')}
               </label>
               <select
                 value={testConfig.test_duration_hours}

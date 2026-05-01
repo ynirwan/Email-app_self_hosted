@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { BarChart3, TrendingUp, Mail, Users, ArrowLeft } from 'lucide-react';
+import { useSettings } from "../contexts/SettingsContext";
 import { useParams, useNavigate } from 'react-router-dom';
 import API from '../api';
 
@@ -15,6 +16,7 @@ const RateBar = ({ value, max = 60, color = 'bg-blue-500' }) => (
 );
 
 export default function AutomationCampaignAnalytics() {
+  const { t, formatDate } = useSettings();
   const { id } = useParams();
   const navigate = useNavigate();
 
@@ -93,27 +95,27 @@ export default function AutomationCampaignAnalytics() {
         {[
           {
             icon: <Mail className="text-blue-600" size={20} />,
-            label: 'Emails Sent', value: fmt(analytics.emails_sent),
+            label: t('analytics.totalSent'), value: fmt(analytics.emails_sent),
             sub: null, bg: 'bg-blue-50 border-blue-200',
           },
           {
             icon: <TrendingUp className="text-green-600" size={20} />,
-            label: 'Open Rate', value: `${(analytics.open_rate || 0).toFixed(1)}%`,
-            sub: `${fmt(analytics.emails_opened)} opens`,
+            label: t('analytics.openRate'), value: `${(analytics.open_rate || 0).toFixed(1)}%`,
+            sub: `${fmt(analytics.emails_opened)} ${t('analytics.opens')}`,
             bg: 'bg-green-50 border-green-200',
             bar: <RateBar value={analytics.open_rate || 0} color="bg-green-500" />,
           },
           {
             icon: <BarChart3 className="text-purple-600" size={20} />,
-            label: 'Click Rate', value: `${(analytics.click_rate || 0).toFixed(1)}%`,
-            sub: `${fmt(analytics.emails_clicked)} clicks`,
+            label: t('analytics.clickRate'), value: `${(analytics.click_rate || 0).toFixed(1)}%`,
+            sub: `${fmt(analytics.emails_clicked)} ${t('analytics.clicks')}`,
             bg: 'bg-purple-50 border-purple-200',
             bar: <RateBar value={analytics.click_rate || 0} color="bg-purple-500" />,
           },
           {
             icon: <Users className="text-orange-600" size={20} />,
-            label: 'Subscribers Entered', value: fmt(analytics.subscribers_entered),
-            sub: `${fmt(analytics.subscribers_completed)} completed`,
+            label: t('automation.analytics.enrolled') || 'Subscribers Entered', value: fmt(analytics.subscribers_entered),
+            sub: `${fmt(analytics.subscribers_completed)} ${t('automation.analytics.completed') || 'completed'}`,
             bg: 'bg-orange-50 border-orange-200',
           },
         ].map(({ icon, label, value, sub, bg, bar }) => (

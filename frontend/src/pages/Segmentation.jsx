@@ -19,6 +19,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import API from '../api';
+import { useSettings } from '../contexts/SettingsContext';
 
 // ── small helpers ───────────────────────────────────────────────────────────
 
@@ -149,6 +150,7 @@ function UsageDetails({ usage }) {
 
 export default function Segmentation() {
   const [segments, setSegments] = useState([]);
+  const { t, formatDate } = useSettings();
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -231,7 +233,7 @@ export default function Segmentation() {
       return;
     }
 
-    if (!confirm(`Delete segment "${segment.name}"? This cannot be undone.`)) return;
+    if (!confirm(t('segments.deleteConfirm').replace('{name}', segment.name))) return;
 
     try {
       await API.delete(`/segments/${segment._id}`);
@@ -293,7 +295,7 @@ export default function Segmentation() {
           onClick={openCreate}
           className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 flex items-center gap-2"
         >
-          <span>➕</span> Create Segment
+          <span>➕</span> {t('segments.create')}
         </button>
       </div>
 
@@ -319,7 +321,7 @@ export default function Segmentation() {
           <div className="py-16 text-center">
             <p className="text-3xl mb-2">🎯</p>
             <p className="text-sm font-medium text-gray-700">
-              {search ? `No segments match "${search}"` : 'No segments yet'}
+              {search ? `No segments match "${search}"` : t('segments.empty')}
             </p>
             {search ? (
               <button
@@ -337,7 +339,7 @@ export default function Segmentation() {
                   onClick={openCreate}
                   className="px-4 py-2 bg-blue-600 text-white text-sm font-semibold rounded-lg hover:bg-blue-700"
                 >
-                  Create Segment
+                  {t('segments.create')}
                 </button>
               </>
             )}
@@ -378,7 +380,7 @@ export default function Segmentation() {
                           {seg.description}
                         </p>
                       )}
-                      <p className="text-xs text-gray-300 mt-0.5">{fmtD(seg.updated_at)}</p>
+                      <p className="text-xs text-gray-300 mt-0.5">{formatDate(seg.updated_at)}</p>
                     </td>
                     <td className="px-4 py-3.5 text-right">
                       <span className="text-base font-bold text-gray-800 tabular-nums">

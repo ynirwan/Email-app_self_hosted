@@ -27,8 +27,7 @@ from enum import Enum
 from abc import ABC, abstractmethod
 from celery_app import celery_app
 from database import get_sync_settings_collection
-from core.config import settings, get_redis_key
-from tasks.task_config import task_settings
+from tasks.task_config import task_settings, get_redis_key
 from .rate_limiter import EmailProvider
 from .audit_logger import log_system_event, AuditEventType, AuditSeverity
 import redis
@@ -36,7 +35,7 @@ from cryptography.fernet import Fernet
 
 logger = logging.getLogger(__name__)
 
-ENCRYPTION_KEY = settings.MASTER_ENCRYPTION_KEY
+ENCRYPTION_KEY = task_settings.MASTER_ENCRYPTION_KEY
 
 
 def decrypt_smtp_password(encrypted_password: str) -> str:
@@ -430,7 +429,7 @@ class EmailProviderManager:
     HEALTH_CHECK_INTERVAL = 120  # seconds between proactive health checks
 
     def __init__(self):
-        self.redis_client = redis.Redis.from_url(settings.REDIS_URL)
+        self.redis_client = redis.Redis.from_url(task_settings.REDIS_URL)
         self.providers: Dict[str, EmailServiceInterface] = {}
         self.provider_configs: Dict[str, Any] = {}
         # Worker-local cache: { provider_name: (ProviderStatus, details, checked_at) }
@@ -490,7 +489,7 @@ class EmailProviderManager:
                         f"smtp_server='{email_config['smtp_server']}'"
                     )
 
-            if settings.MOCK_EMAIL_SENDING:
+            if task_settings.MOCK_EMAIL_SENDING:
                 self._setup_mock_provider()
                 logger.info("MOCK_EMAIL_SENDING=True — using mock provider")
                 return
@@ -819,7 +818,7 @@ def check_provider_health(self):
     try:
         manager = EmailProviderManager()
         report = manager.get_provider_health_report()
-        rc = redis.Redis.from_url(settings.REDIS_URL)
+        rc = redis.Redis.from_url(task_settings.REDIS_URL)
         rc.setex(
             get_redis_key("provider_health", "latest"),
             300,

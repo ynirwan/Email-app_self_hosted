@@ -11,7 +11,6 @@ from database import (
 )
 import redis
 from pymongo import UpdateOne
-from core.config import settings
 from tasks.task_config import task_settings
 
 logger = logging.getLogger(__name__)

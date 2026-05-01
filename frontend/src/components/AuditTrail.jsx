@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
+import { useSettings } from "../contexts/SettingsContext";
 import API from '../api';
 
 // ─── helpers ────────────────────────────────────────────────
@@ -119,6 +120,7 @@ function ChangesDiff({ before, after }) {
 }
 
 export default function AuditTrail() {
+  const { t, formatDate, formatDateTime } = useSettings();
   const [logs, setLogs]           = useState([]);
   const [loading, setLoading]     = useState(true);
   const [error, setError]         = useState(null);
@@ -297,7 +299,7 @@ export default function AuditTrail() {
             {/* Search — sent to API, searches full dataset */}
             <div className="relative flex-1 min-w-[180px]">
               <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 text-xs">🔍</span>
-              <input type="text" placeholder="Search all activities…" value={filters.search}
+              <input type="text" placeholder={t('audit.search')} value={filters.search}
                 onChange={e => setFilter('search', e.target.value)}
                 className="pl-7 pr-3 py-1.5 w-full text-sm border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500" />
               {filters.search && (
@@ -335,7 +337,7 @@ export default function AuditTrail() {
         ) : logs.length === 0 ? (
           <div className="py-16 text-center">
             <p className="text-3xl mb-2">🔍</p>
-            <p className="text-sm font-medium text-gray-700 mb-1">No activities found</p>
+            <p className="text-sm font-medium text-gray-700 mb-1">{t('audit.empty')}</p>
             {activeFilterCount > 0 && (
               <button onClick={clearFilters} className="text-xs text-blue-600 mt-1 hover:underline">
                 Clear filters
@@ -348,9 +350,9 @@ export default function AuditTrail() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="bg-gray-50 border-b border-gray-100">
-                    <th className="px-5 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-32">Time</th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-32">Entity</th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-24">Action</th>
+                    <th className="px-5 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-32">{t('audit.timestamp')}</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-32">{t('audit.resource')}</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-24">{t('audit.action')}</th>
                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Description</th>
                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-56">Changes</th>
                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-48">Metadata</th>
@@ -434,8 +436,8 @@ export default function AuditTrail() {
             {/* Pagination */}
             <div className="flex items-center justify-between px-5 py-3.5 border-t border-gray-100 bg-gray-50">
               <p className="text-xs text-gray-500">
-                Showing <span className="font-semibold text-gray-700">{fmt(showFrom)}–{fmt(showTo)}</span> of{' '}
-                <span className="font-semibold text-gray-700">{fmt(totalCount)}</span> activities
+                {t('common.showing')} <span className="font-semibold text-gray-700">{formatDate(showFrom)}–{formatDate(showTo)}</span> of{' '}
+                <span className="font-semibold text-gray-700">{formatDate(totalCount)}</span> activities
               </p>
               <div className="flex items-center gap-1.5">
                 <button onClick={() => setPagination(p => ({ ...p, page: 1 }))}
@@ -446,7 +448,7 @@ export default function AuditTrail() {
                 <button onClick={() => setPagination(p => ({ ...p, page: Math.max(1, p.page - 1) }))}
                   disabled={pagination.page === 1}
                   className="px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg disabled:opacity-40 hover:bg-white transition-colors">
-                  ← Prev
+                  ← {t('common.previous')}
                 </button>
                 <span className="px-3 py-1.5 bg-blue-600 text-white text-xs font-semibold rounded-lg">
                   {pagination.page} / {totalPages}
@@ -454,7 +456,7 @@ export default function AuditTrail() {
                 <button onClick={() => setPagination(p => ({ ...p, page: p.page + 1 }))}
                   disabled={pagination.page >= totalPages}
                   className="px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg disabled:opacity-40 hover:bg-white transition-colors">
-                  Next →
+                  {t('common.next')} →
                 </button>
                 <button onClick={() => setPagination(p => ({ ...p, page: totalPages }))}
                   disabled={pagination.page >= totalPages}

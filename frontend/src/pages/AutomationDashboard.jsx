@@ -10,6 +10,7 @@ import {
   Clock,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
+import { useSettings } from "../contexts/SettingsContext";
 import API from "../api";
 
 function useToast() {
@@ -62,6 +63,7 @@ const STATUS_STYLE = {
 };
 
 export default function AutomationDashboard() {
+  const { t, formatDate } = useSettings();
   const navigate = useNavigate();
   const [automations, setAutomations] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -203,7 +205,7 @@ export default function AutomationDashboard() {
           onClick={() => navigate("/automation/create")}
           className="flex items-center gap-2 px-5 py-2.5 bg-blue-600 text-white text-sm font-semibold rounded-lg hover:bg-blue-700 transition-colors"
         >
-          <Plus size={16} /> Create Automation
+          <Plus size={16} /> {t('automation.create')}
         </button>
         <div className="flex items-center gap-2">
           <button
@@ -341,7 +343,7 @@ export default function AutomationDashboard() {
           <div className="py-16 text-center">
             <p className="text-3xl mb-2">⚡</p>
             <p className="text-sm font-medium text-gray-700 mb-1">
-              No automations yet
+              {t('automation.empty')}
             </p>
             <p className="text-xs text-gray-400 mb-4">
               Create your first automation to engage subscribers automatically
@@ -411,7 +413,7 @@ export default function AutomationDashboard() {
                         </p>
                         <p className="text-xs text-gray-400 flex items-center gap-1 mt-0.5">
                           <Clock size={10} />
-                          {new Date(a.created_at).toLocaleDateString()}
+                          {formatDate(a.created_at)}
                         </p>
                       </td>
                       <td className="px-4 py-3.5">
@@ -426,7 +428,7 @@ export default function AutomationDashboard() {
                           {a.status === "active" && (
                             <span className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse" />
                           )}
-                          {a.status}
+                          {t(`automation.${a.status}`) || a.status}
                         </span>
                       </td>
                       <td className="px-4 py-3.5 text-right text-xs tabular-nums text-gray-600">
