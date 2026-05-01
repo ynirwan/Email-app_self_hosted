@@ -56,6 +56,7 @@ function Toast({ message, type, onClose }) {
 
 // ─── Pagination ───────────────────────────────────────────────
 function Pagination({ page, totalPages, total, onChange }) {
+    const { t } = useSettings();
     if (totalPages <= 1) return null;
     const pages = [];
     const max = 5;
@@ -67,8 +68,8 @@ function Pagination({ page, totalPages, total, onChange }) {
     return (
         <div className="flex items-center justify-between px-5 py-3 border-t border-gray-100">
             <p className="text-sm text-gray-500">
-                {t('common.page')} {page} {t('common.showing').split(' ')[1]} {totalPages} · <strong>{fmt(total)}</strong>{" "}
-                {t('subscribers.total_plural').split(' ')[1]}
+                {t('common.page')} {page} / {totalPages} · <strong>{fmt(total)}</strong>{" "}
+                {t('subscribers.title')}
             </p>
             <div className="flex gap-1">
                 <button

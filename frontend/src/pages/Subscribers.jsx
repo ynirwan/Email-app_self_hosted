@@ -44,6 +44,7 @@ function ListHealthBar({ total, active }) {
 }
 
 function Pagination({ page, totalPages, total, onChange }) {
+  const { t } = useSettings();
   if (totalPages <= 1) return null;
   const max = 5;
   let start = Math.max(1, page - Math.floor(max / 2));
@@ -51,20 +52,22 @@ function Pagination({ page, totalPages, total, onChange }) {
   if (end - start + 1 < max) start = Math.max(1, end - max + 1);
   const pages = [];
   for (let i = start; i <= end; i++) pages.push(i);
+  const prev = t('common.previous');
+  const next = t('common.next');
   return (
     <div className="flex items-center justify-between mt-4 px-1">
       <p className="text-sm text-gray-500">
-        {t('common.page')} {page} {t('common.showing').split(' ')[1]} {totalPages} · <strong>{fmt(total)}</strong> {t('subscribers.total_plural').split(' ')[1]}
+        {t('common.page')} {page} / {totalPages} · <strong>{fmt(total)}</strong> {t('subscribers.title')}
       </p>
       <div className="flex gap-1">
         {[
-          [t('common.previous'), page - 1],
-          [t('common.next'), page + 1],
-        ].map(([label, target]) => (
+          [prev, page - 1, page === 1],
+          [next, page + 1, page === totalPages],
+        ].map(([label, target, disabled]) => (
           <button
             key={label}
             onClick={() => onChange(target)}
-            disabled={page === (label === t('common.previous') ? 1 : totalPages)}
+            disabled={disabled}
             className="px-2.5 py-1 text-xs border rounded disabled:opacity-40 hover:bg-gray-50"
           >
             {label}
