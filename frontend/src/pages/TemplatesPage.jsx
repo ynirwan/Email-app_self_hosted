@@ -5,18 +5,6 @@ import { Eye, X, Monitor, Smartphone, Tablet, Copy } from 'lucide-react';
 import { useSettings } from "../contexts/SettingsContext";
 
 // ─── helpers ────────────────────────────────────────────────
-const fmtDate = (iso) => {
-  if (!iso) return null;
-  const d = new Date(iso);
-  const now = new Date();
-  const diffMs = now - d;
-  const diffDays = Math.floor(diffMs / 86400000);
-  if (diffDays === 0) return 'today';
-  if (diffDays === 1) return 'yesterday';
-  if (diffDays < 7) return `${diffDays}d ago`;
-  if (diffDays < 30) return `${Math.floor(diffDays / 7)}w ago`;
-  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: d.getFullYear() !== now.getFullYear() ? 'numeric' : undefined });
-};
 
 function useToast() {
   const [toasts, setToasts] = useState([]);
@@ -73,7 +61,7 @@ export default function TemplatesPage() {
 
   // ── unsaved guard ────────────────────────────────────────
   const safeClose = useCallback(() => {
-    if (isDirty && !confirm('You have unsaved changes. Leave without saving?')) return;
+    if (isDirty && !confirm(t('templates.unsavedChanges'))) return;
     setEditTemplate(null); setIsDirty(false);
   }, [isDirty]);
 
@@ -108,7 +96,7 @@ export default function TemplatesPage() {
       const req = templateId ? API.put(`/templates/${templateId}`, payload) : API.post('/templates', payload);
       req.then(() => {
         setSaving(false); setIsDirty(false); setEditTemplate(null); loadTemplates();
-        toast('Template saved', 'success');
+        toast(t('templates.saved'), 'success');
       }).catch(err => {
         toast(err.response?.data?.detail || 'Failed to save template.', 'error');
         setSaving(false);
@@ -123,7 +111,7 @@ export default function TemplatesPage() {
     try {
       await API.delete(`/templates/${template._id || template.id}`);
       setTemplates(prev => prev.filter(t => (t._id || t.id) !== (template._id || template.id)));
-      toast('Template deleted', 'success');
+      toast(t('templates.deleted'), 'success');
     } catch { toast('Failed to delete template.', 'error'); }
   };
 
@@ -148,7 +136,7 @@ export default function TemplatesPage() {
     if (j.mode === 'drag-drop' && j.blocks)       return j.blocks.map(b => b.content || '').join('\n');
     if (j.mode === 'visual' && j.content)         return j.content;
     if (template.html)                            return template.html;
-    return '<p style="color:#aaa;padding:2rem;text-align:center">No preview available</p>';
+    return `<p style="color:#aaa;padding:2rem;text-align:center">${t('templates.noPreview')}</p>`;
   };
 
   // ── filter ───────────────────────────────────────────────
@@ -255,7 +243,7 @@ export default function TemplatesPage() {
           {/* subject + preheader */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
             <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">Subject Line</label>
+              <label className="block text-xs font-medium text-gray-600 mb-1">{t('campaign.form.subject')}</label>
               <input type="text" placeholder="Subject line (pre-fills when used in campaign)"
                 value={editTemplate.subject || ''}
                 onChange={e => { setEditTemplate(p => ({ ...p, subject: e.target.value })); setIsDirty(true); }}
@@ -263,7 +251,7 @@ export default function TemplatesPage() {
             </div>
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">
-                Preview Text <span className="text-gray-400 font-normal">(shown after subject in inbox)</span>
+                {t('templates.previewText')} <span className="text-gray-400 font-normal">({t('templates.previewTextHint')})</span>
               </label>
               <input type="text" placeholder="Brief preview text visible in inbox…" maxLength={90}
                 value={editTemplate.preheader_text || ''}
@@ -292,7 +280,7 @@ export default function TemplatesPage() {
             <div className="flex items-center gap-2">
               <select value={modeFilter} onChange={e => setModeFilter(e.target.value)}
                 className="px-3 py-1.5 text-sm border border-gray-200 rounded-lg bg-white text-gray-600 focus:ring-2 focus:ring-blue-500">
-                <option value="">All modes</option>
+                <option value="">{t('templates.allModes')}</option>
                 <option value="visual">Visual</option>
                 <option value="html">HTML</option>
                 <option value="drag-drop">Drag & Drop</option>
@@ -300,7 +288,7 @@ export default function TemplatesPage() {
               </select>
               <div className="relative">
                 <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 text-xs">🔍</span>
-                <input type="text" placeholder="Search templates…" value={search}
+                <input type="text" placeholder={t('templates.search')} value={search}
                   onChange={e => setSearch(e.target.value)}
                   className="pl-7 pr-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 w-48" />
                 {search && (
@@ -320,10 +308,10 @@ export default function TemplatesPage() {
             <div className="bg-white rounded-xl border border-gray-200 py-16 text-center shadow-sm">
               <p className="text-3xl mb-2">📄</p>
               <p className="text-sm font-medium text-gray-700 mb-1">
-                {search || modeFilter ? 'No templates match your filters' : t('templates.empty')}
+                {search || modeFilter ? t('templates.noMatch') : t('templates.empty')}
               </p>
               {(search || modeFilter)
-                ? <button onClick={() => { setSearch(''); setModeFilter(''); }} className="text-xs text-blue-600 mt-1 hover:underline">Clear filters</button>
+                ? <button onClick={() => { setSearch(''); setModeFilter(''); }} className="text-xs text-blue-600 mt-1 hover:underline">{t('common.clearFilters')}</button>
                 : <p className="text-xs text-gray-400 mt-1 mb-4">Click "{t('templates.create')}" to build your first email template</p>
               }
               {!search && !modeFilter && (
@@ -360,10 +348,10 @@ export default function TemplatesPage() {
                         )}
                         <p className="text-xs text-gray-300 mt-1">
                           {template.created_at && (
-                            <span>Created {formatDate(template.created_at)}</span>
+                            <span>{t('templates.created')} {formatDate(template.created_at)}</span>
                           )}
                           {template.updated_at && template.updated_at !== template.created_at && (
-                            <span className="ml-2 text-gray-400">· Edited {formatDate(template.updated_at)}</span>
+                            <span className="ml-2 text-gray-400">· {t('templates.edited')} {formatDate(template.updated_at)}</span>
                           )}
                         </p>
                       </div>

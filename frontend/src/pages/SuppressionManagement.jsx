@@ -141,7 +141,7 @@ const SuppressionManagement = () => {
       setShowAddModal(false);
       fetchSuppressions();
       fetchStats();
-      showToast('Suppression added successfully', 'success');
+      showToast(t('suppressions.addSuccess'), 'success');
     } catch (err) {
       showToast(err.response?.data?.detail || 'Failed to add suppression', 'error');
     }
@@ -164,7 +164,7 @@ const SuppressionManagement = () => {
       await API.delete(`/suppressions/${id}`);
       fetchSuppressions();
       fetchStats();
-      showToast('Suppression deleted successfully', 'success');
+      showToast(t('suppressions.deleteSuccess'), 'success');
     } catch (err) {
       console.error('Delete error:', err);
       showToast(err.response?.data?.detail || 'Failed to delete suppression', 'error');
@@ -239,7 +239,7 @@ const SuppressionManagement = () => {
       a.click();
       document.body.removeChild(a);
       window.URL.revokeObjectURL(url);
-      showToast('Suppressions exported successfully', 'success');
+      showToast(t('suppressions.exportSuccess'), 'success');
     } catch (err) {
       showToast(err.response?.data?.detail || 'Failed to export suppressions', 'error');
     }

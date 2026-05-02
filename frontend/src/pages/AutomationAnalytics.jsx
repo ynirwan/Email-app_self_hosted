@@ -80,14 +80,14 @@ export default function AutomationAnalytics() {
       document.body.appendChild(link); link.click(); link.remove();
       window.URL.revokeObjectURL(url);
     } catch {
-      setError('Failed to export CSV — please try again');
+      setError(t('automation.analytics.exportFailed'));
     } finally { setExporting(false); }
   };
 
   if (loading) return (
     <div className="flex items-center justify-center py-24 gap-3 text-gray-400">
       <div className="animate-spin h-5 w-5 border-2 border-gray-300 border-t-blue-500 rounded-full" />
-      Loading analytics…
+      {t('automation.analytics.loading')}
     </div>
   );
 
@@ -95,7 +95,7 @@ export default function AutomationAnalytics() {
     <div className="space-y-4">
       <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm flex items-center justify-between">
         <span>⚠️ {error}</span>
-        <button onClick={loadAnalytics} className="underline ml-3 text-red-600 hover:text-red-800">Retry</button>
+        <button onClick={loadAnalytics} className="underline ml-3 text-red-600 hover:text-red-800">{t('automation.analytics.retry')}</button>
       </div>
     </div>
   );
@@ -116,7 +116,7 @@ export default function AutomationAnalytics() {
         <button onClick={exportCSV} disabled={exporting}
           className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white text-sm font-semibold rounded-lg hover:bg-blue-700 disabled:opacity-50">
           <Download size={15} />
-          {exporting ? 'Exporting…' : 'Export CSV'}
+          {exporting ? t('common.saving') : t('automation.analytics.exportCSV')}
         </button>
       </div>
 

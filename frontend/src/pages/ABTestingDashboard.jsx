@@ -168,7 +168,7 @@ export default function ABTestingDashboard() {
     return (
       <div className="flex items-center justify-center py-24 gap-3 text-gray-400">
         <div className="animate-spin h-5 w-5 border-2 border-gray-300 border-t-blue-500 rounded-full" />
-        Loading A/B tests…
+        {t('abtest.loading')}
       </div>
     );
 
@@ -179,7 +179,7 @@ export default function ABTestingDashboard() {
 
       {/* Header */}
       <div className="flex justify-between items-center">
-        <h2 className="text-2xl font-bold text-gray-900">🧪 A/B Testing</h2>
+        <h2 className="text-2xl font-bold text-gray-900">🧪 {t('abtest.title')}</h2>
         <button
           onClick={() => navigate("/ab-testing/create")}
           className="bg-violet-600 text-white px-5 py-2 rounded-lg hover:bg-violet-700 text-sm font-semibold"
@@ -258,7 +258,7 @@ export default function ABTestingDashboard() {
         <input
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search tests…"
+          placeholder={t('abtest.search')}
           className="border border-gray-200 rounded-lg px-3 py-2 text-sm w-52 focus:outline-none focus:ring-2 focus:ring-violet-400"
         />
         <select
@@ -266,7 +266,7 @@ export default function ABTestingDashboard() {
           onChange={(e) => setStatusFilter(e.target.value)}
           className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none"
         >
-          <option value="">All statuses</option>
+          <option value="">{t('abtest.allStatuses')}</option>
           {["draft", "running", "completed", "stopped", "failed"].map((s) => (
             <option key={s} value={s}>
               {s}
@@ -279,7 +279,7 @@ export default function ABTestingDashboard() {
       <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
         <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-4 border-b border-gray-100">
           <h2 className="text-sm font-semibold text-gray-700">
-            A/B Tests
+            {t('abtest.title')}
             {filtered.length !== abTests.length && (
               <span className="ml-2 text-xs font-normal text-gray-400">
                 ({filtered.length} of {abTests.length})
@@ -298,7 +298,7 @@ export default function ABTestingDashboard() {
               }}
               className="text-xs text-blue-600 mt-2 hover:underline"
             >
-              Clear filters
+              {t('common.clearFilters')}
             </button>
           </div>
         ) : (
@@ -307,22 +307,22 @@ export default function ABTestingDashboard() {
               <thead>
                 <tr className="bg-gray-50 border-b border-gray-100">
                   <th className="px-5 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Test Name
+                    {t('abtest.col.name')}
                   </th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Type
+                    {t('abtest.col.type')}
                   </th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Lists
+                    {t('abtest.col.lists')}
                   </th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-36">
-                    Status
+                    {t('common.status')}
                   </th>
                   <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider w-20">
-                    Sample
+                    {t('abtest.col.sample')}
                   </th>
                   <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Actions
+                    {t('common.actions')}
                   </th>
                 </tr>
               </thead>
@@ -413,7 +413,7 @@ export default function ABTestingDashboard() {
                               disabled={!!busy}
                               className="px-2.5 py-1.5 text-xs font-medium border border-orange-200 rounded-lg hover:bg-orange-50 text-orange-700 disabled:opacity-50"
                             >
-                              {busy === "stopping" ? "⏳" : "Stop"}
+                              {busy === "stopping" ? "⏳" : t('common.stop')}
                             </button>
                           )}
 
@@ -425,7 +425,7 @@ export default function ABTestingDashboard() {
                               disabled={!!busy}
                               className="px-2.5 py-1.5 text-xs font-medium border border-purple-200 rounded-lg hover:bg-purple-50 text-purple-700 disabled:opacity-50"
                             >
-                              {busy === "loading" ? "⏳" : "Quick View"}
+                              {busy === "loading" ? "⏳" : t('abtest.quickView')}
                             </button>
                           )}
 
@@ -438,8 +438,8 @@ export default function ABTestingDashboard() {
                               className="px-2.5 py-1.5 text-xs font-medium border border-gray-200 rounded-lg hover:bg-gray-50 text-gray-600"
                             >
                               {isFailedByError
-                                ? "⚠️ View Error"
-                                : "Full Report"}
+                                ? `⚠️ ${t('abtest.viewError')}`
+                                : t('abtest.fullReport')}
                             </Link>
                           )}
 
@@ -449,7 +449,7 @@ export default function ABTestingDashboard() {
                             disabled={!!busy}
                             className="px-2.5 py-1.5 text-xs font-medium border border-red-200 rounded-lg hover:bg-red-50 text-red-600 disabled:opacity-50"
                           >
-                            {busy === "deleting" ? "⏳" : "Delete"}
+                            {busy === "deleting" ? "⏳" : t('common.delete')}
                           </button>
                         </div>
                       </td>
@@ -471,7 +471,7 @@ export default function ABTestingDashboard() {
                 <h3 className="text-base font-semibold">
                   {resultsModal.test_name}
                 </h3>
-                <p className="text-xs text-gray-400">Quick Results Summary</p>
+                <p className="text-xs text-gray-400">{t('abtest.quickSummary')}</p>
               </div>
               <div className="flex items-center gap-2">
                 <button
@@ -482,7 +482,7 @@ export default function ABTestingDashboard() {
                   }}
                   className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 text-sm font-medium"
                 >
-                  Open Full Report
+                  {t('abtest.openFullReport')}
                 </button>
                 <button
                   onClick={() => setResultsModal(null)}
@@ -525,7 +525,7 @@ export default function ABTestingDashboard() {
                 {["variant_a", "variant_b"].map((key, i) => {
                   const v = resultsModal.results?.[key] || {};
                   const label =
-                    i === 0 ? "Variant A (Control)" : "Variant B (Test)";
+                    i === 0 ? t('abtest.variantControl') : t('abtest.variantTest');
                   const isWinner =
                     resultsModal.winner?.winner === (i === 0 ? "A" : "B");
                   return (
@@ -539,7 +539,7 @@ export default function ABTestingDashboard() {
                         </p>
                         {isWinner && (
                           <span className="bg-green-100 text-green-700 text-xs font-bold px-2 py-0.5 rounded-full">
-                            🏆 Winner
+                            🏆 {t('abtest.winner')}
                           </span>
                         )}
                       </div>

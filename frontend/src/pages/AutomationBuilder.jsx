@@ -505,7 +505,7 @@ const AutomationBuilder = () => {
             disabled={saving}
             className="px-4 py-2 border border-gray-200 text-sm font-medium rounded-lg hover:bg-gray-50 text-gray-600 disabled:opacity-50"
           >
-            Cancel
+            {t('common.cancel')}
           </button>
           <button
             onClick={saveWorkflow}
@@ -513,7 +513,7 @@ const AutomationBuilder = () => {
             className="flex items-center gap-2 px-5 py-2 bg-blue-600 text-white text-sm font-semibold rounded-lg hover:bg-blue-700 disabled:opacity-50"
           >
             <Save size={16} />
-            {saving ? 'Saving…' : isEditing ? 'Update Automation' : 'Save Automation'}
+            {saving ? t('common.saving') : isEditing ? t('automation.update') : t('automation.save')}
           </button>
         </div>
       </div>
@@ -537,7 +537,7 @@ const AutomationBuilder = () => {
         <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-4">
           <h3 className="font-semibold text-yellow-800 mb-2 flex items-center gap-2">
             <AlertCircle size={20} />
-            Please fix the following errors:
+            {t('common.fixErrors')}
           </h3>
           <ul className="list-disc list-inside text-yellow-700 space-y-1">
             {validationErrors.map((err, idx) => (
@@ -559,7 +559,7 @@ const AutomationBuilder = () => {
           <div className="flex-1">
             <div className="flex items-center gap-2">
               <Zap className="text-yellow-600" size={24} />
-              <div className="font-semibold text-gray-900 text-sm">Enable Advanced Features</div>
+              <div className="font-semibold text-gray-900 text-sm">{t('automation.advancedMode')}</div>
             </div>
             <div className="text-sm text-gray-700 mt-1">
               Unlock conditional branching, A/B testing, wait-for-event, goal tracking, smart send times, webhooks, and more!
@@ -575,13 +575,13 @@ const AutomationBuilder = () => {
             <div className="flex items-center gap-3">
               <Clock className="text-blue-600" size={24} />
               <div>
-                <p className="font-medium text-gray-900">Total Timeline</p>
+                <p className="font-medium text-gray-900">{t('automation.timeline')}</p>
                 <p className="text-sm text-gray-600">{calculateTimeline()} from trigger to completion</p>
               </div>
             </div>
             <div className="text-right">
               <p className="text-2xl font-bold text-blue-600">{safeSteps.length}</p>
-              <p className="text-sm text-gray-600">Steps configured</p>
+              <p className="text-sm text-gray-600">{t('automation.stepsConfigured')}</p>
             </div>
           </div>
         </div>
@@ -589,7 +589,7 @@ const AutomationBuilder = () => {
 
       {/* Basic Settings Section */}
       <CollapsibleSection
-        title="Basic Settings"
+        title={t('automation.basicSettings')}
         icon={<Settings className="text-blue-600" size={22} />}
         isExpanded={expandedSections.basic}
         onToggle={() => toggleSection('basic')}
@@ -610,7 +610,7 @@ const AutomationBuilder = () => {
 
           <div>
             <label className="block text-sm font-medium mb-2">
-              Trigger Event <span className="text-red-500">*</span>
+              {t('automation.trigger')} <span className="text-red-500">*</span>
             </label>
             <select
               value={workflow.trigger}
@@ -628,7 +628,7 @@ const AutomationBuilder = () => {
         </div>
 
         <div className="mt-6">
-          <label className="block text-sm font-medium mb-2">Description</label>
+          <label className="block text-sm font-medium mb-2">{t('common.description')}</label>
           <textarea
             value={workflow.description || ''}
             onChange={(e) => setWorkflow(prev => ({ ...prev, description: e.target.value }))}
@@ -642,7 +642,7 @@ const AutomationBuilder = () => {
         <div className="mt-6">
           <label className="block text-sm font-medium mb-3 flex items-center gap-2">
             <Target size={18} />
-            Target Audience (Optional)
+            {t('automation.targetAudience')}
             <span className="text-xs text-gray-500 font-normal">
               Leave empty to target all active subscribers
             </span>

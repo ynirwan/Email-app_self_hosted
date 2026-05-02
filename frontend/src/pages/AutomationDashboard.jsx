@@ -191,7 +191,7 @@ export default function AutomationDashboard() {
     return (
       <div className="flex items-center justify-center py-24 gap-3 text-gray-400">
         <div className="animate-spin h-5 w-5 border-2 border-gray-300 border-t-blue-500 rounded-full" />
-        Loading automations…
+        {t('automation.loading')}
       </div>
     );
 
@@ -212,13 +212,13 @@ export default function AutomationDashboard() {
             onClick={() => navigate("/automation/analytics")}
             className="flex items-center gap-2 px-4 py-2 border border-gray-200 text-sm font-medium rounded-lg hover:bg-gray-50 text-gray-600"
           >
-            <BarChart3 size={14} /> Analytics
+            <BarChart3 size={14} /> {t('automation.analytics.title')}
           </button>
           <button
             onClick={fetchAutomations}
             className="px-4 py-2 border border-gray-200 text-sm font-medium rounded-lg hover:bg-gray-50 text-gray-600"
           >
-            🔄 Refresh
+            🔄 {t('common.refresh')}
           </button>
         </div>
       </div>
@@ -227,44 +227,44 @@ export default function AutomationDashboard() {
       <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
         {[
           {
-            label: "Total",
+            label: t('common.total'),
             value: stats.total,
             bg: "bg-blue-50   border-blue-200",
             color: "text-blue-700",
           },
           {
-            label: "Active",
+            label: t('automation.active'),
             value: stats.active,
             bg: "bg-green-50  border-green-200",
             color: "text-green-700",
             pulse: stats.active > 0,
           },
           {
-            label: "Paused",
+            label: t('automation.paused'),
             value: stats.paused,
             bg: "bg-yellow-50 border-yellow-200",
             color: "text-yellow-700",
           },
           {
-            label: "Draft",
+            label: t('automation.draft'),
             value: stats.draft,
             bg: "bg-gray-50   border-gray-200",
             color: "text-gray-600",
           },
           {
-            label: "Emails Sent",
+            label: t('automation.stat.emailsSent'),
             value: stats.totalSent.toLocaleString(),
             bg: "bg-purple-50 border-purple-200",
             color: "text-purple-700",
           },
           {
-            label: "Avg Open",
+            label: t('automation.stat.avgOpen'),
             value: `${stats.avgOpen.toFixed(1)}%`,
             bg: "bg-teal-50   border-teal-200",
             color: "text-teal-700",
           },
           {
-            label: "Avg Click",
+            label: t('automation.stat.avgClick'),
             value: `${stats.avgClick.toFixed(1)}%`,
             bg: "bg-orange-50 border-orange-200",
             color: "text-orange-700",
@@ -352,13 +352,13 @@ export default function AutomationDashboard() {
               onClick={() => navigate("/automation/create")}
               className="px-4 py-2 bg-blue-600 text-white text-sm font-semibold rounded-lg hover:bg-blue-700"
             >
-              Create Automation
+              {t('automation.create')}
             </button>
           </div>
         ) : filtered.length === 0 ? (
           <div className="py-12 text-center">
             <p className="text-sm text-gray-500">
-              No automations match your filters
+              {t('automation.noMatch')}
             </p>
             <button
               onClick={() => {
@@ -367,7 +367,7 @@ export default function AutomationDashboard() {
               }}
               className="text-xs text-blue-600 mt-2 hover:underline"
             >
-              Clear filters
+              {t('common.clearFilters')}
             </button>
           </div>
         ) : (
@@ -462,12 +462,12 @@ export default function AutomationDashboard() {
                             ) : a.status === "active" ? (
                               <>
                                 <Pause size={11} />
-                                Pause
+                                {t('common.pause')}
                               </>
                             ) : (
                               <>
                                 <Play size={11} />
-                                Activate
+                                {t('common.activate')}
                               </>
                             )}
                           </button>
