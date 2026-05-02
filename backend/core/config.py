@@ -53,16 +53,7 @@ class Settings:
     SESSION_TIMEOUT_MINUTES: int = 30
 
     # ===== CORS CONFIGURATION =====
-    CORS_ORIGINS: List[str] = [
-        "http://localhost:3000",
-        "http://localhost:5000",
-        "http://localhost:5173",
-        "http://localhost:4173",
-        "*",
-    ]
-    CORS_ALLOW_CREDENTIALS: bool = True
-    CORS_ALLOW_METHODS: List[str] = ["*"]
-    CORS_ALLOW_HEADERS: List[str] = ["*"]
+
 
     # ===== TRACKING DOMAINS =====
     UNSUBSCRIBE_DOMAIN: str = os.getenv("UNSUBSCRIBE_DOMAIN", "gnagainbox.com")
