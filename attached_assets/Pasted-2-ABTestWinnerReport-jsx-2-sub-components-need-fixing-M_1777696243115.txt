@@ -1,0 +1,43 @@
+2. ABTestWinnerReport.jsx — 2 sub-components need fixing
+MiniEventTable — this sub-component renders rows with timestamps inline using raw JS:
+jsx// CURRENT (inside MiniEventTable, module-level sub-component)
+{row.timestamp ? new Date(row.timestamp).toLocaleString(undefined, {
+  month: "short", day: "numeric", hour: "2-digit", minute: "2-digit"
+}) : "—"}
+Fix:
+jsxfunction MiniEventTable({ rows, total, type, onViewAll }) {
+  const { formatDateTime } = useSettings(); // ← add this
+  // ...
+  // replace the raw call:
+  {row.timestamp ? formatDateTime(row.timestamp) : "—"}
+}
+RecipientsTable — renders sent_at per row. Check if it has a timestamp column — from what's in the codebase it has a "Sent At" column. It doesn't appear to format it currently (the column header exists but the value isn't visible in the snippets), but add the hook defensively:
+jsxfunction RecipientsTable({ rows, total, onViewAll }) {
+  const { formatDateTime } = useSettings(); // ← add this
+  // use formatDateTime(row.sent_at) if/when that column renders a date
+}
+MetricDetailModal — this renders <DetailRow> rows (similar to CampaignAnalytics), so if it renders timestamps directly, add the hook. From the code it delegates to DetailRow in CampaignAnalytics.jsx, but ABTestWinnerReport has its own inline row rendering inside the modal. Check for any new Date(...).toLocaleString() inside MetricDetailModal itself and add useSettings() there too.
+
+3. AuditTrail.jsx — the fmtTime / formatTimestamp helpers are module-level
+Both versions in your codebase define fmtTime (or formatTimestamp) outside the component, and the absolute-date fallback calls .toLocaleString('en-US', {...}). Since it's module-level, it can't call useSettings().
+Fix: Move the helper inside the AuditTrail component (or the relevant sub-component that renders the table rows), so it has hook access:
+jsxexport default function AuditTrail() {
+  const { formatDateTime, formatTime } = useSettings(); // ← add
+
+  // Move fmtTime definition inside the component:
+  const fmtTime = (timestamp) => {
+    const date = new Date(timestamp);
+    const diffMs = Date.now() - date;
+    const mins  = Math.floor(diffMs / 60000);
+    const hours = Math.floor(diffMs / 3600000);
+    const days  = Math.floor(diffMs / 86400000);
+    if (mins  < 1)  return 'Just now';
+    if (mins  < 60) return `${mins}m ago`;
+    if (hours < 24) return `${hours}h ago`;
+    if (days  < 7)  return `${days}d ago`;
+    return formatDateTime(timestamp); // ← user timezone
+  };
+
+  // Also fix the secondary absolute time cell:
+  // BEFORE: new Date(log.timestamp).toLocaleTimeString([], {...})
+  // AFTER:  formatTime(log.timestamp)

@@ -1,0 +1,190 @@
+3. frontend/src/pages/Segmentation.jsx
+Add useSettings hook in the relevant component(s):
+
+jsx
+const { formatDate } = useSettings();
+Line A — segment updated_at
+jsx
+// BEFORE
+new Date(segment.updated_at).toLocaleDateString() : 'N/A'
+
+// AFTER
+segment.updated_at ? formatDate(segment.updated_at) : 'N/A'
+Line B — subscriber created_at in preview table
+jsx
+// BEFORE
+{subscriber.created_at ? new Date(subscriber.created_at).toLocaleDateString() : '-'}
+
+// AFTER
+{subscriber.created_at ? formatDate(subscriber.created_at) : '-'}
+4. frontend/src/pages/SubscriberListView.jsx
+4a — File-level fmtD helper (top of file)
+js
+// BEFORE (delete this — uses browser local timezone)
+const fmtD = (iso) =>
+    iso
+        ? new Date(iso).toLocaleDateString(undefined, {
+              month: "short", day: "numeric", year: "numeric",
+          })
+        : "—";
+Add useSettings inside the component and use its formatDate instead:
+
+jsx
+const { formatDate } = useSettings();
+4b — fmtD() call in table row (created_at column)
+jsx
+// BEFORE
+{fmtD(sub.created_at)}
+
+// AFTER
+{formatDate(sub.created_at)}
+4c — Older table version (created_at in border table)
+jsx
+// BEFORE
+{sub.created_at ? new Date(sub.created_at).toLocaleDateString() : "-"}
+
+// AFTER
+{sub.created_at ? formatDate(sub.created_at) : "-"}
+5. frontend/src/pages/SuppressionManagement.jsx
+Add useSettings hook:
+
+jsx
+const { formatDate } = useSettings();
+Line A — suppression created_at
+jsx
+// BEFORE
+{new Date(suppression.created_at).toLocaleDateString()}
+
+// AFTER
+{formatDate(suppression.created_at)}
+6. frontend/src/pages/AutomationDashboard.jsx
+Add useSettings hook:
+
+jsx
+const { formatDate } = useSettings();
+Line A — automation created_at
+jsx
+// BEFORE
+{new Date(a.created_at).toLocaleDateString()}
+
+// AFTER
+{formatDate(a.created_at)}
+7. frontend/src/pages/ABTestResults.jsx
+Add useSettings hook:
+
+jsx
+const { formatDateTime } = useSettings();
+Line A — test start_date in header grid
+jsx
+// BEFORE
+{results.start_date ? new Date(results.start_date).toLocaleString() : "—"}
+
+// AFTER
+{results.start_date ? formatDateTime(results.start_date) : "—"}
+Line B — test end_date in completed state
+jsx
+// BEFORE
+{results.end_date ? new Date(results.end_date).toLocaleString() : "—"}
+
+// AFTER
+{results.end_date ? formatDateTime(results.end_date) : "—"}
+Line C — timestamps section at bottom
+jsx
+// BEFORE
+<p>Started: {new Date(results.start_date).toLocaleString()}</p>
+<p>Ended: {new Date(results.end_date).toLocaleString()}</p>
+
+// AFTER
+<p>Started: {formatDateTime(results.start_date)}</p>
+<p>Ended: {formatDateTime(results.end_date)}</p>
+8. frontend/src/pages/ABTestWinnerReport.jsx
+8a — File-level fmtD helper (top of file)
+js
+// BEFORE (delete this)
+const fmtD = (iso) =>
+  iso
+    ? new Date(iso).toLocaleString(undefined, {
+        month: "short", day: "numeric", year: "numeric",
+        hour: "2-digit", minute: "2-digit",
+      })
+    : null;
+Add useSettings inside the component:
+
+jsx
+const { formatDateTime } = useSettings();
+Then replace every fmtD(...) call-site with formatDateTime(...):
+
+jsx
+// BEFORE (all fmtD call-sites in the details grid)
+["Test Started",  fmtD(data?.start_date) || "—"],
+["Test Ended",    fmtD(data?.end_date) || "—"],
+["Winner Send Started",   wsStartedLabel],   // wsStartedLabel likely uses fmtD too
+["Winner Send Completed", wsCompletedLabel],
+
+// AFTER
+["Test Started",  data?.start_date ? formatDateTime(data.start_date) : "—"],
+["Test Ended",    data?.end_date   ? formatDateTime(data.end_date)   : "—"],
+// update wsStartedLabel / wsCompletedLabel computation similarly
+9. frontend/src/components/AuditTrail.jsx
+This file has two versions in your codebase (the older one and the refactored one). Both have the same problem.
+
+9a — fmtTime / formatTimestamp local helpers
+Both versions define a local date formatter that falls back to .toLocaleString('en-US', ...). These ignore the user's timezone for the absolute-date fallback (when the log is > 7 days old).
+
+The relative portions (3m ago, 2h ago) are timezone-independent — they're fine. Only the absolute date fallback needs to change.
+
+js
+// BEFORE (in both versions — the fallback at the end)
+return date.toLocaleString('en-US', {
+  month: 'short', day: 'numeric',
+  year: date.getFullYear() !== now.getFullYear() ? 'numeric' : undefined,
+  hour: '2-digit', minute: '2-digit'
+});
+Because AuditTrail is a component (not a page), it can call useSettings() directly. Add at the top of the component:
+
+jsx
+const { formatDateTime } = useSettings();
+Then rewrite the helper as a closure or inline it:
+
+jsx
+// AFTER — define inside the component so formatDateTime is in scope
+const fmtTime = (timestamp) => {
+  const date = new Date(timestamp);
+  const diffMs = Date.now() - date;
+  const mins  = Math.floor(diffMs / 60000);
+  const hours = Math.floor(diffMs / 3600000);
+  const days  = Math.floor(diffMs / 86400000);
+  if (mins  < 1)  return 'Just now';
+  if (mins  < 60) return `${mins}m ago`;
+  if (hours < 24) return `${hours}h ago`;
+  if (days  < 7)  return `${days}d ago`;
+  return formatDateTime(timestamp);   // ← user's timezone
+};
+9b — Absolute timestamp shown in the table Time cell
+jsx
+// BEFORE
+{new Date(log.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+// and:
+{new Date(log.timestamp).toLocaleTimeString()}
+
+// AFTER — use formatTime from useSettings
+const { formatDateTime, formatTime } = useSettings();
+{formatTime(log.timestamp)}
+Summary table
+File	Raw call	Replace with
+Campaigns.jsx	.toLocaleString() (scheduled_time)	formatDateTime()
+Campaigns.jsx	.toLocaleDateString() (created_at)	formatDate()
+CampaignAnalytics.jsx	fmtD() helper + 5× .toLocaleString()	formatDateTime()
+Segmentation.jsx	.toLocaleDateString() ×2	formatDate()
+SubscriberListView.jsx	fmtD() helper + .toLocaleDateString() ×2	formatDate()
+SuppressionManagement.jsx	.toLocaleDateString()	formatDate()
+AutomationDashboard.jsx	.toLocaleDateString()	formatDate()
+ABTestResults.jsx	.toLocaleString() ×3	formatDateTime()
+ABTestWinnerReport.jsx	fmtD() helper + all call sites	formatDateTime()
+AuditTrail.jsx	.toLocaleString() fallback + .toLocaleTimeString()	formatDateTime() / formatTime()
+Pattern for every fix:
+
+Add const { formatDate, formatDateTime, formatTime } = useSettings(); to the component
+Add import { useSettings } from "../contexts/SettingsContext"; if not already imported
+Delete any local fmtD / formatTimestamp helper that wraps .toLocaleString()
+Replace raw new Date(x).toLocaleXxx() with the appropriate useSettings() formatter

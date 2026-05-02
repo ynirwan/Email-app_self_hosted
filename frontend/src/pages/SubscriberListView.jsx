@@ -5,14 +5,6 @@ import API from "../api";
 
 // ─── helpers ─────────────────────────────────────────────────
 const fmt = (n) => Number(n ?? 0).toLocaleString();
-const fmtD = (iso) =>
-    iso
-        ? new Date(iso).toLocaleDateString(undefined, {
-              month: "short",
-              day: "numeric",
-              year: "numeric",
-          })
-        : "—";
 
 // Safely convert any stored field value (bool, number, string) to a
 // displayable string.  Returns null when the value is genuinely absent.

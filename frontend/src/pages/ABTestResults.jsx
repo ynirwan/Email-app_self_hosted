@@ -14,6 +14,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { Link, useParams, useNavigate } from "react-router-dom";
 import API from "../api";
 import ProviderErrorBanner from "../components/ProviderErrorBanner";
+import { useSettings } from "../contexts/SettingsContext";
 
 // ── Toast ─────────────────────────────────────────────────────────────────────
 function useToast() {
@@ -280,6 +281,7 @@ export function WinnerSendSection({ testId, results, onReload }) {
 
 // ── Main ABTestResults ────────────────────────────────────────────────────────
 const ABTestResults = () => {
+  const { formatDateTime } = useSettings();
   const { testId } = useParams();
   const navigate   = useNavigate();
   const { toasts, show: toast, dismiss } = useToast();
@@ -425,7 +427,7 @@ const ABTestResults = () => {
             <div>
               <p className="text-gray-500">Started</p>
               <p className="font-semibold">
-                {results.start_date ? new Date(results.start_date).toLocaleString() : "—"}
+                {results.start_date ? formatDateTime(results.start_date) : "—"}
               </p>
             </div>
           </div>
@@ -744,7 +746,7 @@ const ABTestResults = () => {
         {isCompleted && (
           <p className="text-sm text-gray-500">
             ✓ Test completed on{" "}
-            {results.end_date ? new Date(results.end_date).toLocaleString() : "—"}
+            {results.end_date ? formatDateTime(results.end_date) : "—"}
           </p>
         )}
       </div>

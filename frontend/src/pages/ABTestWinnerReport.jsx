@@ -8,16 +8,10 @@
 import { useState, useEffect, useCallback } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import API from "../api";
+import { useSettings } from "../contexts/SettingsContext";
 
 const fmt = (n) => Number(n ?? 0).toLocaleString();
 const pct = (n) => `${Number(n ?? 0).toFixed(1)}%`;
-const fmtD = (iso) =>
-  iso
-    ? new Date(iso).toLocaleString(undefined, {
-        month: "short", day: "numeric", year: "numeric",
-        hour: "2-digit", minute: "2-digit",
-      })
-    : null; // return null so caller can show "N/A" vs "—" deliberately
 
 const parseDevice = (ua = "") => {
   const u = ua.toLowerCase();
@@ -56,6 +50,7 @@ function WsSBadge({ status }) {
 }
 
 export default function ABTestWinnerReport() {
+  const { formatDateTime } = useSettings();
   const { testId } = useParams();
 
   const [data, setData] = useState(null);
@@ -144,12 +139,12 @@ export default function ABTestWinnerReport() {
   // ── Resolve winner send timing labels ──────────────────────────────────────
   // "not_sent" = test completed without triggering winner send
   const wsNeverRan = !wsStatus || wsStatus === "not_sent";
-  const wsStartedLabel = wsNeverRan ? "N/A" : (fmtD(data?.winner_send_started_at) || "Pending");
+  const wsStartedLabel = wsNeverRan ? "N/A" : (data?.winner_send_started_at ? formatDateTime(data.winner_send_started_at) : "Pending");
   const wsCompletedLabel = wsNeverRan
     ? "N/A"
     : wsStatus === "running"
       ? "In progress"
-      : (fmtD(data?.winner_send_completed_at) || "—");
+      : (data?.winner_send_completed_at ? formatDateTime(data.winner_send_completed_at) : "—");
 
   return (
     <div className="space-y-6">
@@ -323,8 +318,8 @@ export default function ABTestWinnerReport() {
             ["Winner Criteria", data?.winner_criteria?.replace("_", " ")],
             ["Sample Size",  data?.sample_size?.toLocaleString()],
             ["Total Audience", data?.total_target_subscribers?.toLocaleString()],
-            ["Test Started",  fmtD(data?.start_date) || "—"],
-            ["Test Ended",    fmtD(data?.end_date) || "—"],
+            ["Test Started",  data?.start_date ? formatDateTime(data.start_date) : "—"],
+            ["Test Ended",    data?.end_date   ? formatDateTime(data.end_date)   : "—"],
             ["Winner Send Started",   wsStartedLabel],
             ["Winner Send Completed", wsCompletedLabel],
           ].map(([label, value]) => (
@@ -349,6 +344,7 @@ export default function ABTestWinnerReport() {
 
 // ── RecipientsTable ────────────────────────────────────────────────────────────
 function RecipientsTable({ rows, total, onViewAll }) {
+  const { formatDateTime } = useSettings();
   if (!rows.length)
     return <div className="text-center py-12"><p className="text-3xl mb-2">📋</p><p className="text-sm text-gray-400">No recipients yet</p></div>;
   return (
@@ -386,7 +382,7 @@ function RecipientsTable({ rows, total, onViewAll }) {
                 <td className="px-3 py-2 text-gray-500">{row.email_opened ? "✓" : "—"}</td>
                 <td className="px-3 py-2 text-gray-500">{row.email_clicked ? "✓" : "—"}</td>
                 <td className="px-3 py-2 text-gray-400 whitespace-nowrap">
-                  {row.sent_at ? new Date(row.sent_at).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "—"}
+                  {row.sent_at ? formatDateTime(row.sent_at) : "—"}
                 </td>
                 <td className="px-3 py-2 text-gray-500 text-center">{row.attempt_count || 1}</td>
                 <td className="px-3 py-2 text-red-500 truncate max-w-[160px]">{row.error || ""}</td>
@@ -400,6 +396,7 @@ function RecipientsTable({ rows, total, onViewAll }) {
 }
 
 function MiniEventTable({ rows, total, type, onViewAll }) {
+  const { formatDateTime } = useSettings();
   if (!rows.length)
     return <div className="text-center py-12"><p className="text-2xl mb-2">{type === "openers" ? "👁️" : "👆"}</p><p className="text-sm text-gray-400">{type === "openers" ? "No opens yet" : "No clicks yet"}</p></div>;
   return (
@@ -435,7 +432,7 @@ function MiniEventTable({ rows, total, type, onViewAll }) {
                   <td className="px-3 py-2 text-gray-500"><DeviceIcon d={device} /> {device}</td>
                   <td className="px-3 py-2 text-gray-400 font-mono">{row.ip_address || "—"}</td>
                   <td className="px-3 py-2 text-gray-400 whitespace-nowrap">
-                    {row.timestamp ? new Date(row.timestamp).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "—"}
+                    {row.timestamp ? formatDateTime(row.timestamp) : "—"}
                   </td>
                 </tr>
               );
@@ -448,6 +445,7 @@ function MiniEventTable({ rows, total, type, onViewAll }) {
 }
 
 function MetricDetailModal({ modal, onClose, onDownload, downloading }) {
+  const { formatDateTime } = useSettings();
   const cfg = METRIC_CFG[modal.metric] || {};
   const [filter, setFilter] = useState("all");
   const [search, setSearch] = useState("");
@@ -541,7 +539,7 @@ function MetricDetailModal({ modal, onClose, onDownload, downloading }) {
                           <td className="px-4 py-3 text-xs text-gray-500"><DeviceIcon d={device} /> {device}</td>
                           <td className="px-4 py-3 text-xs font-mono text-gray-400">{row.ip_address || "—"}</td>
                           <td className="px-4 py-3 text-xs text-gray-500 whitespace-nowrap">
-                            {row.timestamp ? new Date(row.timestamp).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "—"}
+                            {row.timestamp ? formatDateTime(row.timestamp) : "—"}
                           </td>
                           <td className="px-4 py-3 text-xs text-gray-500">{row.total_count || 1}×</td>
                         </tr>

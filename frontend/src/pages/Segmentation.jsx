@@ -24,14 +24,6 @@ import { useSettings } from '../contexts/SettingsContext';
 // ── small helpers ───────────────────────────────────────────────────────────
 
 const fmt = (n) => Number(n || 0).toLocaleString();
-const fmtD = (d) => {
-  if (!d) return '';
-  try {
-    return new Date(d).toLocaleDateString();
-  } catch {
-    return '';
-  }
-};
 
 const EMPTY_CRITERIA = {
   status: [],

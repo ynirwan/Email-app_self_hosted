@@ -5,23 +5,6 @@ import API from '../api';
 // ─── helpers ────────────────────────────────────────────────
 const fmt = (n) => Number(n ?? 0).toLocaleString();
 
-const fmtTime = (timestamp) => {
-  const date = new Date(timestamp);
-  const now  = new Date();
-  const diff = now - date;
-  const mins  = Math.floor(diff / 60000);
-  const hours = Math.floor(diff / 3600000);
-  const days  = Math.floor(diff / 86400000);
-  if (mins  < 1)  return 'Just now';
-  if (mins  < 60) return `${mins}m ago`;
-  if (hours < 24) return `${hours}h ago`;
-  if (days  < 7)  return `${days}d ago`;
-  return date.toLocaleString('en-US', {
-    month: 'short', day: 'numeric',
-    year: date.getFullYear() !== now.getFullYear() ? 'numeric' : undefined,
-    hour: '2-digit', minute: '2-digit'
-  });
-};
 
 const ACTION_STYLE = {
   create:     'bg-green-100   text-green-800',
@@ -120,7 +103,20 @@ function ChangesDiff({ before, after }) {
 }
 
 export default function AuditTrail() {
-  const { t, formatDate, formatDateTime } = useSettings();
+  const { t, formatDate, formatDateTime, formatTime } = useSettings();
+
+  const fmtTime = (timestamp) => {
+    const date = new Date(timestamp);
+    const diffMs = Date.now() - date;
+    const mins  = Math.floor(diffMs / 60000);
+    const hours = Math.floor(diffMs / 3600000);
+    const days  = Math.floor(diffMs / 86400000);
+    if (mins  < 1)  return 'Just now';
+    if (mins  < 60) return `${mins}m ago`;
+    if (hours < 24) return `${hours}h ago`;
+    if (days  < 7)  return `${days}d ago`;
+    return formatDateTime(timestamp);
+  };
   const [logs, setLogs]           = useState([]);
   const [loading, setLoading]     = useState(true);
   const [error, setError]         = useState(null);
@@ -366,7 +362,7 @@ export default function AuditTrail() {
                       <td className="px-5 py-3.5">
                         <p className="text-xs font-medium text-gray-700">{fmtTime(log.timestamp)}</p>
                         <p className="text-xs text-gray-400 font-mono mt-0.5">
-                          {new Date(log.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          {formatTime(log.timestamp)}
                         </p>
                       </td>
 

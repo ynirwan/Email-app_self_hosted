@@ -1097,44 +1097,41 @@ const EmailPreview = ({ campaign }) => {
   );
 };
 
-const CampaignDetails = ({ campaign }) => (
-  <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-    <div className="px-5 py-4 border-b border-gray-100">
-      <h3 className="text-sm font-semibold text-gray-700">
-        📧 Campaign Details
-      </h3>
-    </div>
+function CampaignDetails({ campaign }) {
+  const { formatDateTime } = useSettings();   // ✅ hook now valid here
 
-    <div className="p-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-      {[
-        ["Title", campaign?.title],
-        ["Subject", campaign?.subject],
-        ["Sender", campaign?.sender_name],
-        ["From", campaign?.sender_email],
-        ["Reply To", campaign?.reply_to || campaign?.sender_email],
-        ["Lists", campaign?.target_lists?.join(", ") || "None"],
-        ["Target", fmt(campaign?.target_list_count)],
-        ["Sent", fmt(campaign?.sent_count)],
-        ["Created", formatDateTime(campaign?.created_at)],
-        ["Started", formatDateTime(campaign?.started_at)],
-        [
-          "Completed",
-          campaign?.completed_at ? formatDateTime(campaign.completed_at) : "In progress",
-        ],
-      ].map(([label, value]) => (
-        <div key={label}>
-          <p className="text-xs font-medium text-gray-400 mb-1">{label}</p>
-          <p className="text-sm text-gray-800 font-medium">{value || "—"}</p>
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+      <div className="px-5 py-4 border-b border-gray-100">
+        <h3 className="text-sm font-semibold text-gray-700">📧 Campaign Details</h3>
+      </div>
+      <div className="p-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+        {[
+          ["Title",     campaign?.title],
+          ["Subject",   campaign?.subject],
+          ["Sender",    campaign?.sender_name],
+          ["From",      campaign?.sender_email],
+          ["Reply To",  campaign?.reply_to || campaign?.sender_email],
+          ["Lists",     campaign?.target_lists?.join(", ") || "None"],
+          ["Target",    fmt(campaign?.target_list_count)],
+          ["Sent",      fmt(campaign?.sent_count)],
+          ["Created",   formatDateTime(campaign?.created_at)],
+          ["Started",   formatDateTime(campaign?.started_at)],
+          ["Completed", campaign?.completed_at ? formatDateTime(campaign.completed_at) : "In progress"],
+        ].map(([label, value]) => (
+          <div key={label}>
+            <p className="text-xs font-medium text-gray-400 mb-1">{label}</p>
+            <p className="text-sm text-gray-800 font-medium">{value || "—"}</p>
+          </div>
+        ))}
+        <div>
+          <p className="text-xs font-medium text-gray-400 mb-1">Status</p>
+          <StatusBadge status={campaign?.status} />
         </div>
-      ))}
-
-      <div>
-        <p className="text-xs font-medium text-gray-400 mb-1">Status</p>
-        <StatusBadge status={campaign?.status} />
       </div>
     </div>
-  </div>
-);
+  );
+}
 
 const Skeleton = () => (
   <div className="space-y-6 animate-pulse">
