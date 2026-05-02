@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <defs>
+    <linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#22D3EE"/>
+      <stop offset="100%" stop-color="#3B82F6"/>
+    </linearGradient>
+  </defs>
+
+  <!-- dark background (critical for contrast) -->
+  <rect x="6" y="16" width="88" height="68" rx="18" fill="#0F172A"/>
+
+  <!-- white envelope body -->
+  <rect x="12" y="22" width="76" height="56" rx="14" fill="white"/>
+
+  <!-- envelope border -->
+  <rect x="12" y="22" width="76" height="56" rx="14"
+        fill="none"
+        stroke="#1E3A8A"
+        stroke-width="3"/>
+
+  <!-- envelope flap -->
+  <path
+    d="M12 22 L50 52 L88 22"
+    stroke="#1E3A8A"
+    stroke-width="6"
+    stroke-linecap="round"
+    fill="none"
+  />
+
+  <!-- lightning -->
+  <path
+    d="M48 34 L60 34 L50 55 L62 55 L40 78 L48 60 L38 60 Z"
+    fill="url(#g)"
+  />
+</svg>
