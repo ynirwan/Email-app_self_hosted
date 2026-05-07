@@ -3,15 +3,6 @@ import { useNavigate, useParams } from "react-router-dom";
 import { useSettings } from "../contexts/SettingsContext";
 import API from "../api";
 
-// ── Steps ─────────────────────────────────────────────────────────────────────
-const STEPS = [
-  { id: 1, label: "Setup", icon: "⚙️", desc: "Name & sender details" },
-  { id: 2, label: "Audience", icon: "👥", desc: "Lists & segments" },
-  { id: 3, label: "Template", icon: "🎨", desc: "Pick template & map fields" },
-  { id: 4, label: "Variants", icon: "⚖️", desc: "Configure A vs B" },
-  { id: 5, label: "Launch", icon: "🚀", desc: "Review & create" },
-];
-
 const mapTestToConfig = (test) => ({
   test_name: test.test_name || "",
   target_lists: test.target_lists || [],
@@ -250,6 +241,14 @@ const ABTestCreator = ({ editMode = false }) => {
   const navigate = useNavigate();
   const { testId } = useParams();
 
+  const STEPS = [
+    { id: 1, label: t("abtest.step.setup"),    icon: "⚙️", desc: t("abtest.step.setup.desc") },
+    { id: 2, label: t("abtest.step.audience"), icon: "👥", desc: t("abtest.step.audience.desc") },
+    { id: 3, label: t("abtest.step.template"), icon: "🎨", desc: t("abtest.step.template.desc") },
+    { id: 4, label: t("abtest.step.variants"), icon: "⚖️", desc: t("abtest.step.variants.desc") },
+    { id: 5, label: t("abtest.step.launch"),   icon: "🚀", desc: t("abtest.step.launch.desc") },
+  ];
+
   const [step, setStep] = useState(1);
   const [completed, setCompleted] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -487,12 +486,12 @@ const ABTestCreator = ({ editMode = false }) => {
     const errs = {};
     if (s === 1) {
       if (!testConfig.test_name.trim())
-        errs.test_name = "Test name is required";
-      if (!testConfig.subject.trim()) errs.subject = "Subject is required";
+        errs.test_name = t("abtest.errors.nameRequired");
+      if (!testConfig.subject.trim()) errs.subject = t("abtest.errors.subjectRequired");
       if (!testConfig.sender_name.trim())
-        errs.sender_name = "Sender name is required";
+        errs.sender_name = t("campaign.form.errors.senderNameRequired");
       if (!testConfig.sender_email.trim())
-        errs.sender_email = "Sender email is required";
+        errs.sender_email = t("campaign.form.errors.senderEmailRequired");
     }
     if (s === 2) {
       if (!testConfig.target_lists.length && !testConfig.target_segments.length)
@@ -504,9 +503,9 @@ const ABTestCreator = ({ editMode = false }) => {
     if (s === 4) {
       const cfg = TEST_TYPE_CONFIG[testConfig.test_type];
       if (!testConfig.variants[1][cfg.field]?.trim())
-        errs.variant_b = `Variant B ${cfg.label.toLowerCase()} is required`;
+        errs.variant_b = t("abtest.errors.variantBRequired");
       if (testConfig.sample_size < 100)
-        errs.sample_size = "Sample size must be at least 100";
+        errs.sample_size = t("abtest.errors.sampleMin");
     }
     return errs;
   };
@@ -642,7 +641,7 @@ const ABTestCreator = ({ editMode = false }) => {
               }}
             />
           </InputField>
-          <InputField label="Sender Name" required error={errors.sender_name}>
+          <InputField label={t("campaign.form.fromName")} required error={errors.sender_name}>
             <input
               className={inputCls(errors.sender_name)}
               placeholder="e.g., Acme Team"
@@ -660,7 +659,7 @@ const ABTestCreator = ({ editMode = false }) => {
               }}
             />
           </InputField>
-          <InputField label="Sender Email" required error={errors.sender_email}>
+          <InputField label={t("campaign.form.fromEmail")} required error={errors.sender_email}>
             <input
               type="email"
               className={inputCls(errors.sender_email)}
@@ -1092,7 +1091,7 @@ const ABTestCreator = ({ editMode = false }) => {
         {/* Test parameters */}
         <div className="bg-gray-50 rounded-2xl border border-gray-200 p-6 space-y-6">
           <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">
-            Test Parameters
+            {t("abtest.step.variants.params")}
           </p>
 
           {/* Split slider */}
@@ -1210,11 +1209,10 @@ const ABTestCreator = ({ editMode = false }) => {
             </div>
             <div>
               <p className="text-sm font-semibold text-gray-800">
-                Auto-send winning variant
+                {t("abtest.autoSendLabel")}
               </p>
               <p className="text-xs text-gray-500 mt-0.5">
-                After the test ends, automatically send the winner to all
-                remaining subscribers.
+                {t("abtest.autoSendHint")}
               </p>
             </div>
           </div>
@@ -1232,9 +1230,9 @@ const ABTestCreator = ({ editMode = false }) => {
             🚀
           </div>
           <div>
-            <h2 className="text-lg font-bold text-gray-900">Review & Launch</h2>
+            <h2 className="text-lg font-bold text-gray-900">{t("abtest.step.launch")}</h2>
             <p className="text-sm text-gray-500">
-              Double-check everything before creating the test
+              {t("abtest.step.launch.hint")}
             </p>
           </div>
         </div>
@@ -1248,14 +1246,14 @@ const ABTestCreator = ({ editMode = false }) => {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="bg-gray-50 rounded-xl border border-gray-200 p-4 space-y-2.5">
             <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">
-              Test Details
+              {t("abtest.review.detailsHeading")}
             </p>
             {[
-              ["Name", testConfig.test_name],
-              ["Type", testConfig.test_type.replace("_", " ")],
-              ["Subject", testConfig.subject],
+              [t("abtest.review.name"), testConfig.test_name],
+              [t("abtest.review.type"), testConfig.test_type.replace("_", " ")],
+              [t("campaign.form.subject"), testConfig.subject],
               [
-                "Sender",
+                t("campaign.form.fromName"),
                 `${testConfig.sender_name} <${testConfig.sender_email}>`,
               ],
             ].map(([l, v]) => (
@@ -1272,18 +1270,18 @@ const ABTestCreator = ({ editMode = false }) => {
 
           <div className="bg-gray-50 rounded-xl border border-gray-200 p-4 space-y-2.5">
             <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">
-              Test Configuration
+              {t("abtest.review.configHeading")}
             </p>
             {[
-              ["Audience", fmt(totalAudienceSize) + " total"],
-              ["Sample", fmt(testConfig.sample_size) + " subscribers"],
+              [t("abtest.review.audience"), fmt(totalAudienceSize) + " total"],
+              [t("abtest.review.sample"), fmt(testConfig.sample_size) + " subscribers"],
               [
-                "Split",
+                t("abtest.modal.split"),
                 `${testConfig.split_percentage}% A / ${100 - testConfig.split_percentage}% B`,
               ],
-              ["Duration", `${testConfig.test_duration_hours}h`],
-              ["Criteria", testConfig.winner_criteria.replace("_", " ")],
-              ["Auto-send", testConfig.auto_send_winner ? "Yes" : "No"],
+              [t("abtest.form.duration"), `${testConfig.test_duration_hours}h`],
+              [t("abtest.form.winnerCriteria"), testConfig.winner_criteria.replace("_", " ")],
+              [t("abtest.review.autoSend"), testConfig.auto_send_winner ? t("common.yes") : t("common.no")],
             ].map(([l, v]) => (
               <div key={l} className="flex gap-3">
                 <span className="text-xs text-gray-400 w-14 flex-shrink-0">
@@ -1305,7 +1303,7 @@ const ABTestCreator = ({ editMode = false }) => {
               <p
                 className={`text-xs font-bold mb-2 ${i === 0 ? "text-blue-700" : "text-orange-700"}`}
               >
-                Variant {i === 0 ? "A — Control" : "B — Test"}
+                {i === 0 ? t("abtest.variantControl") : t("abtest.variantTest")}
               </p>
               <p className="text-sm font-semibold text-gray-800">
                 {testConfig.variants[i][cfg.field] || (
@@ -1324,14 +1322,13 @@ const ABTestCreator = ({ editMode = false }) => {
             className="w-full py-3.5 bg-violet-600 text-white font-bold text-base rounded-xl hover:bg-violet-700 shadow-lg shadow-violet-200 hover:shadow-violet-300 transition-all disabled:opacity-50"
           >
             {loading
-              ? "⏳ Creating..."
+              ? t("common.saving")
               : editMode
-                ? "💾 Save Changes"
-                : "🧪 Create A/B Test"}
+                ? t("common.save")
+                : t("abtest.create")}
           </button>
           <p className="text-xs text-gray-400 mt-3 text-center">
-            The test will stay in Draft status until you start it from the
-            dashboard.
+            {t("abtest.draftNote")}
           </p>
         </div>
       </div>
@@ -1352,17 +1349,17 @@ const ABTestCreator = ({ editMode = false }) => {
       <div className="flex items-center justify-between mb-8">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">
-            {editMode ? "Edit A/B Test" : "Create A/B Test"}
+            {editMode ? t("abtest.editTitle") : t("abtest.create")}
           </h1>
           <p className="text-sm text-gray-500 mt-0.5">
-            Step {step} of {STEPS.length}
+            {t("campaign.step.progress", { step, total: STEPS.length })}
           </p>
         </div>
         <button
           onClick={() => navigate("/ab-testing")}
           className="text-sm text-gray-500 hover:text-gray-700 border border-gray-200 px-3 py-1.5 rounded-lg hover:bg-gray-50"
         >
-          ← Dashboard
+          ← {t("nav.abTesting")}
         </button>
       </div>
 
@@ -1400,7 +1397,7 @@ const ABTestCreator = ({ editMode = false }) => {
               disabled={step === 1}
               className="px-5 py-2.5 text-sm font-medium text-gray-600 border border-gray-200 rounded-xl hover:bg-gray-50 disabled:opacity-30 disabled:cursor-not-allowed"
             >
-              ← Back
+              ← {t("common.previous")}
             </button>
             <div className="flex items-center gap-3">
               <span className="text-xs text-gray-400">
@@ -1410,7 +1407,7 @@ const ABTestCreator = ({ editMode = false }) => {
                 onClick={handleNext}
                 className="px-6 py-2.5 text-sm font-bold text-white bg-violet-600 rounded-xl hover:bg-violet-700 shadow-md shadow-violet-200"
               >
-                Continue →
+                {t("campaign.step.continue")} →
               </button>
             </div>
           </div>

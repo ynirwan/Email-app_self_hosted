@@ -281,7 +281,7 @@ export function WinnerSendSection({ testId, results, onReload }) {
 
 // ── Main ABTestResults ────────────────────────────────────────────────────────
 const ABTestResults = () => {
-  const { formatDateTime } = useSettings();
+  const { t, formatDateTime } = useSettings();
   const { testId } = useParams();
   const navigate   = useNavigate();
   const { toasts, show: toast, dismiss } = useToast();
@@ -345,7 +345,7 @@ const ABTestResults = () => {
     return (
       <div className="flex items-center justify-center py-24 gap-3 text-gray-400">
         <div className="animate-spin h-5 w-5 border-2 border-gray-300 border-t-blue-500 rounded-full" />
-        Loading results…
+        {t("common.loading")}
       </div>
     );
   }
@@ -383,7 +383,7 @@ const ABTestResults = () => {
           onClick={() => navigate("/ab-testing")}
           className="flex items-center gap-2 text-sm text-gray-500 hover:text-gray-700"
         >
-          ← Back to A/B Tests
+          ← {t("common.previous")}
         </button>
         <Link
           to={`/ab-tests/${testId}/winner-report`}
@@ -409,11 +409,11 @@ const ABTestResults = () => {
 
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
             <div>
-              <p className="text-gray-500">Sample Size</p>
+              <p className="text-gray-500">{t("abtest.modal.sample")}</p>
               <p className="font-semibold">{results.sample_size}</p>
             </div>
             <div>
-              <p className="text-gray-500">Split</p>
+              <p className="text-gray-500">{t("abtest.modal.split")}</p>
               <p className="font-semibold">
                 {results.split_percentage}% / {100 - results.split_percentage}%
               </p>
@@ -436,22 +436,22 @@ const ABTestResults = () => {
         {/* Progress section (from original) */}
         {results.progress && (
           <div className="mt-4 pt-4 border-t border-gray-200">
-            <h4 className="font-semibold text-sm text-gray-700 mb-2">Send Progress</h4>
+            <h4 className="font-semibold text-sm text-gray-700 mb-2">{t("abtest.results.progress")}</h4>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
               <div>
-                <p className="text-gray-600">Sent (A)</p>
+                <p className="text-gray-600">{t("abtest.results.sentA")}</p>
                 <p className="font-bold">{results.progress.sent_a || 0} / {results.progress.total_a || 0}</p>
               </div>
               <div>
-                <p className="text-gray-600">Sent (B)</p>
+                <p className="text-gray-600">{t("abtest.results.sentB")}</p>
                 <p className="font-bold">{results.progress.sent_b || 0} / {results.progress.total_b || 0}</p>
               </div>
               <div>
-                <p className="text-gray-600">Failed (A)</p>
+                <p className="text-gray-600">{t("abtest.results.failedA")}</p>
                 <p className="font-bold text-red-600">{results.progress.failed_a || 0}</p>
               </div>
               <div>
-                <p className="text-gray-600">Failed (B)</p>
+                <p className="text-gray-600">{t("abtest.results.failedB")}</p>
                 <p className="font-bold text-red-600">{results.progress.failed_b || 0}</p>
               </div>
             </div>
@@ -496,7 +496,7 @@ const ABTestResults = () => {
             <span className="text-4xl">🏆</span>
             <div>
               <p className="text-2xl font-bold text-green-800">
-                Variant {winner.winner} is the winner
+                {t("abtest.modal.winnerAnnouncement", { variant: winner.winner })}
               </p>
               <p className="text-green-700 mt-1">
                 {Number(winner.improvement ?? 0).toFixed(2)}% better on{" "}
@@ -516,7 +516,7 @@ const ABTestResults = () => {
 
       {winner.winner === "TIE" && (
         <div className="bg-yellow-50 border-2 border-yellow-300 rounded-lg p-6">
-          <p className="text-xl font-bold text-yellow-800">🤝 Both variants are performing equally</p>
+          <p className="text-xl font-bold text-yellow-800">🤝 {t("abtest.results.tie")}</p>
           <p className="text-yellow-700 text-sm mt-1">
             Consider running the test longer for more conclusive results.
           </p>
@@ -528,18 +528,18 @@ const ABTestResults = () => {
         {/* Variant A */}
         <div className={`border-2 rounded-lg p-5 ${winnerInfo.winner === "A" ? "border-green-400 bg-green-50" : "border-blue-200 bg-blue-50"}`}>
           <div className="flex justify-between items-center mb-4">
-            <h3 className="text-lg font-bold text-gray-800">Variant A (Control)</h3>
+            <h3 className="text-lg font-bold text-gray-800">{t("abtest.variantControl")}</h3>
             {winnerInfo.winner === "A" && (
-              <span className="bg-green-500 text-white px-2 py-1 rounded text-sm font-bold">🏆 WINNER</span>
+              <span className="bg-green-500 text-white px-2 py-1 rounded text-sm font-bold">🏆 {t("abtest.winner")}</span>
             )}
           </div>
           <div className="space-y-3 text-sm">
             {[
-              { label: "Sent",       value: varA.sent?.toLocaleString() },
-              { label: "Opened",     value: varA.opened?.toLocaleString() },
-              { label: "Clicked",    value: varA.clicked?.toLocaleString() },
-              { label: "Open Rate",  value: `${varA.open_rate ?? 0}%`,  color: "text-blue-700"   },
-              { label: "Click Rate", value: `${varA.click_rate ?? 0}%`, color: "text-purple-700" },
+              { label: t("common.sent"),          value: varA.sent?.toLocaleString() },
+              { label: t("analytics.opens"),      value: varA.opened?.toLocaleString() },
+              { label: t("analytics.clicks"),     value: varA.clicked?.toLocaleString() },
+              { label: t("analytics.openRate"),   value: `${varA.open_rate ?? 0}%`,  color: "text-blue-700"   },
+              { label: t("analytics.clickRate"),  value: `${varA.click_rate ?? 0}%`, color: "text-purple-700" },
             ].map(({ label, value, color }) => (
               <div key={label} className="flex justify-between">
                 <span className="text-gray-600">{label}</span>
@@ -552,18 +552,18 @@ const ABTestResults = () => {
         {/* Variant B */}
         <div className={`border-2 rounded-lg p-5 ${winnerInfo.winner === "B" ? "border-green-400 bg-green-50" : "border-orange-200 bg-orange-50"}`}>
           <div className="flex justify-between items-center mb-4">
-            <h3 className="text-lg font-bold text-gray-800">Variant B (Test)</h3>
+            <h3 className="text-lg font-bold text-gray-800">{t("abtest.variantTest")}</h3>
             {winnerInfo.winner === "B" && (
-              <span className="bg-green-500 text-white px-2 py-1 rounded text-sm font-bold">🏆 WINNER</span>
+              <span className="bg-green-500 text-white px-2 py-1 rounded text-sm font-bold">🏆 {t("abtest.winner")}</span>
             )}
           </div>
           <div className="space-y-3 text-sm">
             {[
-              { label: "Sent",       value: varB.sent?.toLocaleString() },
-              { label: "Opened",     value: varB.opened?.toLocaleString() },
-              { label: "Clicked",    value: varB.clicked?.toLocaleString() },
-              { label: "Open Rate",  value: `${varB.open_rate ?? 0}%`,  color: "text-blue-700"   },
-              { label: "Click Rate", value: `${varB.click_rate ?? 0}%`, color: "text-purple-700" },
+              { label: t("common.sent"),          value: varB.sent?.toLocaleString() },
+              { label: t("analytics.opens"),      value: varB.opened?.toLocaleString() },
+              { label: t("analytics.clicks"),     value: varB.clicked?.toLocaleString() },
+              { label: t("analytics.openRate"),   value: `${varB.open_rate ?? 0}%`,  color: "text-blue-700"   },
+              { label: t("analytics.clickRate"),  value: `${varB.click_rate ?? 0}%`, color: "text-purple-700" },
             ].map(({ label, value, color }) => (
               <div key={label} className="flex justify-between">
                 <span className="text-gray-600">{label}</span>
@@ -645,19 +645,19 @@ const ABTestResults = () => {
       {/* ── Statistical significance ── */}
       {results.statistical_significance && (
         <div className="bg-white shadow rounded-lg p-6">
-          <h3 className="text-lg font-semibold mb-3">Statistical Significance</h3>
+          <h3 className="text-lg font-semibold mb-3">{t("abtest.modal.statisticalSig")}</h3>
           <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-sm">
             <div>
-              <p className="text-gray-600">Confidence Level</p>
+              <p className="text-gray-600">{t("abtest.modal.confidenceLevel")}</p>
               <p className="font-bold uppercase">{results.statistical_significance.confidence_level}</p>
             </div>
             <div>
-              <p className="text-gray-600">Total Samples</p>
+              <p className="text-gray-600">{t("abtest.modal.totalSamples")}</p>
               <p className="font-bold">{_fmt(results.statistical_significance.total_samples)}</p>
             </div>
             <div>
-              <p className="text-gray-600">Significant</p>
-              <p className="font-bold">{results.statistical_significance.is_significant ? "Yes" : "No"}</p>
+              <p className="text-gray-600">{t("abtest.results.isSignificant")}</p>
+              <p className="font-bold">{results.statistical_significance.is_significant ? t("common.yes") : t("common.no")}</p>
             </div>
           </div>
         </div>

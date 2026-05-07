@@ -51,6 +51,7 @@ const ACTION_TYPES = [
 
 // Renders before/after changes in a readable diff format
 function ChangesDiff({ before, after }) {
+  const { t } = useSettings();
   const hasBefore = before && Object.keys(before).length > 0;
   const hasAfter  = after  && Object.keys(after).length  > 0;
   if (!hasBefore && !hasAfter) return <span className="text-gray-300 text-xs">—</span>;
@@ -68,7 +69,7 @@ function ChangesDiff({ before, after }) {
   }).slice(0, 4); // cap at 4 fields to keep cell readable
 
   if (relevant.length === 0 && (hasBefore || hasAfter)) {
-    return <span className="text-xs text-gray-400 italic">no field changes</span>;
+    return <span className="text-xs text-gray-400 italic">{t("audit.changes.none")}</span>;
   }
 
   return (
@@ -96,7 +97,7 @@ function ChangesDiff({ before, after }) {
         );
       })}
       {changedKeys.size > 4 && (
-        <span className="text-xs text-gray-400">+{changedKeys.size - 4} more fields</span>
+        <span className="text-xs text-gray-400">{t("audit.changes.moreFields", { n: changedKeys.size - 4 })}</span>
       )}
     </div>
   );
@@ -206,18 +207,18 @@ export default function AuditTrail() {
         <div className="flex items-center gap-2">
           <button onClick={fetchLogs}
             className="px-4 py-2 border border-gray-200 text-sm font-medium rounded-lg hover:bg-gray-50 text-gray-600">
-            🔄 Refresh
+            🔄 {t("common.refresh")}
           </button>
           {activeFilterCount > 0 && (
             <button onClick={clearFilters}
               className="px-4 py-2 border border-gray-200 text-sm font-medium rounded-lg hover:bg-gray-50 text-gray-600">
-              ✕ Clear filters ({activeFilterCount})
+              ✕ {t("common.clearFilters")} ({activeFilterCount})
             </button>
           )}
         </div>
         <button onClick={exportLogs} disabled={exporting}
           className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white text-sm font-semibold rounded-lg hover:bg-green-700 disabled:opacity-50">
-          {exporting ? '⏳ Exporting…' : '📥 Export CSV'}
+          {exporting ? t("common.saving") : `📥 ${t("audit.export")}`}
         </button>
       </div>
 
@@ -232,10 +233,10 @@ export default function AuditTrail() {
       {/* ── Summary stat cards — only Total from API is reliable ── */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         {[
-          { label: 'Total Activities',  value: fmt(totalCount),                          color: 'text-blue-700',   bg: 'bg-blue-50   border-blue-200' },
-          { label: 'This Page',         value: fmt(logs.length),                         color: 'text-gray-700',   bg: 'bg-gray-50   border-gray-200' },
-          { label: 'Entity Types',      value: new Set(logs.map(l => l.entity_type)).size, color: 'text-purple-700', bg: 'bg-purple-50 border-purple-200' },
-          { label: 'Action Types',      value: Object.keys(pageActionCounts).length,     color: 'text-orange-700', bg: 'bg-orange-50 border-orange-200' },
+          { label: t('audit.stat.total'),       value: fmt(totalCount),                            color: 'text-blue-700',   bg: 'bg-blue-50   border-blue-200' },
+          { label: t('audit.stat.thisPage'),    value: fmt(logs.length),                           color: 'text-gray-700',   bg: 'bg-gray-50   border-gray-200' },
+          { label: t('audit.stat.entityTypes'), value: new Set(logs.map(l => l.entity_type)).size, color: 'text-purple-700', bg: 'bg-purple-50 border-purple-200' },
+          { label: t('audit.stat.actionTypes'), value: Object.keys(pageActionCounts).length,       color: 'text-orange-700', bg: 'bg-orange-50 border-orange-200' },
         ].map(s => (
           <div key={s.label} className={`rounded-xl border p-4 ${s.bg}`}>
             <p className={`text-2xl font-bold tabular-nums ${s.color}`}>{s.value}</p>
@@ -328,7 +329,7 @@ export default function AuditTrail() {
         {loading ? (
           <div className="flex items-center justify-center py-16 gap-3 text-gray-400">
             <div className="animate-spin h-5 w-5 border-2 border-gray-300 border-t-blue-500 rounded-full" />
-            Loading activities…
+            {t("common.loading")}
           </div>
         ) : logs.length === 0 ? (
           <div className="py-16 text-center">
@@ -336,7 +337,7 @@ export default function AuditTrail() {
             <p className="text-sm font-medium text-gray-700 mb-1">{t('audit.empty')}</p>
             {activeFilterCount > 0 && (
               <button onClick={clearFilters} className="text-xs text-blue-600 mt-1 hover:underline">
-                Clear filters
+                {t("common.clearFilters")}
               </button>
             )}
           </div>
@@ -349,9 +350,9 @@ export default function AuditTrail() {
                     <th className="px-5 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-32">{t('audit.timestamp')}</th>
                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-32">{t('audit.resource')}</th>
                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-24">{t('audit.action')}</th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Description</th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-56">Changes</th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-48">Metadata</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">{t("audit.col.description")}</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-56">{t("audit.col.changes")}</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-48">{t("audit.col.metadata")}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-50">
