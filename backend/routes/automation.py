@@ -49,6 +49,8 @@ class EmailConfig(BaseModel):
 class AutomationStepCreate(BaseModel):
     """Step configuration for automation"""
     template_id: str
+    subject_line: Optional[str] = ""
+    step_type: Optional[str] = "email"
     delay_value: int = 1
     delay_type: str = "hours"  # hours, days, weeks
     segment_conditions: Optional[List[str]] = []  # Segment IDs for conditional sending
@@ -351,6 +353,8 @@ async def create_automation_rule(rule_data: AutomationRuleCreate, background_tas
         
         steps_data.append({
             "email_template_id": step.template_id,
+            "subject_line": step.subject_line or "",
+            "step_type": step.step_type or "email",
             "delay_hours": delay_hours,
             "delay_value": step.delay_value,
             "delay_type": step.delay_type,
@@ -449,14 +453,24 @@ async def list_automation_rules(
         query["trigger"] = trigger
     
     total = await rules_collection.count_documents(query)
-    
+
     rules = await rules_collection.find(query).sort("created_at", -1).skip(skip).limit(limit).to_list(length=limit)
-    
+
+    # Batch-fetch step counts for all returned rules in one aggregation query
+    rule_ids = [str(r["_id"]) for r in rules]
+    steps_collection = get_automation_steps_collection()
+    step_count_cursor = steps_collection.aggregate([
+        {"$match": {"automation_rule_id": {"$in": rule_ids}}},
+        {"$group": {"_id": "$automation_rule_id", "count": {"$sum": 1}}}
+    ])
+    step_count_map = {doc["_id"]: doc["count"] async for doc in step_count_cursor}
+
     # Format response
     formatted_rules = []
     for rule in rules:
+        rule_id_str = str(rule["_id"])
         formatted_rules.append({
-            "id": str(rule["_id"]),
+            "id": rule_id_str,
             "name": rule["name"],
             "trigger": rule["trigger"],
             "status": rule.get("status", "draft"),
@@ -465,6 +479,7 @@ async def list_automation_rules(
             "subscribers_entered": rule.get("subscribers_entered", 0),
             "subscribers_completed": rule.get("subscribers_completed", 0),
             "timezone": rule.get("timezone", "UTC"),
+            "step_count": step_count_map.get(rule_id_str, 0),
             "created_at": rule["created_at"],
             "updated_at": rule["updated_at"]
         })
@@ -559,6 +574,8 @@ async def get_automation_rule(rule_id: str):
         step_data = {
             "id": str(step["_id"]),
             "template_id": step["email_template_id"],
+            "subject_line": step.get("subject_line", ""),
+            "step_type": step.get("step_type", "email"),
             "delay_value": delay_value,
             "delay_type": delay_type,
             "segment_conditions": step.get("segment_conditions", []),
@@ -631,6 +648,8 @@ async def update_automation_rule(rule_id: str, rule_data: AutomationRuleUpdate):
             step_doc = {
                 "automation_rule_id": rule_id,
                 "email_template_id": step.template_id,
+                "subject_line": step.subject_line or "",
+                "step_type": step.step_type or "email",
                 "delay_hours": delay_hours,
                 "delay_value": step.delay_value,
                 "delay_type": step.delay_type,

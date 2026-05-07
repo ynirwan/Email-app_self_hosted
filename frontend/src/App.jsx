@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, useParams } from "react-router-dom";
 import Register from "./pages/Register";
 import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
@@ -30,6 +30,13 @@ import AutomationAnalytics from "./pages/AutomationAnalytics";
 import AutomationCampaignAnalytics from "./pages/AutomationCampaignAnalytics";
 import OptInForm from "./pages/OptInForm";
 import TrackingSettings from "./pages/TrackingSettings";
+
+// Wrapper: gives each edit session a unique key so React fully remounts the
+// AutomationBuilder when navigating between different edit routes (or create → edit).
+const AutomationEditRoute = () => {
+  const { id } = useParams();
+  return <AutomationBuilder key={id} />;
+};
 
 const App = () => {
   const isLoggedIn = !!localStorage.getItem("token");
@@ -79,10 +86,12 @@ const App = () => {
 
             {/* New Automation Routes */}
             <Route path="/automation" element={<AutomationDashboard />} />
-            <Route path="/automation/create" element={<AutomationBuilder />} />
+            {/* Use distinct keys so React always mounts a fresh AutomationBuilder
+                when switching between create and edit, preventing stale-state blank pages */}
+            <Route path="/automation/create" element={<AutomationBuilder key="create" />} />
             <Route
               path="/automation/edit/:id"
-              element={<AutomationBuilder />}
+              element={<AutomationEditRoute />}
             />
             <Route
               path="/automation/analytics/"

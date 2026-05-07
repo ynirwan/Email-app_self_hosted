@@ -55,7 +55,9 @@ const AutomationBuilder = () => {
 
   const [templates, setTemplates] = useState([]);
   const [segments, setSegments] = useState([]);
-  const [loading, setLoading] = useState(false);
+  // Start as true so the spinner shows on initial render before data loads.
+  // This prevents a flash of the empty form that can cause a silent crash on SPA navigation.
+  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
@@ -1221,6 +1223,9 @@ const AdvancedStepMenu = ({ onSelectStepType }) => {
 // ============================================
 const StepCard = ({ step, index, templates, segments, isAdvanced, onUpdate, onRemove, getTemplateName, extractDynamicFields, availableFields }) => {
   const [showAdvanced, setShowAdvanced] = useState(false);
+  // Track which fields the user has interacted with to avoid eager validation errors
+  const [touchedFields, setTouchedFields] = useState({});
+  const markTouched = (field) => setTouchedFields(prev => ({ ...prev, [field]: true }));
 
   const stepTypeLabels = {
     email: 'Email',
@@ -1302,7 +1307,8 @@ const StepCard = ({ step, index, templates, segments, isAdvanced, onUpdate, onRe
       )}
 
       {/* ⭐ Email Step Configuration WITH SUBJECT LINE & FIELD MAPPING */}
-      {step.step_type === 'email' && (
+      {/* Guard: treat missing step_type as 'email' for legacy steps stored before this field existed */}
+      {(step.step_type === 'email' || !step.step_type) && (
         <div className="space-y-3">
           {/* ⭐ Subject Line Field */}
           <div>
@@ -1314,13 +1320,15 @@ const StepCard = ({ step, index, templates, segments, isAdvanced, onUpdate, onRe
               type="text"
               value={step.subject_line || ''}
               onChange={(e) => onUpdate(step.id, 'subject_line', e.target.value)}
-              className={`w-full p-2 border rounded-lg ${!step.subject_line || step.subject_line.trim() === ''
+              onBlur={() => markTouched('subject_line')}
+              className={`w-full p-2 border rounded-lg ${
+                touchedFields.subject_line && (!step.subject_line || step.subject_line.trim() === '')
                   ? 'border-red-300 bg-red-50'
                   : 'border-gray-300'
-                }`}
+              }`}
               placeholder="e.g., Welcome to our platform!"
             />
-            {(!step.subject_line || step.subject_line.trim() === '') && (
+            {touchedFields.subject_line && (!step.subject_line || step.subject_line.trim() === '') && (
               <p className="text-xs text-red-600 mt-1">⚠️ Subject line is required</p>
             )}
             <p className="text-xs text-gray-500 mt-1">
@@ -1336,6 +1344,7 @@ const StepCard = ({ step, index, templates, segments, isAdvanced, onUpdate, onRe
             <select
               value={step.template_id || ''}
               onChange={async (e) => {
+                markTouched('template_id');
                 const templateId = e.target.value;
 
                 const selectedTemplate = templates?.find(t => t.id === templateId);
@@ -1364,8 +1373,9 @@ const StepCard = ({ step, index, templates, segments, isAdvanced, onUpdate, onRe
                   }
                 }
               }}
-              className={`w-full p-2 border rounded-lg ${!step.template_id ? 'border-red-300 bg-red-50' : 'border-gray-300'
-                }`}
+              className={`w-full p-2 border rounded-lg ${
+                touchedFields.template_id && !step.template_id ? 'border-red-300 bg-red-50' : 'border-gray-300'
+              }`}
             >
               <option value="">-- Select Template --</option>
               {templates && Array.isArray(templates) ? (
@@ -1400,7 +1410,7 @@ const StepCard = ({ step, index, templates, segments, isAdvanced, onUpdate, onRe
       )}
 
       {/* Advanced Features for Email Steps */}
-      {isAdvanced && step.step_type === 'email' && (
+      {isAdvanced && (step.step_type === 'email' || !step.step_type) && (
         <div className="mt-4">
           <button
             onClick={() => setShowAdvanced(!showAdvanced)}
@@ -2216,6 +2226,9 @@ const FieldMappingSection = ({ step, onUpdate, availableFields }) => {
   const dynamicFields = step.dynamic_fields || [];
   const fieldMap = step.field_map || {};
   const fallbackValues = step.fallback_values || {};
+  // Only show "please map" error after user has interacted with that dropdown
+  const [touchedMappings, setTouchedMappings] = useState({});
+  const markMappingTouched = (field) => setTouchedMappings(prev => ({ ...prev, [field]: true }));
 
   // Use passed availableFields or fall back to defaults
   const fields = availableFields || {
@@ -2277,9 +2290,10 @@ const FieldMappingSection = ({ step, onUpdate, availableFields }) => {
               </label>
               <select
                 value={fieldMap[field] || ''}
-                onChange={(e) => handleFieldChange(field, e.target.value)}
-                className={`w-full p-2 border rounded text-sm ${!fieldMap[field] ? 'border-red-300 bg-red-50' : 'border-gray-300'
-                  }`}
+                onChange={(e) => { markMappingTouched(field); handleFieldChange(field, e.target.value); }}
+                className={`w-full p-2 border rounded text-sm ${
+                  touchedMappings[field] && !fieldMap[field] ? 'border-red-300 bg-red-50' : 'border-gray-300'
+                }`}
               >
                 <option value="">-- Select Field --</option>
 
@@ -2311,7 +2325,7 @@ const FieldMappingSection = ({ step, onUpdate, availableFields }) => {
                 </optgroup>
               </select>
 
-              {!fieldMap[field] && (
+              {touchedMappings[field] && !fieldMap[field] && (
                 <p className="text-xs text-red-600 mt-1">⚠️ Please map this field</p>
               )}
             </div>

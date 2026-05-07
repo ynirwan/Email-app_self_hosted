@@ -18,12 +18,18 @@ class TemplateRenderer:
 
     @staticmethod
     def extract_fields_from_content(content: str) -> List[str]:
-        """Extract placeholder fields from content"""
+        """Extract placeholder variable fields from content.
+
+        Only matches simple variable names like {{first_name}}, {{email}}.
+        Excludes Handlebars block helpers such as {{#unless ...}}, {{/unless}},
+        {{#if ...}}, {{else}}, {{/if}}, etc.
+        """
         if not content:
             return []
 
-        # Find all {{field_name}} patterns
-        pattern = r"\{\{([^}]+)\}\}"
+        # Match only plain variable names: letters, digits, underscores
+        # This intentionally excludes #, /, spaces, dots — all Handlebars helper syntax
+        pattern = r"\{\{([a-zA-Z_][a-zA-Z0-9_]*)\}\}"
         matches = re.findall(pattern, content)
         return [m.strip() for m in matches]
 

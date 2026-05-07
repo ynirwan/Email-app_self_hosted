@@ -112,8 +112,13 @@ export default function AutomationDashboard() {
   const duplicateAutomation = async (automation) => {
     setRowBusy(automation.id, "dup");
     try {
+      // The list view only returns partial data (no email_config, no steps).
+      // Fetch the full automation before cloning so all required fields are present.
+      const fullRes = await API.get(`/automation/rules/${automation.id}`);
+      const fullData = fullRes?.data || fullRes;
+
       const payload = {
-        ...automation,
+        ...fullData,
         name: `${automation.name} (Copy)`,
         active: false,
         status: "draft",
@@ -124,14 +129,22 @@ export default function AutomationDashboard() {
         "created_at",
         "updated_at",
         "emails_sent",
+        "emails_opened",
+        "emails_clicked",
         "open_rate",
         "click_rate",
+        "subscribers_entered",
+        "subscribers_completed",
       ].forEach((k) => delete payload[k]);
+
       await API.post("/automation/rules", payload);
       toast(`"${automation.name}" duplicated as draft`, "success");
       fetchAutomations();
-    } catch {
-      toast("Failed to duplicate automation", "error");
+    } catch (err) {
+      toast(
+        err?.response?.data?.detail || "Failed to duplicate automation",
+        "error",
+      );
     } finally {
       setRowBusy(automation.id, null);
     }
@@ -431,7 +444,7 @@ export default function AutomationDashboard() {
                         </span>
                       </td>
                       <td className="px-4 py-3.5 text-right text-xs tabular-nums text-gray-600">
-                        {a.steps?.length || 0}
+                        {a.step_count ?? 0}
                       </td>
                       <td className="px-4 py-3.5 text-right text-xs tabular-nums font-medium text-gray-700">
                         {(a.emails_sent || 0).toLocaleString()}
