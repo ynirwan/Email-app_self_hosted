@@ -268,7 +268,7 @@ export default function Segmentation() {
     return (
       <div className="text-center py-20">
         <div className="text-4xl mb-4">🔄</div>
-        <p className="text-lg">Loading segments...</p>
+        <p className="text-lg">{t("common.loading")}</p>
       </div>
     );
   }
@@ -278,9 +278,9 @@ export default function Segmentation() {
       {/* Header */}
       <div className="flex justify-between items-center mb-6">
         <div>
-          <h2 className="text-2xl font-bold">🎯 Segmentation</h2>
+          <h2 className="text-2xl font-bold">🎯 {t("nav.segments")}</h2>
           <p className="text-gray-600 text-sm">
-            Build dynamic audiences with 7 criteria types
+            {t("segments.subtitle")}
           </p>
         </div>
         <button
@@ -297,7 +297,7 @@ export default function Segmentation() {
           type="text"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search segments..."
+          placeholder={t("segments.search")}
           className="w-full md:w-80 border border-gray-200 rounded-lg px-3 py-2 text-sm"
         />
       </div>
@@ -307,25 +307,25 @@ export default function Segmentation() {
         {loading ? (
           <div className="flex items-center justify-center py-16 gap-2 text-gray-400 text-sm">
             <div className="animate-spin h-4 w-4 border-2 border-gray-300 border-t-blue-500 rounded-full" />
-            Loading segments…
+            {t("common.loading")}
           </div>
         ) : filtered.length === 0 ? (
           <div className="py-16 text-center">
             <p className="text-3xl mb-2">🎯</p>
             <p className="text-sm font-medium text-gray-700">
-              {search ? `No segments match "${search}"` : t('segments.empty')}
+              {search ? t("segments.noMatch") : t('segments.empty')}
             </p>
             {search ? (
               <button
                 onClick={() => setSearch('')}
                 className="text-xs text-blue-600 mt-2 hover:underline"
               >
-                Clear search
+                {t("common.clearFilters")}
               </button>
             ) : (
               <>
                 <p className="text-xs text-gray-400 mt-1 mb-4">
-                  Create your first segment with 7 criteria types
+                  {t("segments.emptyHint")}
                 </p>
                 <button
                   onClick={openCreate}
@@ -341,19 +341,19 @@ export default function Segmentation() {
             <thead>
               <tr className="bg-gray-50 border-b border-gray-100">
                 <th className="px-5 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Segment
+                  {t("segments.col.segment")}
                 </th>
                 <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider w-24">
-                  Size
+                  {t("segments.col.size")}
                 </th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Criteria
+                  {t("segments.col.criteria")}
                 </th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-24">
-                  Status
+                  {t("common.status")}
                 </th>
                 <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider w-56">
-                  Actions
+                  {t("common.actions")}
                 </th>
               </tr>
             </thead>
@@ -378,7 +378,7 @@ export default function Segmentation() {
                       <span className="text-base font-bold text-gray-800 tabular-nums">
                         {fmt(seg.subscriber_count)}
                       </span>
-                      <span className="block text-xs text-gray-400">subs</span>
+                      <span className="block text-xs text-gray-400">{t("segments.subs")}</span>
                     </td>
                     <td className="px-4 py-3.5">
                       <div className="flex flex-wrap gap-1">
@@ -400,7 +400,7 @@ export default function Segmentation() {
                             : 'bg-gray-100 text-gray-600'
                         }`}
                       >
-                        {seg.is_active ? 'Active' : 'Inactive'}
+                        {seg.is_active ? t("common.active") : t("segments.inactive")}
                       </span>
                     </td>
                     <td className="px-4 py-3.5">
@@ -409,20 +409,20 @@ export default function Segmentation() {
                           onClick={() => handlePreview(seg)}
                           className="px-2.5 py-1 text-xs text-blue-700 bg-blue-50 border border-blue-100 rounded hover:bg-blue-100"
                         >
-                          👁 Preview
+                          👁 {t("common.preview")}
                         </button>
                         <button
                           onClick={() => openEdit(seg)}
                           className="px-2.5 py-1 text-xs text-gray-700 bg-gray-50 border border-gray-200 rounded hover:bg-gray-100"
                           title="Open editor (criteria edits may be locked if in use)"
                         >
-                          ✏️ Edit
+                          ✏️ {t("common.edit")}
                         </button>
                         <button
                           onClick={() => handleDelete(seg)}
                           className="px-2.5 py-1 text-xs text-red-700 bg-red-50 border border-red-100 rounded hover:bg-red-100"
                         >
-                          🗑 Delete
+                          🗑 {t("common.delete")}
                         </button>
                       </div>
                     </td>

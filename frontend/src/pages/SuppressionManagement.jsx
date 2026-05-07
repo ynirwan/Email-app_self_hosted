@@ -156,7 +156,7 @@ const SuppressionManagement = () => {
       return;
     }
 
-    if (!confirm('Are you sure you want to delete this suppression?')) return;
+    if (!confirm(t('suppressions.deleteConfirm'))) return;
 
     try {
       console.log('Deleting suppression with ID:', id); // Debug log
@@ -192,7 +192,7 @@ const SuppressionManagement = () => {
       console.warn(`Filtered out ${selectedItems.length - validIds.length} invalid IDs from bulk delete`);
     }
 
-    if (!confirm(`Are you sure you want to delete ${validIds.length} suppressions?`)) return;
+    if (!confirm(t('suppressions.bulkDeleteConfirm', { count: validIds.length }))) return;
 
     try {
       const promises = validIds.map(id => {
@@ -503,7 +503,7 @@ const SuppressionManagement = () => {
 
       {/* Header */}
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900 mb-2">Suppression List Management</h1>
+        <h1 className="text-2xl font-bold text-gray-900 mb-2">{t("nav.suppressions")}</h1>
         <p className="text-gray-600">Manage email suppressions to maintain sender reputation and comply with unsubscribe requests</p>
       </div>
 
@@ -513,7 +513,7 @@ const SuppressionManagement = () => {
           <div className="flex items-center">
             <Shield className="h-8 w-8 text-blue-500" />
             <div className="ml-3">
-              <p className="text-sm font-medium text-gray-500">Total Suppressions</p>
+              <p className="text-sm font-medium text-gray-500">{t("suppressions.stats.total")}</p>
               <p className="text-2xl font-bold text-gray-900">{stats.total.toLocaleString()}</p>
             </div>
           </div>
@@ -523,7 +523,7 @@ const SuppressionManagement = () => {
           <div className="flex items-center">
             <AlertTriangle className="h-8 w-8 text-red-500" />
             <div className="ml-3">
-              <p className="text-sm font-medium text-gray-500">Global</p>
+              <p className="text-sm font-medium text-gray-500">{t("suppressions.stats.global")}</p>
               <p className="text-2xl font-bold text-gray-900">{stats.global.toLocaleString()}</p>
             </div>
           </div>
@@ -533,7 +533,7 @@ const SuppressionManagement = () => {
           <div className="flex items-center">
             <Mail className="h-8 w-8 text-green-500" />
             <div className="ml-3">
-              <p className="text-sm font-medium text-gray-500">List Specific</p>
+              <p className="text-sm font-medium text-gray-500">{t("suppressions.stats.listSpecific")}</p>
               <p className="text-2xl font-bold text-gray-900">{stats.listSpecific.toLocaleString()}</p>
             </div>
           </div>
@@ -543,7 +543,7 @@ const SuppressionManagement = () => {
           <div className="flex items-center">
             <XCircle className="h-8 w-8 text-purple-500" />
             <div className="ml-3">
-              <p className="text-sm font-medium text-gray-500">Complaints</p>
+              <p className="text-sm font-medium text-gray-500">{t("suppressions.stats.complaints")}</p>
               <p className="text-2xl font-bold text-gray-900">{stats.byReason?.complaint || 0}</p>
             </div>
           </div>
@@ -644,7 +644,7 @@ const SuppressionManagement = () => {
               className="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
             >
               <Download className="h-4 w-4" />
-              {t('subscribers.export')}
+              {t('audit.export')}
             </button>
 
             <button
@@ -668,7 +668,7 @@ const SuppressionManagement = () => {
               className="flex items-center gap-2 px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors"
             >
               <RefreshCw className="h-4 w-4" />
-              Refresh
+              {t("common.refresh")}
             </button>
           </div>
 
@@ -683,7 +683,7 @@ const SuppressionManagement = () => {
                 className="flex items-center gap-2 px-3 py-1 bg-red-600 text-white rounded text-sm hover:bg-red-700 transition-colors"
               >
                 <Trash2 className="h-3 w-3" />
-                Delete Selected
+                {t("common.delete")}
               </button>
             </div>
           )}
@@ -722,7 +722,7 @@ const SuppressionManagement = () => {
                 onClick={() => setSearchTerm('')}
                 className="text-blue-600 hover:text-blue-800 text-sm mt-2"
               >
-                Clear search
+                {t("common.clearFilters")}
               </button>
             )}
           </div>
@@ -741,28 +741,28 @@ const SuppressionManagement = () => {
                       />
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Email
+                      {t("suppressions.col.email")}
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Reason
+                      {t("suppressions.col.reason")}
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Scope
+                      {t("suppressions.col.scope")}
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Source
+                      {t("suppressions.col.source")}
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Target Lists
+                      {t("suppressions.col.targetLists")}
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Created
+                      {t("suppressions.col.created")}
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Status
+                      {t("suppressions.col.status")}
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Actions
+                      {t("common.actions")}
                     </th>
                   </tr>
                 </thead>
@@ -797,14 +797,20 @@ const SuppressionManagement = () => {
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap">
                           <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getReasonColor(suppression.reason)}`}>
-                            {suppression.reason.replace('_', ' ').toUpperCase()}
+                            {suppression.reason === 'unsubscribe' ? t('suppressions.reason.unsubscribe') :
+                             suppression.reason === 'complaint' ? t('suppressions.reason.complaint') :
+                             suppression.reason === 'manual' ? t('suppressions.reason.manual') :
+                             (suppression.reason === 'bounce_hard' || suppression.reason === 'bounce_soft') ? t('suppressions.reason.bounce') :
+                             suppression.reason.replace(/_/g, ' ').toUpperCase()}
                           </span>
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap">
                           <div className="flex items-center">
                             {getScopeIcon(suppression.scope)}
                             <span className="ml-2 text-sm text-gray-900 capitalize">
-                              {suppression.scope.replace('_', ' ')}
+                              {suppression.scope === 'global' ? t('suppressions.scope.global') :
+                               suppression.scope === 'list_specific' ? t('suppressions.scope.listSpecific') :
+                               suppression.scope.replace(/_/g, ' ')}
                             </span>
                           </div>
                         </td>
@@ -842,12 +848,12 @@ const SuppressionManagement = () => {
                             {suppression.is_active ? (
                               <>
                                 <CheckCircle className="h-4 w-4 text-green-500 mr-2" />
-                                <span className="text-sm text-green-700">Active</span>
+                                <span className="text-sm text-green-700">{t("common.active")}</span>
                               </>
                             ) : (
                               <>
                                 <XCircle className="h-4 w-4 text-gray-400 mr-2" />
-                                <span className="text-sm text-gray-500">Inactive</span>
+                                <span className="text-sm text-gray-500">{t("segments.inactive")}</span>
                               </>
                             )}
                           </div>
@@ -867,7 +873,10 @@ const SuppressionManagement = () => {
             {/* Pagination */}
             <div className="px-6 py-3 bg-gray-50 border-t flex items-center justify-between">
               <div className="text-sm text-gray-700">
-                Showing {(currentPage - 1) * itemsPerPage + 1} to {Math.min(currentPage * itemsPerPage, suppressions.length)} results
+                {t("common.showing", {
+                  from: (currentPage - 1) * itemsPerPage + 1,
+                  to: Math.min(currentPage * itemsPerPage, suppressions.length)
+                })}
               </div>
               <div className="flex space-x-2">
                 <button
@@ -878,7 +887,7 @@ const SuppressionManagement = () => {
                   {t('common.previous')}
                 </button>
                 <span className="px-3 py-1 text-sm">
-                  {t('common.page')} {currentPage} {t('common.showing').split(' ')[1]} {totalPages}
+                  {t("common.page", { n: currentPage, total: totalPages })}
                 </span>
                 <button
                   onClick={() => setCurrentPage(currentPage + 1)}

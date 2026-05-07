@@ -6,14 +6,7 @@ import { useSettings } from "../contexts/SettingsContext";
 // ── Tiny helpers ──────────────────────────────────────────────────────────────
 const fmt = (n) => Number(n ?? 0).toLocaleString();
 
-// ── Step definitions ─────────────────────────────────────────────────────────
-const STEPS = [
-  { id: 1, label: "Details", icon: "✉️", desc: "Name, subject & sender" },
-  { id: 2, label: "Audience", icon: "👥", desc: "Lists & segments" },
-  { id: 3, label: "Template", icon: "🎨", desc: "Pick your template" },
-  { id: 4, label: "Mapping", icon: "🔗", desc: "Field variables" },
-  { id: 5, label: "Review", icon: "🚀", desc: "Preview & launch" },
-];
+// ── Step definitions (built inside component so t() is available) ─────────────
 
 // ── StepNav ───────────────────────────────────────────────────────────────────
 function StepNav({ current, steps, onGoto, completedSteps }) {
@@ -184,6 +177,15 @@ function AudienceCard({
 // ── Main ──────────────────────────────────────────────────────────────────────
 export default function CreateCampaign() {
   const { t } = useSettings();
+
+  const STEPS = [
+    { id: 1, label: t("campaign.step.details"),  icon: "✉️", desc: t("campaign.step.details.desc") },
+    { id: 2, label: t("campaign.step.audience"), icon: "👥", desc: t("campaign.step.audience.desc") },
+    { id: 3, label: t("campaign.step.template"), icon: "🎨", desc: t("campaign.step.template.desc") },
+    { id: 4, label: t("campaign.step.mapping"),  icon: "🔗", desc: t("campaign.step.mapping.desc") },
+    { id: 5, label: t("campaign.step.review"),   icon: "🚀", desc: t("campaign.step.review.desc") },
+  ];
+
   const navigate = useNavigate();
   const [step, setStep] = useState(1);
   const [completedSteps, setCompletedSteps] = useState([]);
@@ -351,19 +353,19 @@ export default function CreateCampaign() {
   const validateStep = (s) => {
     const errs = {};
     if (s === 1) {
-      if (!form.title.trim()) errs.title = "Campaign title is required";
-      if (!form.subject.trim()) errs.subject = "Subject line is required";
+      if (!form.title.trim()) errs.title = t("campaign.form.errors.titleRequired");
+      if (!form.subject.trim()) errs.subject = t("campaign.form.errors.subjectRequired");
       if (!form.sender_name.trim())
-        errs.sender_name = "Sender name is required";
+        errs.sender_name = t("campaign.form.errors.senderNameRequired");
       if (!form.sender_email.trim())
-        errs.sender_email = "Sender email is required";
+        errs.sender_email = t("campaign.form.errors.senderEmailRequired");
     }
     if (s === 2) {
       if (!form.target_lists.length && !form.target_segments.length)
-        errs.audience = "Select at least one list or segment";
+        errs.audience = t("campaign.form.errors.audienceRequired");
     }
     if (s === 3) {
-      if (!form.template_id) errs.template_id = "Select a template";
+      if (!form.template_id) errs.template_id = t("campaign.form.errors.templateRequired");
     }
     if (s === 4) {
       dynamicFields.forEach((f) => {
@@ -414,7 +416,7 @@ export default function CreateCampaign() {
       }
       navigate("/campaigns");
     } catch (err) {
-      setGlobalError(err.response?.data?.detail || "Failed to create campaign");
+      setGlobalError(err.response?.data?.detail || t("campaign.form.errors.createFailed"));
     } finally {
       setSubmitting(false);
     }
@@ -441,9 +443,9 @@ export default function CreateCampaign() {
           ✉️
         </div>
         <div>
-          <h2 className="text-lg font-bold text-gray-900">Campaign Details</h2>
+          <h2 className="text-lg font-bold text-gray-900">{t("campaign.step.details")}</h2>
           <p className="text-sm text-gray-500">
-            Set the core identity of your campaign
+            {t("campaign.step.details.hint")}
           </p>
         </div>
       </div>
@@ -1080,8 +1082,7 @@ export default function CreateCampaign() {
           </button>
         </div>
         <p className="text-xs text-gray-400 mt-3 text-center">
-          "Send Now" creates the campaign and immediately starts sending to{" "}
-          {fmt(totalAudienceSize)} recipients.
+          {t("campaign.step.sendNowHint", { count: fmt(totalAudienceSize) })}
         </p>
       </div>
     </div>
@@ -1100,16 +1101,16 @@ export default function CreateCampaign() {
       {/* Header */}
       <div className="flex items-center justify-between mb-8">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Create Campaign</h1>
+          <h1 className="text-2xl font-bold text-gray-900">{t("campaigns.create")}</h1>
           <p className="text-sm text-gray-500 mt-0.5">
-            Step {step} of {STEPS.length}
+            {t("campaign.step.progress", { step, total: STEPS.length })}
           </p>
         </div>
         <button
           onClick={() => navigate("/campaigns")}
           className="text-sm text-gray-500 hover:text-gray-700 flex items-center gap-1.5 border border-gray-200 px-3 py-1.5 rounded-lg hover:bg-gray-50"
         >
-          ← Campaigns
+          ← {t("nav.campaigns")}
         </button>
       </div>
 
@@ -1143,7 +1144,7 @@ export default function CreateCampaign() {
               disabled={step === 1}
               className="px-5 py-2.5 text-sm font-medium text-gray-600 border border-gray-200 rounded-xl hover:bg-gray-50 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
             >
-              ← Back
+              ← {t("common.previous")}
             </button>
             <div className="flex items-center gap-3">
               <span className="text-xs text-gray-400">
@@ -1153,7 +1154,7 @@ export default function CreateCampaign() {
                 onClick={handleNext}
                 className="px-6 py-2.5 text-sm font-bold text-white bg-indigo-600 rounded-xl hover:bg-indigo-700 shadow-md shadow-indigo-200 transition-all"
               >
-                Continue →
+                {t("campaign.step.continue")} →
               </button>
             </div>
           </div>

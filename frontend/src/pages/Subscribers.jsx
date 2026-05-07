@@ -272,6 +272,7 @@ function AddSubscriberModal({
   handleEditSubscriber,
   onClose,
 }) {
+  const { t } = useSettings();
   const isEditing = !!editingSubscriber;
   const stdFields = isEditing
     ? Object.keys(editingSubscriber?.standard_fields || {})
@@ -287,7 +288,7 @@ function AddSubscriberModal({
       <div className="bg-white rounded-xl shadow-xl w-full max-w-md max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between px-6 py-4 border-b">
           <h2 className="text-base font-semibold">
-            {isEditing ? "Edit Subscriber" : "Add Subscriber"}
+            {isEditing ? t("subscribers.modal.update") : t("subscribers.modal.add")}
           </h2>
           <button
             onClick={onClose}
@@ -298,7 +299,7 @@ function AddSubscriberModal({
         </div>
         <div className="px-6 py-4 space-y-4">
           <div>
-            <label className="block text-sm font-medium mb-1">Email *</label>
+            <label className="block text-sm font-medium mb-1">{t("common.email")} *</label>
             <input
               type="email"
               value={subscriberForm.email}
@@ -309,7 +310,7 @@ function AddSubscriberModal({
             />
           </div>
           <div>
-            <label className="block text-sm font-medium mb-1">List *</label>
+            <label className="block text-sm font-medium mb-1">{t("subscribers.col.list")} *</label>
             {isEditing ? (
               <input
                 value={subscriberForm.list}
@@ -396,7 +397,7 @@ function AddSubscriberModal({
           {custFields.length > 0 && (
             <div className="border-t pt-3">
               <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
-                Custom Fields
+                {t("subscribers.customFields")}
               </p>
               {custFields.map((field) => (
                 <div key={field} className="mb-3">
@@ -427,13 +428,13 @@ function AddSubscriberModal({
             onClick={isEditing ? handleEditSubscriber : handleAddSubscriber}
             className="flex-1 py-2 bg-blue-600 text-white text-sm font-semibold rounded-lg hover:bg-blue-700"
           >
-            {isEditing ? "Update" : "Add"} Subscriber
+            {isEditing ? t("subscribers.modal.update") : t("subscribers.modal.add")}
           </button>
           <button
             onClick={onClose}
             className="px-4 py-2 border text-sm font-medium rounded-lg hover:bg-gray-100"
           >
-            Cancel
+            {t("common.cancel")}
           </button>
         </div>
       </div>
@@ -761,14 +762,14 @@ export default function Subscribers() {
 
   const handleUploadList = async () => {
     if (!listName.trim()) {
-      showToast("List name is required", "error");
+      showToast(t("subscribers.alert.listRequired"), "error");
       return;
     }
 
     const emailRow = fieldMap.rows.find((r) => r.mappedTo === "email");
     const emailColIdx = csvHeaders.indexOf(emailRow?.csvHeader ?? "");
     if (emailColIdx === -1) {
-      showToast("Map a column to email before uploading", "error");
+      showToast(t("subscribers.alert.emailRequired"), "error");
       return;
     }
 
@@ -901,16 +902,16 @@ export default function Subscribers() {
   // ── subscriber CRUD ───────────────────────────────────────────────────────────
   const handleAddSubscriber = async () => {
     if (!subscriberForm.email || !validateEmail(subscriberForm.email)) {
-      showToast("Valid email is required", "error");
+      showToast(t("subscribers.alert.validEmail"), "error");
       return;
     }
     if (!subscriberForm.list) {
-      showToast("List is required", "error");
+      showToast(t("subscribers.alert.listRequired"), "error");
       return;
     }
     try {
       await API.post("/subscribers/", subscriberForm);
-      showToast("Subscriber added", "success");
+      showToast(t("subscribers.alert.added"), "success");
       setShowAddModal(false);
       setSubscriberForm(emptyForm);
       fetchLists();
@@ -926,7 +927,7 @@ export default function Subscribers() {
   const handleEditSubscriber = async () => {
     try {
       await API.put(`/subscribers/${editingSubscriber._id}`, subscriberForm);
-      showToast("Subscriber updated", "success");
+      showToast(t("subscribers.alert.updated"), "success");
       setShowAddModal(false);
       setEditingSubscriber(null);
       setSubscriberForm(emptyForm);
@@ -940,11 +941,11 @@ export default function Subscribers() {
     if (!confirm("Delete this subscriber?")) return;
     try {
       await API.delete(`/subscribers/${id}`);
-      showToast("Subscriber deleted", "success");
+      showToast(t("subscribers.alert.deleted"), "success");
       fetchLists();
       fetchAllSubscribers(subscriberPage, currentSearchTerm, statusFilter);
     } catch {
-      showToast("Delete failed", "error");
+      showToast(t("subscribers.alert.deleteFailed"), "error");
     }
   };
 
@@ -1088,13 +1089,13 @@ export default function Subscribers() {
           }}
           className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white text-sm font-semibold rounded-lg hover:bg-green-700 transition-colors"
         >
-          ➕ Add Subscriber
+          ➕ {t("subscribers.add")}
         </button>
         <button
           onClick={fetchLists}
           className="flex items-center gap-2 px-4 py-2 border border-gray-200 text-sm font-medium rounded-lg hover:bg-gray-50 transition-colors text-gray-600"
         >
-          🔄 Refresh
+          🔄 {t("common.refresh")}
         </button>
       </div>
 
@@ -1103,7 +1104,7 @@ export default function Subscribers() {
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
           <div>
             <h2 className="text-sm font-semibold text-gray-700">
-              Subscriber Lists
+              {t("subscribers.listsHeading")}
             </h2>
             {lists.length > 0 && (
               <p className="text-xs text-gray-400 mt-0.5">
@@ -1143,19 +1144,19 @@ export default function Subscribers() {
             <thead>
               <tr className="bg-gray-50 border-b border-gray-100">
                 <th className="px-5 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  List Name
+                  {t("subscribers.col.listName")}
                 </th>
                 <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Total
+                  {t("common.total")}
                 </th>
                 <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Active
+                  {t("common.active")}
                 </th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[140px]">
-                  Health
+                  {t("common.health")}
                 </th>
                 <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Actions
+                  {t("common.actions")}
                 </th>
               </tr>
             </thead>
@@ -1215,7 +1216,7 @@ export default function Subscribers() {
                           }
                           className="px-3 py-1.5 text-xs font-medium border border-gray-200 rounded-lg hover:bg-gray-50 text-gray-600 transition-colors"
                         >
-                          {t('campaigns.form.edit')}
+                          {t('common.edit')}
                         </button>
                         <button
                           onClick={() => handleExportList(list._id)}
@@ -1252,14 +1253,14 @@ export default function Subscribers() {
                             }}
                             className="text-xs bg-orange-600 text-white px-2.5 py-1 rounded hover:bg-orange-700"
                           >
-                            Retry
+                            {t("common.retry")}
                           </button>
                         )}
                         <button
                           onClick={() => handleDeleteList(list._id)}
                           className="px-3 py-1.5 text-xs font-medium border border-red-200 rounded-lg hover:bg-red-50 text-red-600 transition-colors"
                         >
-                          Delete
+                          {t("common.delete")}
                         </button>
                       </div>
                     </td>
@@ -1271,7 +1272,7 @@ export default function Subscribers() {
               <tfoot>
                 <tr className="bg-gray-50 border-t-2 border-gray-200">
                   <td className="px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                    {t('common.page').split(' ')[0]} ({lists.length} lists)
+                    {t('common.total')} ({lists.length} lists)
                   </td>
                   <td className="px-4 py-3 text-right tabular-nums font-bold text-gray-800">
                     {fmt(totalAcrossLists)}
@@ -1298,7 +1299,7 @@ export default function Subscribers() {
         <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-4 border-b border-gray-100">
           <div>
             <h2 className="text-sm font-semibold text-gray-700">
-              All Subscribers
+              {t("subscribers.searchAll")}
             </h2>
             {subscriberTotal > 0 && (
               <p className="text-xs text-gray-400 mt-0.5">
@@ -1353,7 +1354,7 @@ export default function Subscribers() {
           {loading ? (
             <div className="flex items-center justify-center py-12 gap-2 text-gray-400 text-sm">
               <div className="animate-spin h-4 w-4 border-2 border-gray-300 border-t-blue-500 rounded-full" />
-              {isSearchMode ? "Searching…" : "Loading…"}
+              {t("common.loading")}
             </div>
           ) : subscribers.length === 0 ? (
             <div className="py-12 text-center text-gray-400 text-sm">
@@ -1370,7 +1371,7 @@ export default function Subscribers() {
                     }}
                     className="text-xs text-blue-600 mt-2 hover:underline"
                   >
-                    Clear filters
+                    {t("common.clearFilters")}
                   </button>
                 </>
               ) : (
@@ -1388,19 +1389,19 @@ export default function Subscribers() {
               <thead>
                 <tr className="bg-gray-50 border-b border-gray-100">
                   <th className="px-5 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Email
+                    {t("common.email")}
                   </th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Name
+                    {t("common.name")}
                   </th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    List
+                    {t("subscribers.col.list")}
                   </th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Status
+                    {t("common.status")}
                   </th>
                   <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider w-24">
-                    Actions
+                    {t("common.actions")}
                   </th>
                 </tr>
               </thead>
@@ -1426,7 +1427,7 @@ export default function Subscribers() {
                       <span
                         className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium ${STATUS_STYLE[sub.status] || STATUS_STYLE.inactive}`}
                       >
-                        {sub.status}
+                        {t("subscribers.status." + sub.status) || sub.status}
                       </span>
                     </td>
                     <td className="px-4 py-3 text-right">
@@ -1435,13 +1436,13 @@ export default function Subscribers() {
                           onClick={() => openEditModal(sub)}
                           className="text-xs text-blue-600 hover:underline font-medium"
                         >
-                          Edit
+                          {t("common.edit")}
                         </button>
                         <button
                           onClick={() => handleDeleteSubscriber(sub._id)}
                           className="text-xs text-red-500 hover:underline font-medium"
                         >
-                          Delete
+                          {t("common.delete")}
                         </button>
                       </div>
                     </td>
@@ -1503,7 +1504,7 @@ export default function Subscribers() {
                 <>
                   <div>
                     <label className="block text-sm font-medium mb-1">
-                      List Name *
+                      {t("subscribers.col.listName")} *
                     </label>
                     <input
                       type="text"
@@ -1700,7 +1701,7 @@ export default function Subscribers() {
                   }
                   className="flex-1 py-2.5 bg-blue-600 text-white text-sm font-semibold rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  🚀 Start Upload ({fmt(csvData.length)} rows)
+                  🚀 {t("subscribers.startUpload")} ({fmt(csvData.length)} rows)
                 </button>
                 <button
                   onClick={() => {
@@ -1709,7 +1710,7 @@ export default function Subscribers() {
                   }}
                   className="px-5 py-2.5 border text-sm font-medium rounded-lg hover:bg-gray-100"
                 >
-                  Cancel
+                  {t("common.cancel")}
                 </button>
               </div>
             )}

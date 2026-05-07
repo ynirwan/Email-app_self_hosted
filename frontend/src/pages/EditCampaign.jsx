@@ -8,13 +8,7 @@ import { useSettings } from "../contexts/SettingsContext";
 // ── Helpers ───────────────────────────────────────────────────────────────────
 const fmt = (n) => Number(n ?? 0).toLocaleString();
 
-const STEPS = [
-  { id: 1, label: "Details", icon: "✉️", desc: "Name, subject & sender" },
-  { id: 2, label: "Audience", icon: "👥", desc: "Lists & segments" },
-  { id: 3, label: "Template", icon: "🎨", desc: "Pick your template" },
-  { id: 4, label: "Mapping", icon: "🔗", desc: "Field variables" },
-  { id: 5, label: "Review", icon: "💾", desc: "Preview & save" },
-];
+// STEPS defined inside component so t() is available
 
 // ── StepNav ───────────────────────────────────────────────────────────────────
 function StepNav({ current, steps, onGoto, completedSteps }) {
@@ -138,6 +132,15 @@ function LockedOverlay({ locked, children }) {
 // ── Main EditCampaign ─────────────────────────────────────────────────────────
 export default function EditCampaign() {
   const { t, formatDate } = useSettings();
+
+  const STEPS = [
+    { id: 1, label: t("campaign.step.details"),  icon: "✉️", desc: t("campaign.step.details.desc") },
+    { id: 2, label: t("campaign.step.audience"), icon: "👥", desc: t("campaign.step.audience.desc") },
+    { id: 3, label: t("campaign.step.template"), icon: "🎨", desc: t("campaign.step.template.desc") },
+    { id: 4, label: t("campaign.step.mapping"),  icon: "🔗", desc: t("campaign.step.mapping.desc") },
+    { id: 5, label: t("campaign.step.review"),   icon: "💾", desc: t("campaign.step.review.edit.desc") },
+  ];
+
   const navigate = useNavigate();
   const { id: campaignId } = useParams();
 
@@ -352,19 +355,19 @@ export default function EditCampaign() {
   const validateStep = (s) => {
     const errs = {};
     if (s === 1) {
-      if (!form.title.trim()) errs.title = "Campaign title is required";
-      if (!form.subject.trim()) errs.subject = "Subject line is required";
+      if (!form.title.trim()) errs.title = t("campaign.form.errors.titleRequired");
+      if (!form.subject.trim()) errs.subject = t("campaign.form.errors.subjectRequired");
       if (!form.sender_name.trim())
-        errs.sender_name = "Sender name is required";
+        errs.sender_name = t("campaign.form.errors.senderNameRequired");
       if (!form.sender_email.trim())
-        errs.sender_email = "Sender email is required";
+        errs.sender_email = t("campaign.form.errors.senderEmailRequired");
     }
     if (s === 2) {
       if (!form.target_lists.length && !form.target_segments.length)
-        errs.audience = "Select at least one list or segment";
+        errs.audience = t("campaign.form.errors.audienceRequired");
     }
     if (s === 3) {
-      if (!form.template_id) errs.template_id = "Select a template";
+      if (!form.template_id) errs.template_id = t("campaign.form.errors.templateRequired");
     }
     return errs;
   };
@@ -390,7 +393,7 @@ export default function EditCampaign() {
       setSaveSuccess(true);
       setTimeout(() => navigate("/campaigns"), 1200);
     } catch (err) {
-      setGlobalError(err.response?.data?.detail || "Failed to save campaign");
+      setGlobalError(err.response?.data?.detail || t("campaign.form.errors.saveFailed"));
     } finally {
       setSubmitting(false);
     }
@@ -411,17 +414,14 @@ export default function EditCampaign() {
   const isNonDraft =
     originalStatus !== "draft" && originalStatus !== "scheduled";
 
-  // ── Save button label (NEW 6g) ────────────────────────────────────────────
-  const saveLabel =
-    editMode === "sender_only"
-      ? "Save Sender Settings"
-      : editMode === "limited"
-        ? "Save Changes"
-        : submitting
-          ? "⏳ Saving…"
-          : saveSuccess
-            ? "✅ Saved!"
-            : "💾 Save Changes";
+  // ── Save button label ─────────────────────────────────────────────────────
+  const saveLabel = submitting
+    ? t("common.saving")
+    : saveSuccess
+      ? `✅ ${t("campaign.edit.saved")}`
+      : editMode === "sender_only"
+        ? t("campaign.edit.saveSender")
+        : t("common.save");
 
   // ── Loading skeleton ──────────────────────────────────────────────────────
   if (loadingCampaign) {
@@ -459,11 +459,10 @@ export default function EditCampaign() {
           <span className="text-amber-500 text-lg flex-shrink-0">⚠️</span>
           <div>
             <p className="text-sm font-semibold text-amber-800">
-              Editing a "{originalStatus}" campaign
+              {t("campaign.edit.warningTitle", { status: originalStatus })}
             </p>
             <p className="text-xs text-amber-700 mt-0.5">
-              Changes will update the campaign record. Emails already sent are
-              unaffected.
+              {t("campaign.edit.warningBody")}
             </p>
           </div>
         </div>
@@ -914,8 +913,7 @@ export default function EditCampaign() {
 
       {isNonDraft && editMode === "full" && (
         <p className="text-xs text-amber-600 text-center">
-          ⚠ This campaign is "{originalStatus}" — changes update metadata only.
-          Sent emails are unaffected.
+          ⚠ {t("campaign.edit.metaOnlyWarning", { status: originalStatus })}
         </p>
       )}
     </div>
@@ -960,14 +958,14 @@ export default function EditCampaign() {
             )}
           </div>
           <p className="text-sm text-gray-500">
-            Step {step} of {STEPS.length}
+            {t("campaign.step.progress", { step, total: STEPS.length })}
           </p>
         </div>
         <button
           onClick={() => navigate("/campaigns")}
           className="text-sm text-gray-500 hover:text-gray-700 border border-gray-200 px-3 py-1.5 rounded-lg hover:bg-gray-50"
         >
-          ← Campaigns
+          ← {t("nav.campaigns")}
         </button>
       </div>
 
@@ -999,9 +997,7 @@ export default function EditCampaign() {
 
       {editMode === "limited" && (
         <div className="mb-6 bg-amber-50 border border-amber-300 rounded-xl p-4 text-sm text-amber-800">
-          <strong>⏸ Campaign is paused.</strong> You can update sender and
-          subject details. Audience and template cannot be changed while sending
-          is in progress.
+          <strong>⏸ {t("campaign.edit.pausedTitle")}</strong> {t("campaign.edit.pausedBody")}
         </div>
       )}
 
@@ -1068,7 +1064,7 @@ export default function EditCampaign() {
                 disabled={step === 1}
                 className="px-5 py-2.5 text-sm font-medium text-gray-600 border border-gray-200 rounded-xl hover:bg-gray-50 disabled:opacity-30 disabled:cursor-not-allowed"
               >
-                ← Back
+                ← {t("common.previous")}
               </button>
               <div className="flex items-center gap-3">
                 <span className="text-xs text-gray-400">
@@ -1078,7 +1074,7 @@ export default function EditCampaign() {
                   onClick={handleNext}
                   className="px-6 py-2.5 text-sm font-bold text-white bg-indigo-600 rounded-xl hover:bg-indigo-700 shadow-md shadow-indigo-200"
                 >
-                  Continue →
+                  {t("campaign.step.continue")} →
                 </button>
               </div>
             </div>

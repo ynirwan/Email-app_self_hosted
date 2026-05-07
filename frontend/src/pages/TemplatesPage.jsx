@@ -222,7 +222,7 @@ export default function TemplatesPage() {
           {/* sticky editor toolbar */}
           <div className="sticky top-0 bg-white z-20 py-3 mb-4 border-b flex items-center justify-between gap-4">
             <div className="flex-1 min-w-0">
-              <input type="text" placeholder="Template Name *"
+              <input type="text" placeholder={t("templates.namePlaceholder")}
                 value={editTemplate.name}
                 onChange={e => { setEditTemplate(p => ({ ...p, name: e.target.value })); setIsDirty(true); }}
                 className="w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
@@ -231,7 +231,7 @@ export default function TemplatesPage() {
             <div className="flex gap-2 flex-shrink-0">
               <button onClick={safeClose} disabled={saving}
                 className="px-4 py-2 border text-sm font-medium rounded-lg hover:bg-gray-50 disabled:opacity-50">
-                Cancel
+                {t("common.cancel")}
               </button>
               <button onClick={handleSave} disabled={saving}
                 className="px-5 py-2 bg-blue-600 text-white text-sm font-semibold rounded-lg hover:bg-blue-700 disabled:opacity-50">
@@ -323,7 +323,7 @@ export default function TemplatesPage() {
           ) : (
             <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
               <div className="px-5 py-3 border-b border-gray-100 flex items-center justify-between">
-                <p className="text-xs text-gray-500">{filtered.length} template{filtered.length !== 1 ? 's' : ''}</p>
+                <p className="text-xs text-gray-500">{t("templates.count" + (filtered.length !== 1 ? "_plural" : ""), { count: filtered.length })}</p>
               </div>
               <ul className="divide-y divide-gray-50">
                 {filtered.map(template => {
@@ -341,7 +341,7 @@ export default function TemplatesPage() {
                           )}
                         </div>
                         {template.subject && (
-                          <p className="text-xs text-gray-400 mt-0.5 truncate">Subject: {template.subject}</p>
+                          <p className="text-xs text-gray-400 mt-0.5 truncate">{t("templates.subjectLine")}: {template.subject}</p>
                         )}
                         {template.description && !template.subject && (
                           <p className="text-xs text-gray-400 mt-0.5 truncate">{template.description}</p>
@@ -358,19 +358,19 @@ export default function TemplatesPage() {
                       <div className="flex items-center gap-2 flex-shrink-0">
                         <button onClick={() => setPreviewTemplate(template)}
                           className="px-3 py-1.5 text-xs font-medium border border-purple-200 rounded-lg hover:bg-purple-50 text-purple-700 transition-colors flex items-center gap-1">
-                          <Eye size={12} /> Preview
+                          <Eye size={12} /> {t("common.preview")}
                         </button>
                         <button onClick={() => handleEdit(template)}
                           className="px-3 py-1.5 text-xs font-medium border border-gray-200 rounded-lg hover:bg-gray-50 text-gray-600 transition-colors">
-                          Edit
+                          {t("common.edit")}
                         </button>
                         <button onClick={() => handleDuplicate(template)}
                           className="px-3 py-1.5 text-xs font-medium border border-gray-200 rounded-lg hover:bg-gray-50 text-gray-600 transition-colors flex items-center gap-1">
-                          <Copy size={12} /> Duplicate
+                          <Copy size={12} /> {t("common.duplicate")}
                         </button>
                         <button onClick={() => handleDelete(template)}
                           className="px-3 py-1.5 text-xs font-medium border border-red-200 rounded-lg hover:bg-red-50 text-red-600 transition-colors">
-                          Delete
+                          {t("common.delete")}
                         </button>
                       </div>
                     </li>

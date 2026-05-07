@@ -177,10 +177,10 @@ export default function SubscriberListView() {
         if (!confirm(t('common.delete') + "?")) return;
         try {
             await API.delete(`/subscribers/${id}`);
-            showToast("Subscriber deleted", "success");
+            showToast(t("subscribers.alert.deleted"), "success");
             fetchSubscribers(currentPage, searchTerm, statusFilter);
         } catch {
-            showToast("Delete failed", "error");
+            showToast(t("subscribers.alert.deleteFailed"), "error");
         }
     };
 
@@ -195,7 +195,7 @@ export default function SubscriberListView() {
                 standard_fields: editSubscriber.standard_fields,
                 custom_fields: editSubscriber.custom_fields,
             });
-            showToast("Subscriber updated", "success");
+            showToast(t("subscribers.alert.updated"), "success");
             setEditModalOpen(false);
             setEditSubscriber(null);
             fetchSubscribers(currentPage, searchTerm, statusFilter);
@@ -249,7 +249,7 @@ export default function SubscriberListView() {
                         onClick={() => navigate("/subscribers")}
                         className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium border border-gray-200 rounded-lg hover:bg-gray-50 text-gray-600 transition-colors"
                     >
-                        ← Back
+                        ← {t("common.previous")}
                     </button>
                     <div>
                         <h1 className="text-lg font-semibold text-gray-900 capitalize">
@@ -315,7 +315,7 @@ export default function SubscriberListView() {
                             }}
                             className="text-xs text-gray-400 hover:text-gray-600 hover:underline"
                         >
-                            Clear filters
+                            {t("common.clearFilters")}
                         </button>
                     )}
 
@@ -336,7 +336,7 @@ export default function SubscriberListView() {
                 {loading ? (
                     <div className="flex items-center justify-center py-16 gap-2 text-gray-400 text-sm">
                         <div className="animate-spin h-4 w-4 border-2 border-gray-300 border-t-blue-500 rounded-full" />
-                        Loading…
+                        {t("common.loading")}
                     </div>
                 ) : subscribers.length === 0 ? (
                     <div className="py-16 text-center">
@@ -354,7 +354,7 @@ export default function SubscriberListView() {
                                 }}
                                 className="text-xs text-blue-600 mt-2 hover:underline"
                             >
-                                Clear filters
+                                {t("common.clearFilters")}
                             </button>
                         )}
                     </div>
@@ -364,13 +364,13 @@ export default function SubscriberListView() {
                             <thead>
                                 <tr className="bg-gray-50 border-b border-gray-100">
                                     <th className="px-5 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                        Email
+                                        {t("common.email")}
                                     </th>
                                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                        Name
+                                        {t("common.name")}
                                     </th>
                                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                        Status
+                                        {t("common.status")}
                                     </th>
                                     {visibleCustomKeys.map((k) => (
                                         <th
@@ -381,7 +381,7 @@ export default function SubscriberListView() {
                                         </th>
                                     ))}
                                     <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">
-                                        Joined
+                                        {t("subscribers.col.joined")}
                                     </th>
                                     <th className="px-4 py-3 w-20" />
                                 </tr>
@@ -455,7 +455,7 @@ export default function SubscriberListView() {
                                                     }}
                                                     className="text-xs text-blue-600 hover:underline font-medium"
                                                 >
-                                                    Edit
+                                                    {t("common.edit")}
                                                 </button>
                                                 <button
                                                     onClick={() =>
@@ -463,7 +463,7 @@ export default function SubscriberListView() {
                                                     }
                                                     className="text-xs text-red-500 hover:underline font-medium"
                                                 >
-                                                    Delete
+                                                    {t("common.delete")}
                                                 </button>
                                             </div>
                                         </td>
@@ -490,7 +490,7 @@ export default function SubscriberListView() {
                     <div className="bg-white rounded-xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
                         <div className="flex items-center justify-between px-6 py-4 border-b">
                             <h2 className="text-base font-semibold">
-                                Edit Subscriber
+                                {t("subscribers.modal.update")}
                             </h2>
                             <button
                                 onClick={() => {
@@ -506,7 +506,7 @@ export default function SubscriberListView() {
                         <div className="px-6 py-4 space-y-4">
                             <div>
                                 <label className="block text-sm font-medium mb-1">
-                                    Email
+                                    {t("common.email")}
                                 </label>
                                 <input
                                     type="email"
@@ -576,7 +576,7 @@ export default function SubscriberListView() {
                                 .length > 0 && (
                                 <div className="border-t pt-3">
                                     <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">
-                                        Custom Fields
+                                        {t("subscribers.customFields")}
                                     </p>
                                     {Object.keys(
                                         editSubscriber.custom_fields,
@@ -616,7 +616,7 @@ export default function SubscriberListView() {
                                 disabled={saving}
                                 className="flex-1 py-2 bg-blue-600 text-white text-sm font-semibold rounded-lg hover:bg-blue-700 disabled:opacity-50"
                             >
-                                {saving ? "Saving…" : "Save Changes"}
+                                {saving ? t("common.saving") : t("common.save")}
                             </button>
                             <button
                                 onClick={() => {
@@ -625,7 +625,7 @@ export default function SubscriberListView() {
                                 }}
                                 className="px-4 py-2 border text-sm font-medium rounded-lg hover:bg-gray-100"
                             >
-                                Cancel
+                                {t("common.cancel")}
                             </button>
                         </div>
                     </div>
