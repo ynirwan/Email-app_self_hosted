@@ -2,8 +2,7 @@
 import axios from "axios";
 
 const API = axios.create({
-  baseURL:
-    "https://5474f674-6074-4eb8-8818-15946bef35a1-00-1y8lhfj74gqcq.pike.replit.dev:8000/api",
+  baseURL: "/api",
 });
 
 // ✅ SIMPLIFIED - REMOVED all slash manipulation logic

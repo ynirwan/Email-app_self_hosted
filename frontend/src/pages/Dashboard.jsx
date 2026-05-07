@@ -172,7 +172,7 @@ export default function Dashboard() {
           navigate("/login", { replace: true });
           return;
         }
-        setError("Failed to load dashboard data");
+        setError(t("dashboard.loadError"));
       } finally {
         setLoading(false);
         setRefreshing(false);
@@ -199,7 +199,8 @@ export default function Dashboard() {
       <div className="flex items-center justify-center min-h-[60vh]">
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto" />
-          <p className="mt-3 text-gray-500 text-sm">Loading dashboard…</p>
+          <p className="mt-3 text-gray-500 text-sm">t("common.loading")
+</p>
         </div>
       </div>
     );
@@ -299,15 +300,7 @@ export default function Dashboard() {
           <h1 className="text-2xl font-bold text-gray-900">
             {user ? `Welcome back, ${user.name} 👋` : "Dashboard"}
           </h1>
-          <p className="text-sm text-gray-500 mt-0.5">
-            {user?.email}
-            {lastUpdated && (
-              <span className="ml-3 text-gray-400">
-                · Updated {formatRelative(lastUpdated)}
-                {s.sending_campaigns > 0 && " · auto-refreshing"}
-              </span>
-            )}
-          </p>
+         
         </div>
         <button
           onClick={() => fetchAll(true)}
@@ -315,7 +308,7 @@ export default function Dashboard() {
           className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50"
         >
           <span className={refreshing ? "animate-spin" : ""}>🔄</span>
-          {refreshing ? "Refreshing…" : "Refresh"}
+          {refreshing ? t("dashboard.refreshing") : t("dashboard.refresh")}
         </button>
       </div>
 
@@ -323,45 +316,41 @@ export default function Dashboard() {
       <section>
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
           <StatCard
-            label="Total Subscribers"
+            label={t("dashboard.stat.totalSubscribers")}
             value={fmt(totalSubs)}
-            sub={`${fmt(s.active_subscribers)} active`}
+            sub={`${fmt(s.active_subscribers)} ${t("common.active")}`}
             subColor="text-green-600"
             icon="👥"
             accent="text-blue-500"
           />
           <StatCard
-            label="Active Rate"
+            label={t("dashboard.stat.activeRate")}
             value={pct(s.summary?.active_rate)}
-            sub={`${fmt(totalSubs - (s.active_subscribers || 0))} inactive`}
+            sub={`${fmt(totalSubs - (s.active_subscribers || 0))} ${t("dashboard.stat.inactive")}`}
             subColor="text-gray-400"
             icon="💚"
             accent="text-green-500"
           />
           <StatCard
-            label="Avg Open Rate"
+            label={t("dashboard.stat.avgOpenRate")}
             value={pct(s.summary?.avg_open_rate)}
-            sub={
-              engagement
-                ? `best ${pct(engagement.best_open_rate)}`
-                : "last 5 campaigns"
-            }
+            sub={engagement ? `${t("dashboard.stat.best")} ${pct(engagement.best_open_rate)}` : t("dashboard.stat.last5")}
             subColor="text-blue-500"
             icon="📬"
             accent="text-blue-500"
           />
           <StatCard
-            label="Total Campaigns"
+            label={t("dashboard.stat.totalCampaigns")}
             value={fmt(s.total_campaigns)}
-            sub={`${fmt(s.completed_campaigns)} completed`}
+            sub={`${fmt(s.completed_campaigns)} ${t("campaigns.completed")}`}
             subColor="text-green-600"
             icon="📢"
             accent="text-purple-500"
           />
           <StatCard
-            label="Sending Now"
+            label={t("dashboard.stat.sendingNow")}
             value={fmt(s.sending_campaigns)}
-            sub={s.sending_campaigns > 0 ? "active sends" : "none active"}
+            sub={s.sending_campaigns > 0 ? t("dashboard.stat.activeSends") : t("dashboard.stat.noneActive")}
             subColor={
               s.sending_campaigns > 0 ? "text-blue-600" : "text-gray-400"
             }
@@ -370,13 +359,9 @@ export default function Dashboard() {
             pulse={s.sending_campaigns > 0}
           />
           <StatCard
-            label="Avg Click Rate"
+            label={t("dashboard.stat.avgClickRate")}
             value={pct(s.summary?.avg_click_rate)}
-            sub={
-              engagement
-                ? `${fmt(engagement.total_emails_sent)} sent total`
-                : "last 5 campaigns"
-            }
+            sub={engagement ? `${fmt(engagement.total_emails_sent)} ${t("dashboard.stat.sentTotal")}` : t("dashboard.stat.last5")}
             subColor="text-purple-500"
             icon="👆"
             accent="text-purple-500"
@@ -388,41 +373,41 @@ export default function Dashboard() {
       {s.total_campaigns > 0 && (
         <section className="bg-white border border-gray-200 rounded-xl p-5 shadow-sm">
           <h2 className="text-sm font-semibold text-gray-700 mb-3">
-            Campaign Status
+            {t("dashboard.campaignStatus")}
           </h2>
           <div className="flex flex-wrap gap-2">
             <StatusPill
-              label="Draft"
+              label={t("campaigns.draft")}
               count={s.draft_campaigns}
               status="draft"
               onClick={() => navigate("/campaigns")}
             />
             <StatusPill
-              label="Sending"
+              label={t("campaigns.sending")}
               count={s.sending_campaigns}
               status="sending"
               onClick={() => navigate("/campaigns")}
             />
             <StatusPill
-              label="Scheduled"
+              label={t("campaigns.scheduled")}
               count={s.scheduled_campaigns}
               status="scheduled"
               onClick={() => navigate("/campaigns")}
             />
             <StatusPill
-              label="Completed"
+              label={t("campaigns.completed")}
               count={s.completed_campaigns}
               status="completed"
               onClick={() => navigate("/campaigns")}
             />
             <StatusPill
-              label="Stopped"
+              label={t("dashboard.status.stopped")}
               count={s.stopped_campaigns}
               status="stopped"
               onClick={() => navigate("/campaigns")}
             />
             <StatusPill
-              label="Failed"
+              label={t("campaigns.failed")}
               count={s.failed_campaigns}
               status="failed"
               onClick={() => navigate("/campaigns")}
@@ -443,7 +428,7 @@ export default function Dashboard() {
               to="/campaigns"
               className="text-xs text-blue-600 font-medium hover:underline"
             >
-              View all →
+            {t("dashboard.viewAll")} →
             </Link>
           </div>
 
@@ -527,7 +512,7 @@ export default function Dashboard() {
         <section className="lg:col-span-2 bg-white border border-gray-200 rounded-xl shadow-sm">
           <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
             <h2 className="text-sm font-semibold text-gray-700">
-              Subscribers by List
+            {t("dashboard.subscribersByList")}
             </h2>
             <Link
               to="/subscribers"

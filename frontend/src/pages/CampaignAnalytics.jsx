@@ -401,17 +401,17 @@ export default function CampaignAnalytics() {
 
           <div className="bg-blue-50 border border-blue-200 rounded-xl p-5 text-center">
             <p className="text-2xl mb-2">📧</p>
-            <p className="text-xs font-medium text-gray-500 mb-1">Sent</p>
+            <p className="text-xs font-medium text-gray-500 mb-1">{t("common.sent")}</p>
             <p className="text-3xl font-bold tabular-nums text-blue-600">
               {fmt(analytics?.total_sent || 0)}
             </p>
-            <p className="text-xs text-gray-400 mt-1">Total dispatched</p>
+            <p className="text-xs text-gray-400 mt-1">{t("analytics.totalDispatched")}</p>
           </div>
         </div>
 
         <div className="bg-red-50 border border-red-100 rounded-xl p-5">
           <h3 className="text-xs font-semibold text-red-700 mb-3 uppercase tracking-wide">
-            ⚠️ Issues
+          ⚠️ {t("analytics.issues")}
           </h3>
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -453,7 +453,7 @@ export default function CampaignAnalytics() {
             { key: "activity", label: "📈 Recent Activity" },
             { key: "openers", label: "👁️ Who Opened" },
             { key: "clickers", label: "👆 Who Clicked" },
-            { key: "links", label: "🔗 Top Links" },
+            { key: "links", label: `🔗 ${t("analytics.topClickedLinks")}` },
           ].map(({ key, label }) => (
             <button
               key={key}
@@ -694,7 +694,8 @@ function DetailRow({ row, metric }) {
             className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold
             ${row.is_unique ? "bg-green-100 text-green-700" : "bg-amber-100 text-amber-700"}`}
           >
-            {row.is_unique ? "✓ Unique" : "↻ Repeat"}
+            {row.is_unique ? `✓ ${t("analytics.unique")}` : `↻ ${t("analytics.repeat")}`}
+
           </span>
         </td>
 
@@ -744,7 +745,7 @@ function DetailRow({ row, metric }) {
             <div className="text-xs text-gray-500 space-y-1">
               <p>
                 <span className="font-semibold text-gray-600">
-                  User Agent:{" "}
+                  {t("analytics.userAgent")}:{" "}
                 </span>
                 <span className="font-mono break-all">
                   {row.user_agent || "Not captured"}
@@ -753,7 +754,7 @@ function DetailRow({ row, metric }) {
               {metric === "clicked" && row.url && (
                 <p>
                   <span className="font-semibold text-gray-600">
-                    Full URL:{" "}
+                    {t("analytics.fullUrl")}:{" "}
                   </span>
                   <span className="break-all text-blue-600">{row.url}</span>
                 </p>
@@ -978,13 +979,14 @@ function ActivityFeed({ events, limit = 10 }) {
 
 // ── LinkList ──────────────────────────────────────────────────────────────────
 function LinkList({ links, limit = 10 }) {
+  const { t, formatDate, formatDateTime, formatRelative, formatNumber } = useSettings();
   const items = (links || []).slice(0, limit);
 
   if (!items.length) {
     return (
       <div className="text-center py-12">
         <p className="text-3xl text-gray-200 mb-2">🔗</p>
-        <p className="text-sm text-gray-400">No link clicks yet</p>
+        <p className="text-sm text-gray-400">{t("analytics.noLinksYet")}</p>
       </div>
     );
   }
@@ -1098,7 +1100,7 @@ const EmailPreview = ({ campaign }) => {
 };
 
 function CampaignDetails({ campaign }) {
-  const { formatDateTime } = useSettings();   // ✅ hook now valid here
+  const { t, formatDate, formatDateTime } = useSettings();
 
   return (
     <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
@@ -1107,17 +1109,17 @@ function CampaignDetails({ campaign }) {
       </div>
       <div className="p-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
         {[
-          ["Title",     campaign?.title],
-          ["Subject",   campaign?.subject],
-          ["Sender",    campaign?.sender_name],
-          ["From",      campaign?.sender_email],
-          ["Reply To",  campaign?.reply_to || campaign?.sender_email],
-          ["Lists",     campaign?.target_lists?.join(", ") || "None"],
-          ["Target",    fmt(campaign?.target_list_count)],
-          ["Sent",      fmt(campaign?.sent_count)],
-          ["Created",   formatDateTime(campaign?.created_at)],
-          ["Started",   formatDateTime(campaign?.started_at)],
-          ["Completed", campaign?.completed_at ? formatDateTime(campaign.completed_at) : "In progress"],
+      [t("analytics.detail.title"),       campaign?.title],
+        [t("analytics.detail.subject"),     campaign?.subject],
+        [t("analytics.detail.senderName"),  campaign?.sender_name],
+        [t("analytics.detail.senderEmail"), campaign?.sender_email],
+        [t("analytics.detail.replyTo"),     campaign?.reply_to || campaign?.sender_email],
+        [t("analytics.detail.targetLists"), campaign?.target_lists?.join(", ") || "—"],
+        [t("analytics.detail.targetCount"), fmt(campaign?.target_list_count)],
+        [t("analytics.detail.successfullySent"), fmt(campaign?.sent_count)],
+        [t("common.created"),               formatDateTime(campaign?.created_at)],
+        [t("analytics.detail.started"),     formatDateTime(campaign?.started_at)],
+        [t("analytics.detail.completed"),   campaign?.completed_at ? formatDateTime(campaign.completed_at) : t("analytics.inProgress")],
         ].map(([label, value]) => (
           <div key={label}>
             <p className="text-xs font-medium text-gray-400 mb-1">{label}</p>

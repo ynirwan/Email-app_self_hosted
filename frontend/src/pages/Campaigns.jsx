@@ -324,7 +324,7 @@ export default function Campaigns() {
         test_email: testEmail.trim(),
         use_custom_data: false,
       });
-      alert("Test email sent!");
+      alert(t("campaigns.alert.testSent"));
       closeModals();
     } catch (e) {
       alert(e.response?.data?.detail || "Test failed");
@@ -342,7 +342,7 @@ export default function Campaigns() {
       await API.post(`/campaigns/${selectedCampaign._id}/schedule`, {
         scheduled_time: scheduledTime,
       });
-      alert("Campaign scheduled!");
+      alert(t("campaigns.alert.scheduled"));
       closeModals();
       await fetchCampaigns();
     } catch (e) {
@@ -356,7 +356,7 @@ export default function Campaigns() {
       return;
     try {
       await API.post(`/campaigns/${id}/cancel-schedule`);
-      alert("Schedule cancelled.");
+      alert(t("campaigns.alert.scheduleCancelled"));
       await fetchCampaigns();
     } catch (e) {
       alert(e.response?.data?.detail || "Cancel failed");
@@ -367,7 +367,7 @@ export default function Campaigns() {
     if (!window.confirm(t('campaigns.deleteConfirm'))) return;
     try {
       await API.delete(`/campaigns/${id}`);
-      alert("Campaign deleted.");
+      alert(t("campaigns.alert.deleted"));
       await fetchCampaigns();
     } catch (e) {
       alert(e.response?.data?.detail || "Delete failed");
@@ -411,7 +411,7 @@ export default function Campaigns() {
     try {
       setStopping(true);
       await API.post(`/campaigns/${id}/stop`);
-      alert("Campaign stopped.");
+      alert(t("campaigns.alert.stopped"));
       await fetchCampaigns();
     } catch (e) {
       alert(e.response?.data?.detail || "Stop failed");
@@ -479,22 +479,12 @@ export default function Campaigns() {
 
       {/* Stats */}
       <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
-        <StatCard color="blue" label="Total" value={total} icon="📊" />
-        <StatCard color="yellow" label="Drafts" value={drafts} icon="📝" />
-        <StatCard
-          color="purple"
-          label="Scheduled"
-          value={scheduled}
-          icon="🕐"
-        />
-        <StatCard color="green" label="Sent" value={sentNum} icon="✅" />
+        <StatCard color="blue" label={t("common.total")} value={total} icon="📊" />
+        <StatCard color="yellow" label={t("campaigns.draft")} value={drafts} icon="📝" />
+        <StatCard color="purple" label={t("campaigns.scheduled")} value={scheduled} icon="🕐" />
+        <StatCard color="green" label={t("campaigns.completed")} value={sentNum} icon="✅" />
         {errors > 0 && (
-          <StatCard
-            color="red"
-            label="Provider Errors"
-            value={errors}
-            icon="⚠️"
-          />
+        <StatCard color="red" label={t("campaigns.providerErrors")} value={errors} icon="⚠️"/>
         )}
       </div>
 
@@ -533,7 +523,7 @@ export default function Campaigns() {
       <div className="bg-white shadow-sm rounded-xl border border-gray-200">
         <div className="px-5 py-4 border-b border-gray-100">
           <h3 className="text-base font-semibold text-gray-800">
-            📋 Your Campaigns ({filtered.length})
+          📋 {t("campaigns.yourCampaigns", { count: filtered.length })}
           </h3>
         </div>
 
@@ -542,8 +532,8 @@ export default function Campaigns() {
             <p className="text-lg mb-2">{t('campaigns.empty')}</p>
             <p className="text-sm">
               {campaigns.length === 0
-                ? "Create your first campaign to get started."
-                : "Try adjusting your filters."}
+                ? t("campaigns.createFirst")
+                : t("campaigns.adjustFilters")}
             </p>
           </div>
         ) : (
@@ -551,12 +541,12 @@ export default function Campaigns() {
             <table className="w-full text-sm">
               <thead className="bg-gray-50 border-b border-gray-100">
                 <tr>
-                  <Th>Campaign</Th>
-                  <Th>Status</Th>
-                  <Th>Subscribers</Th>
-                  <Th>Sent</Th>
-                  <Th>Created</Th>
-                  <Th>Actions</Th>
+                  <Th>{t("campaigns.col.name")}</Th>
+                  <Th>{t("common.status")}</Th>
+                  <Th>{t("campaigns.col.subscribers")}</Th>
+                  <Th>{t("common.sent")}</Th>
+                  <Th>{t("common.created")}</Th>
+                  <Th>{t("common.actions")}</Th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
@@ -608,18 +598,19 @@ export default function Campaigns() {
 
       {/* ── Send modal ── */}
       {showSendModal && selectedCampaign && (
-        <Modal title="📤 Send Campaign" onClose={closeModals}>
+        <Modal title={`📨 ${t("campaigns.modal.testTitle")}`
+} onClose={closeModals}>
           <p className="text-sm text-gray-700 mb-4">
             You are about to send <strong>{selectedCampaign.title}</strong> to{" "}
             <strong>
               {(selectedCampaign.target_list_count || 0).toLocaleString()}
             </strong>{" "}
-            subscribers. Once started, this cannot be undone.
+          {t("campaigns.modal.sendWarning")}
           </p>
           <div className="flex justify-end gap-3">
             <BtnSecondary onClick={closeModals}>Cancel</BtnSecondary>
             <BtnPrimary onClick={confirmSend} disabled={sending}>
-              {sending ? "⏳ Sending…" : "📧 Send Now"}
+            {sending ? t("common.saving") : t("campaigns.modal.confirmSend")}
             </BtnPrimary>
           </div>
         </Modal>
@@ -627,7 +618,8 @@ export default function Campaigns() {
 
       {/* ── Test email modal ── */}
       {showTestModal && selectedCampaign && (
-        <Modal title="📨 Send Test Email" onClose={closeModals}>
+        <Modal title={`📨 ${t("campaigns.modal.testTitle")}`
+} onClose={closeModals}>
           <p className="text-sm text-gray-600 mb-4">
             Send a test of <strong>{selectedCampaign.title}</strong>:
           </p>
@@ -644,7 +636,7 @@ export default function Campaigns() {
               onClick={confirmTest}
               disabled={testing || !testEmail.trim()}
             >
-              {testing ? "⏳ Sending…" : "Send Test"}
+            {testing ? t("common.saving") : t("campaigns.modal.sendTest")}
             </BtnPrimary>
           </div>
         </Modal>
@@ -652,15 +644,15 @@ export default function Campaigns() {
 
       {/* ── Schedule modal ── */}
       {showScheduleModal && selectedCampaign && (
-        <Modal title="🕐 Schedule Campaign" onClose={closeModals}>
+        <Modal title={`🕐 ${t("campaigns.modal.scheduleTitle")}`
+} onClose={closeModals}>
           <p className="text-sm text-gray-600 mb-4">
-            Schedule <strong>{selectedCampaign.title}</strong> for a future
-            send:
+            {t("campaigns.modal.scheduleDesc", { title: selectedCampaign.title })}
           </p>
           <div className="space-y-3 mb-4">
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">
-                Date
+                {t("campaigns.modal.dateLabel")}
               </label>
               <input
                 type="date"
@@ -671,14 +663,14 @@ export default function Campaigns() {
               />
               {scheduleDate && scheduleTime && (
                 <p className="text-sm text-purple-600 bg-purple-50 p-2 rounded">
-                  Will send on:{" "}
+                  {t("campaigns.modal.willSendOn")}
                   {formatDateTime(`${scheduleDate}T${scheduleTime}`)}
                 </p>
               )}
             </div>
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">
-                Time (UTC)
+                {t("campaigns.modal.timeLabel")}
               </label>
               <input
                 type="time"
@@ -694,7 +686,7 @@ export default function Campaigns() {
               onClick={confirmSchedule}
               disabled={scheduling || !scheduleDate || !scheduleTime}
             >
-              {scheduling ? "⏳ Scheduling…" : "✅ Confirm Schedule"}
+              {scheduling ? t("common.saving") : t("campaigns.modal.confirmSchedule")}
             </BtnPrimary>
           </div>
         </Modal>

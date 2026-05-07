@@ -371,14 +371,14 @@ export default function Analytics() {
           >
             <option value={7}>{t('analytics.last7Days')}</option>
             <option value={30}>{t('analytics.last30Days')}</option>
-            <option value={90}>Last 90 days</option>
-            <option value={365}>Last year</option>
+            <option value={90}>{t("analytics.last90Days")}</option>
+          <option value={365}>{t("analytics.lastYear")}</option>
           </select>
           <button
             onClick={load}
             className="px-4 py-2 text-sm font-medium border border-gray-200 rounded-lg hover:bg-gray-50 text-gray-600"
           >
-            🔄 Refresh
+          🔄 {t("common.refresh")}
           </button>
         </div>
       </div>
@@ -386,18 +386,18 @@ export default function Analytics() {
       {/* Stat cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <StatCard
-          label="Total Campaigns"
+          label={t("analytics.totalCampaigns")}
           value={fmt(summary.total_campaigns)}
           icon="📢"
           color="blue"
-          sub={`Last ${days} days`}
+          sub={t("analytics.lastNDays", { n: days })}
         />
         <StatCard
           label={t('analytics.totalSent')}
           value={fmt(summary.total_emails_sent)}
           icon="📧"
           color="green"
-          sub="Across all campaigns"
+          sub={t("analytics.acrossAllCampaigns")}
         />
         <StatCard
           label={t('analytics.openRate')}
@@ -419,7 +419,7 @@ export default function Analytics() {
       {(summary.average_open_rate > 0 || summary.average_click_rate > 0) && (
         <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
           <h2 className="text-sm font-semibold text-gray-700 mb-4">
-            Campaign Engagement Rates
+          {t("analytics.engagementRates")}
           </h2>
           <div className="space-y-3 max-w-lg">
             <div className="flex items-center gap-3">
@@ -456,8 +456,8 @@ export default function Analytics() {
             </div>
           </div>
           <p className="text-xs text-gray-400 mt-3">
-            Based on {fmt(summary.total_campaigns)} campaign
-            {summary.total_campaigns !== 1 ? "s" : ""} in the last {days} days.
+            {t("analytics.basedOn", { count: fmt(summary.total_campaigns), days })}
+
           </p>
         </div>
       )}
@@ -468,12 +468,12 @@ export default function Analytics() {
           {[
             {
               key: "campaigns",
-              label: "📢 Campaigns",
+              label: `📢 ${t("nav.campaigns")}`,
               count: campaigns.length,
             },
             {
               key: "ab_tests",
-              label: "🧪 A/B Winner Sends",
+              label: `🧪 ${t("analytics.abWinnerSends")}`,
               count: abTests.length,
             },
           ].map((tab) => (
@@ -508,13 +508,13 @@ export default function Analytics() {
             <div className="py-16 text-center">
               <p className="text-3xl mb-2">📭</p>
               <p className="text-sm text-gray-500 mb-1">
-                No campaigns in the last {days} days
+              {t("analytics.noCampaignsInPeriod", { days })}
               </p>
               <Link
                 to="/campaigns/create"
                 className="text-sm text-blue-600 hover:underline"
               >
-                Create your first campaign →
+              {t("analytics.createFirst")} →
               </Link>
             </div>
           ) : (
@@ -538,7 +538,7 @@ export default function Analytics() {
                       {t('analytics.clickRate')}
                     </th>
                     <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Date
+                      {t("common.created")}
                     </th>
                     <th className="px-4 py-3 w-16" />
                   </tr>
@@ -558,7 +558,7 @@ export default function Analytics() {
             <div className="py-12 text-center">
               <div className="inline-flex items-center gap-2 text-gray-400 text-sm">
                 <div className="animate-spin h-4 w-4 border-2 border-gray-300 border-t-violet-500 rounded-full" />
-                Loading A/B test analytics…
+                {t("common.loading")}
               </div>
             </div>
           ) : abTests.length === 0 ? (
