@@ -54,7 +54,7 @@ export default function AutomationAnalytics() {
       setTriggerComparison(triggerRes.data.triggers || []);
       setRealtimeStats(realtimeRes.data);
     } catch {
-      setError('Failed to load analytics data');
+      setError(t("automation.analytics.loadError"));
     } finally { setLoading(false); }
   }, [selectedPeriod]);
 
@@ -108,9 +108,9 @@ export default function AutomationAnalytics() {
         <div className="flex items-center gap-2">
           <select value={selectedPeriod} onChange={e => setSelectedPeriod(Number(e.target.value))}
             className="px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 bg-white">
-            <option value={7}>Last 7 days</option>
-            <option value={30}>Last 30 days</option>
-            <option value={90}>Last 90 days</option>
+            <option value={7}>{t("analytics.last7Days")}</option>
+            <option value={30}>{t("analytics.last30Days")}</option>
+            <option value={90}>{t("analytics.last90Days")}</option>
           </select>
         </div>
         <button onClick={exportCSV} disabled={exporting}
@@ -125,14 +125,14 @@ export default function AutomationAnalytics() {
         <div className="bg-gradient-to-r from-blue-600 to-purple-600 rounded-xl p-5 text-white">
           <div className="flex items-center gap-2 mb-3">
             <Activity size={18} />
-            <h2 className="text-sm font-semibold">Live Activity</h2>
+            <h2 className="text-sm font-semibold">{t("automation.analytics.liveActivity")}</h2>
             <span className="ml-auto text-xs opacity-70">auto-refreshes every 30s</span>
           </div>
           <div className="grid grid-cols-3 gap-4">
             {[
-              { label: 'Workflows Started (last hr)', value: realtimeStats.last_hour?.workflows_started ?? '—' },
-              { label: 'Emails Sent (last hr)',        value: realtimeStats.last_hour?.emails_sent ?? '—' },
-              { label: 'Active Workflows now',         value: realtimeStats.current?.active_workflows ?? '—' },
+              { label: t("automation.analytics.workflowsStarted"), value: realtimeStats.last_hour?.workflows_started ?? '—' },
+              { label: t("automation.analytics.emailsSentLastHr"),  value: realtimeStats.last_hour?.emails_sent ?? '—' },
+              { label: t("automation.analytics.activeWorkflows"),   value: realtimeStats.current?.active_workflows ?? '—' },
             ].map(({ label, value }) => (
               <div key={label}>
                 <p className="text-xs text-blue-200 mb-1">{label}</p>
@@ -164,19 +164,19 @@ export default function AutomationAnalytics() {
       {/* top performing rules */}
       <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
         <div className="px-5 py-4 border-b border-gray-100">
-          <h2 className="text-sm font-semibold text-gray-700">Top Performing Automations</h2>
+          <h2 className="text-sm font-semibold text-gray-700">{t("automation.analytics.topPerforming")}</h2>
         </div>
         {rulesPerformance.length === 0 ? (
           <div className="py-12 text-center">
             <p className="text-2xl mb-2">📊</p>
-            <p className="text-sm text-gray-500">No performance data yet for this period</p>
+            <p className="text-sm text-gray-500">{t("automation.analytics.noData")}</p>
           </div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="bg-gray-50 border-b border-gray-100">
-                  {['#', 'Rule Name', 'Trigger', 'Workflows', 'Emails', 'Open Rate', 'Click Rate'].map((h, i) => (
+                  {['#', t("automation.analytics.ruleName"), t("automation.col.trigger"), t("automation.analytics.workflows"), t("automation.analytics.emails"), t("analytics.openRate"), t("analytics.clickRate")].map((h, i) => (
                     <th key={h} className={`px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider ${i <= 2 ? 'text-left' : 'text-right'}`}>{h}</th>
                   ))}
                 </tr>
@@ -215,7 +215,7 @@ export default function AutomationAnalytics() {
       {triggerComparison.length > 0 && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
-            <h2 className="text-sm font-semibold text-gray-700 mb-4">Performance by Trigger Type</h2>
+            <h2 className="text-sm font-semibold text-gray-700 mb-4">{t("automation.analytics.perfByTrigger")}</h2>
             <ResponsiveContainer width="100%" height={260}>
               <BarChart data={triggerComparison}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
@@ -223,14 +223,14 @@ export default function AutomationAnalytics() {
                 <YAxis tick={{ fontSize: 11 }} />
                 <Tooltip />
                 <Legend iconSize={12} wrapperStyle={{ fontSize: 11 }} />
-                <Bar dataKey="workflows_started" fill="#3b82f6" name="Workflows" radius={[3, 3, 0, 0]} />
-                <Bar dataKey="emails_sent"        fill="#10b981" name="Emails"    radius={[3, 3, 0, 0]} />
+                <Bar dataKey="workflows_started" fill="#3b82f6" name={t("automation.analytics.workflows")} radius={[3, 3, 0, 0]} />
+                <Bar dataKey="emails_sent"        fill="#10b981" name={t("automation.analytics.emails")}    radius={[3, 3, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>
 
           <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
-            <h2 className="text-sm font-semibold text-gray-700 mb-4">Completion Rates by Trigger</h2>
+            <h2 className="text-sm font-semibold text-gray-700 mb-4">{t("automation.analytics.completionRates")}</h2>
             <ResponsiveContainer width="100%" height={260}>
               <PieChart>
                 <Pie data={triggerComparison} dataKey="completion_rate" nameKey="trigger_type"

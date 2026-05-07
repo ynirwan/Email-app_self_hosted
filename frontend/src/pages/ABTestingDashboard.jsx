@@ -71,7 +71,7 @@ export default function ABTestingDashboard() {
       const res = await API.get("/ab-tests");
       setAbTests(res.data.tests || res.data || []);
     } catch {
-      setError("Failed to load A/B tests");
+      setError(t("abtest.loadError"));
       setAbTests([]);
     } finally {
       setLoading(false);
@@ -193,7 +193,7 @@ export default function ABTestingDashboard() {
         <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
           {error}
           <button onClick={fetchData} className="ml-2 underline text-sm">
-            Retry
+            {t("common.retry")}
           </button>
         </div>
       )}
@@ -202,35 +202,35 @@ export default function ABTestingDashboard() {
       <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
         {[
           {
-            label: "Total",
+            label: t("abtest.stat.total"),
             value: counts.total,
             bg: "bg-gray-50   border-gray-200",
             color: "text-gray-800",
             pulse: false,
           },
           {
-            label: "Running",
+            label: t("abtest.stat.running"),
             value: counts.running,
             bg: "bg-blue-50   border-blue-200",
             color: "text-blue-800",
             pulse: counts.running > 0,
           },
           {
-            label: "Draft",
+            label: t("abtest.draft"),
             value: counts.draft,
             bg: "bg-yellow-50 border-yellow-200",
             color: "text-yellow-700",
             pulse: false,
           },
           {
-            label: "Completed",
+            label: t("abtest.stat.completed"),
             value: counts.completed,
             bg: "bg-green-50  border-green-200",
             color: "text-green-700",
             pulse: false,
           },
           {
-            label: "Stopped",
+            label: t("abtest.stat.stopped"),
             value: counts.stopped,
             bg: "bg-gray-50   border-gray-200",
             color: "text-gray-600",
@@ -247,7 +247,7 @@ export default function ABTestingDashboard() {
               )}
             </p>
             <p className="text-xs font-medium text-gray-500 mt-0.5">
-              {t('abtest.variants')}
+              {s.label}
             </p>
           </div>
         ))}
@@ -389,7 +389,7 @@ export default function ABTestingDashboard() {
                               }
                               className="px-3 py-1.5 text-xs font-medium text-indigo-600 bg-indigo-50 border border-indigo-200 rounded-lg hover:bg-indigo-100"
                             >
-                              ✏️ Edit
+                              ✏️ {t("common.edit")}
                             </button>
                           )}
 
@@ -402,7 +402,7 @@ export default function ABTestingDashboard() {
                               disabled={!!busy}
                               className="px-2.5 py-1.5 text-xs font-medium border border-green-200 rounded-lg hover:bg-green-50 text-green-700 disabled:opacity-50"
                             >
-                              {busy === "starting" ? "⏳" : t('abtest.sendWinner')}
+                              {busy === "starting" ? "⏳" : `▶ ${t("common.start")}`}
                             </button>
                           )}
 
@@ -498,17 +498,17 @@ export default function ABTestingDashboard() {
               <div className="bg-gray-50 rounded-xl p-4">
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
                   {[
-                    ["Status", resultsModal.status],
+                    [t("abtest.modal.status"), resultsModal.status],
                     [
-                      "Test Type",
+                      t("abtest.modal.testType"),
                       (resultsModal.test_type || "").replace("_", " "),
                     ],
                     [
-                      "Sample",
+                      t("abtest.modal.sample"),
                       Number(resultsModal.sample_size || 0).toLocaleString(),
                     ],
                     [
-                      "Split",
+                      t("abtest.modal.split"),
                       `${resultsModal.split_percentage}% / ${100 - resultsModal.split_percentage}%`,
                     ],
                   ].map(([l, v]) => (
@@ -545,15 +545,15 @@ export default function ABTestingDashboard() {
                       </div>
                       <div className="space-y-1 text-sm">
                         {[
-                          ["Sent", v.sent],
-                          ["Opened", v.opened],
+                          [t("common.sent"), v.sent],
+                          [t("common.opened"), v.opened],
                           [
-                            "Open Rate",
+                            t("analytics.openRate"),
                             v.open_rate != null ? `${v.open_rate}%` : "—",
                           ],
-                          ["Clicked", v.clicked],
+                          [t("common.clicked"), v.clicked],
                           [
-                            "Click Rate",
+                            t("analytics.clickRate"),
                             v.click_rate != null ? `${v.click_rate}%` : "—",
                           ],
                         ].map(([lbl, val]) => (
@@ -572,10 +572,10 @@ export default function ABTestingDashboard() {
               {resultsModal.winner?.winner && (
                 <div className="bg-green-50 border border-green-200 rounded-xl p-4">
                   <p className="font-semibold text-green-800">
-                    🏆 Variant {resultsModal.winner.winner} wins
+                    {t("abtest.modal.winnerVariant", { variant: resultsModal.winner.winner })}
                     {resultsModal.winner.improvement != null && (
                       <span className="ml-2 font-normal text-green-600 text-sm">
-                        (+{resultsModal.winner.improvement}% improvement)
+                        {t("abtest.modal.improvement", { pct: resultsModal.winner.improvement })}
                       </span>
                     )}
                   </p>

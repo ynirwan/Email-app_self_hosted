@@ -138,7 +138,7 @@ export default function AutomationDashboard() {
   };
 
   const deleteAutomation = async (id, name) => {
-    if (!confirm(`Delete "${name}"? This cannot be undone.`)) return;
+    if (!confirm(t("automation.confirm.delete", { name }))) return;
     setRowBusy(id, "delete");
     try {
       await API.delete(`/automation/rules/${id}`);
@@ -290,7 +290,7 @@ export default function AutomationDashboard() {
       <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
         <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-4 border-b border-gray-100">
           <h2 className="text-sm font-semibold text-gray-700">
-            Automations
+            {t('automation.title')}
             {filtered.length !== automations.length && (
               <span className="ml-2 text-xs font-normal text-gray-400">
                 ({filtered.length} of {automations.length})
@@ -301,10 +301,10 @@ export default function AutomationDashboard() {
             {/* status filter tabs */}
             <div className="flex border border-gray-200 rounded-lg overflow-hidden text-xs font-medium">
               {[
-                { value: "all", label: `All (${stats.total})` },
-                { value: "active", label: `Active (${stats.active})` },
-                { value: "paused", label: `Paused (${stats.paused})` },
-                { value: "draft", label: `Draft (${stats.draft})` },
+                { value: "all", label: `${t("campaigns.all")} (${stats.total})` },
+                { value: "active", label: `${t("automation.active")} (${stats.active})` },
+                { value: "paused", label: `${t("common.paused")} (${stats.paused})` },
+                { value: "draft", label: `${t("common.draft")} (${stats.draft})` },
               ].map((opt) => (
                 <button
                   key={opt.value}
@@ -322,7 +322,7 @@ export default function AutomationDashboard() {
               </span>
               <input
                 type="text"
-                placeholder="Search…"
+                placeholder={t("common.search")}
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="pl-7 pr-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 w-44"
@@ -346,7 +346,7 @@ export default function AutomationDashboard() {
               {t('automation.empty')}
             </p>
             <p className="text-xs text-gray-400 mb-4">
-              Create your first automation to engage subscribers automatically
+              {t("automation.emptyHint")}
             </p>
             <button
               onClick={() => navigate("/automation/create")}
@@ -376,26 +376,25 @@ export default function AutomationDashboard() {
               <thead>
                 <tr className="bg-gray-50 border-b border-gray-100">
                   <th className="px-5 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Name
+                    {t("common.name")}
                   </th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Trigger
+                    {t("automation.col.trigger")}
                   </th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-24">
-                    Status
+                    {t("common.status")}
                   </th>
                   <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider w-16">
-                    Steps
+                    {t("automation.col.steps")}
                   </th>
                   <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider w-20">
-                    Sent
+                    {t("automation.col.sent")}
                   </th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-40">
-                    <span className="text-green-600">Open</span> /{" "}
-                    <span className="text-purple-600">Click</span>
+                    {t("automation.col.openClick")}
                   </th>
                   <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Actions
+                    {t("common.actions")}
                   </th>
                 </tr>
               </thead>
@@ -476,7 +475,7 @@ export default function AutomationDashboard() {
                             className="px-2.5 py-1.5 text-xs font-medium border border-gray-200 rounded-lg hover:bg-gray-50 text-gray-600 flex items-center gap-1"
                           >
                             <Edit size={11} />
-                            Edit
+                            {t("common.edit")}
                           </button>
                           <button
                             onClick={() =>
@@ -485,7 +484,7 @@ export default function AutomationDashboard() {
                             className="px-2.5 py-1.5 text-xs font-medium border border-purple-200 rounded-lg hover:bg-purple-50 text-purple-700 flex items-center gap-1"
                           >
                             <BarChart3 size={11} />
-                            Stats
+                            {t("nav.analytics")}
                           </button>
                           <button
                             onClick={() => duplicateAutomation(a)}
@@ -497,7 +496,7 @@ export default function AutomationDashboard() {
                             ) : (
                               <>
                                 <Copy size={11} />
-                                Clone
+                                {t("common.clone")}
                               </>
                             )}
                           </button>
@@ -511,7 +510,7 @@ export default function AutomationDashboard() {
                             ) : (
                               <>
                                 <Trash2 size={11} />
-                                Delete
+                                {t("common.delete")}
                               </>
                             )}
                           </button>

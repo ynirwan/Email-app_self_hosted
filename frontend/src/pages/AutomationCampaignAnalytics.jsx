@@ -34,7 +34,7 @@ export default function AutomationCampaignAnalytics() {
       setAnalytics(data);
       setAutomationName(data.rule_name || 'Automation Analytics');
     } catch {
-      setError('Failed to load analytics data');
+      setError(t("automation.analytics.loadError"));
     } finally { setLoading(false); }
   }, [id]);
 
@@ -43,7 +43,7 @@ export default function AutomationCampaignAnalytics() {
   if (loading) return (
     <div className="flex items-center justify-center py-24 gap-3 text-gray-400">
       <div className="animate-spin h-5 w-5 border-2 border-gray-300 border-t-blue-500 rounded-full" />
-      Loading analytics…
+      {t("common.loading")}
     </div>
   );
 
@@ -51,11 +51,11 @@ export default function AutomationCampaignAnalytics() {
     <div className="space-y-4">
       <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm flex items-center justify-between">
         <span>⚠️ {error}</span>
-        <button onClick={fetchAnalytics} className="underline ml-3">Retry</button>
+        <button onClick={fetchAnalytics} className="underline ml-3">{t("common.retry")}</button>
       </div>
       <button onClick={() => navigate('/automation')}
         className="flex items-center gap-2 px-4 py-2 border border-gray-200 text-sm font-medium rounded-lg hover:bg-gray-50 text-gray-600">
-        <ArrowLeft size={14} /> Back to Automations
+        <ArrowLeft size={14} /> {t("automation.exec.backToAuto")}
       </button>
     </div>
   );
@@ -63,10 +63,10 @@ export default function AutomationCampaignAnalytics() {
   if (!analytics) return (
     <div className="py-16 text-center">
       <BarChart3 size={48} className="mx-auto text-gray-300 mb-3" />
-      <p className="text-sm text-gray-500">No analytics data available</p>
+      <p className="text-sm text-gray-500">{t("automation.exec.noAnalytics")}</p>
       <button onClick={() => navigate('/automation')}
         className="mt-4 flex items-center gap-2 px-4 py-2 border border-gray-200 text-sm font-medium rounded-lg hover:bg-gray-50 text-gray-600 mx-auto">
-        <ArrowLeft size={14} /> Back to Automations
+        <ArrowLeft size={14} /> {t("automation.exec.backToAuto")}
       </button>
     </div>
   );
@@ -79,14 +79,14 @@ export default function AutomationCampaignAnalytics() {
         <div>
           <button onClick={() => navigate('/automation')}
             className="flex items-center gap-1.5 text-xs text-gray-400 hover:text-gray-600 mb-1.5">
-            <ArrowLeft size={12} /> Automations
+            <ArrowLeft size={12} /> {t("automation.title")}
           </button>
           <p className="text-base font-semibold text-gray-900">{automationName}</p>
-          <p className="text-xs text-gray-400 mt-0.5">Performance analytics</p>
+          <p className="text-xs text-gray-400 mt-0.5">{t("automation.exec.perfAnalytics")}</p>
         </div>
         <button onClick={fetchAnalytics}
           className="px-4 py-2 border border-gray-200 text-sm font-medium rounded-lg hover:bg-gray-50 text-gray-600">
-          🔄 Refresh
+          🔄 {t("common.refresh")}
         </button>
       </div>
 
@@ -134,9 +134,9 @@ export default function AutomationCampaignAnalytics() {
       {/* execution stats */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {[
-          { label: 'Total Executions',     value: analytics.total_executions     || 0, color: 'text-gray-900', bg: 'bg-white' },
-          { label: 'Completed',            value: analytics.completed_executions || 0, color: 'text-green-600', bg: 'bg-green-50 border-green-100' },
-          { label: 'Failed',               value: analytics.failed_executions    || 0, color: 'text-red-600',   bg: 'bg-red-50 border-red-100' },
+          { label: t("automation.exec.total"),     value: analytics.total_executions     || 0, color: 'text-gray-900', bg: 'bg-white' },
+          { label: t("automation.exec.completed"), value: analytics.completed_executions || 0, color: 'text-green-600', bg: 'bg-green-50 border-green-100' },
+          { label: t("automation.exec.failed"),    value: analytics.failed_executions    || 0, color: 'text-red-600',   bg: 'bg-red-50 border-red-100' },
         ].map(({ label, value, color, bg }) => (
           <div key={label} className={`${bg} border border-gray-200 rounded-xl p-5`}>
             <p className="text-xs font-medium text-gray-500 mb-2">{label}</p>
@@ -149,18 +149,18 @@ export default function AutomationCampaignAnalytics() {
       {analytics.email_performance?.length > 0 ? (
         <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
           <div className="px-5 py-4 border-b border-gray-100">
-            <h2 className="text-sm font-semibold text-gray-700">Email Step Performance</h2>
+            <h2 className="text-sm font-semibold text-gray-700">{t("automation.exec.emailPerf")}</h2>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="bg-gray-50 border-b border-gray-100">
-                  <th className="px-5 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Step</th>
-                  <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider w-20">Sent</th>
-                  <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider w-20">Opens</th>
-                  <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider w-20">Clicks</th>
-                  <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider w-24">Open Rate</th>
-                  <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider w-24">Click Rate</th>
+                  <th className="px-5 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">{t("automation.exec.step")}</th>
+                  <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider w-20">{t("common.sent")}</th>
+                  <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider w-20">{t("analytics.opens")}</th>
+                  <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider w-20">{t("analytics.clicks")}</th>
+                  <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider w-24">{t("analytics.openRate")}</th>
+                  <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider w-24">{t("analytics.clickRate")}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
@@ -191,8 +191,8 @@ export default function AutomationCampaignAnalytics() {
       ) : (
         <div className="bg-gray-50 border border-dashed border-gray-200 rounded-xl p-10 text-center">
           <BarChart3 size={40} className="mx-auto text-gray-300 mb-3" />
-          <p className="text-sm font-medium text-gray-500">No email step data yet</p>
-          <p className="text-xs text-gray-400 mt-1">Will appear once emails start sending</p>
+          <p className="text-sm font-medium text-gray-500">{t("automation.exec.noData")}</p>
+          <p className="text-xs text-gray-400 mt-1">{t("automation.exec.noDataSub")}</p>
         </div>
       )}
     </div>
