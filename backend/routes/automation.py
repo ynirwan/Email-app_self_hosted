@@ -811,3 +811,251 @@ async def trigger_automation(background_tasks: BackgroundTasks, trigger_data: Di
         "trigger": trigger_type,
         "subscriber_id": subscriber_id
     }
+
+
+# ===========================
+# OBSERVABILITY ENDPOINTS
+# ===========================
+
+@router.get("/rules/{rule_id}/workflows")
+async def get_automation_workflows(
+    rule_id: str,
+    status: Optional[str] = Query(None, description="Filter by status: in_progress, completed, failed"),
+    page: int = Query(1, ge=1),
+    limit: int = Query(25, ge=1, le=100),
+):
+    """
+    List workflow instances for an automation rule.
+    Each row represents one subscriber's journey through the automation.
+    Joined with subscriber email for display.
+    """
+    try:
+        ObjectId(rule_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid rule ID")
+
+    workflow_col = get_workflow_instances_collection()
+    subscribers_col = get_subscribers_collection()
+
+    query: Dict[str, Any] = {"automation_rule_id": rule_id}
+    if status:
+        query["status"] = status
+
+    total = await workflow_col.count_documents(query)
+    skip = (page - 1) * limit
+
+    cursor = workflow_col.find(query).sort("started_at", -1).skip(skip).limit(limit)
+    workflows = await cursor.to_list(length=limit)
+
+    # Batch-fetch subscriber emails to avoid N+1
+    sub_ids = list({w["subscriber_id"] for w in workflows if w.get("subscriber_id")})
+    sub_map: Dict[str, str] = {}
+    if sub_ids:
+        try:
+            oid_list = [ObjectId(s) for s in sub_ids]
+            async for sub in subscribers_col.find(
+                {"_id": {"$in": oid_list}}, {"_id": 1, "email": 1, "standard_fields": 1}
+            ):
+                sub_map[str(sub["_id"])] = {
+                    "email": sub.get("email", ""),
+                    "name": (sub.get("standard_fields") or {}).get("first_name", ""),
+                }
+        except Exception:
+            pass
+
+    rows = []
+    for w in workflows:
+        sub_info = sub_map.get(w.get("subscriber_id", ""), {})
+        rows.append({
+            "workflow_instance_id": str(w["_id"]),
+            "subscriber_id": w.get("subscriber_id"),
+            "subscriber_email": sub_info.get("email", "—"),
+            "subscriber_name": sub_info.get("name", ""),
+            "status": w.get("status", "unknown"),
+            "started_at": w.get("started_at").isoformat() if w.get("started_at") else None,
+            "completed_at": w.get("completed_at").isoformat() if w.get("completed_at") else None,
+            "total_steps": w.get("total_steps", 0),
+            "completed_steps": w.get("completed_steps", 0),
+            "emails_sent": w.get("emails_sent", 0),
+            "error": w.get("error"),
+        })
+
+    return {
+        "rule_id": rule_id,
+        "total": total,
+        "page": page,
+        "limit": limit,
+        "pages": max(1, (total + limit - 1) // limit),
+        "workflows": rows,
+    }
+
+
+@router.get("/rules/{rule_id}/email-logs")
+async def get_automation_email_logs(
+    rule_id: str,
+    status: Optional[str] = Query(None, description="Filter: sent, failed, skipped"),
+    page: int = Query(1, ge=1),
+    limit: int = Query(50, ge=1, le=200),
+):
+    """
+    Per-email send logs for an automation rule.
+    Shows every email attempt: sent, failed with error, or skipped (suppressed/inactive).
+    """
+    try:
+        ObjectId(rule_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid rule ID")
+
+    logs_col = get_email_logs_collection()
+
+    query: Dict[str, Any] = {"automation_rule_id": rule_id}
+    if status:
+        query["status"] = status
+
+    total = await logs_col.count_documents(query)
+    skip = (page - 1) * limit
+
+    cursor = logs_col.find(query).sort("created_at", -1).skip(skip).limit(limit)
+    logs = await cursor.to_list(length=limit)
+
+    rows = []
+    for log in logs:
+        rows.append({
+            "log_id": str(log["_id"]),
+            "subscriber_id": log.get("subscriber_id"),
+            "subscriber_email": log.get("subscriber_email", "—"),
+            "step_id": log.get("automation_step_id"),
+            "workflow_instance_id": log.get("workflow_instance_id"),
+            "subject": log.get("subject", ""),
+            "status": log.get("status", "unknown"),
+            "latest_status": log.get("latest_status", log.get("status", "unknown")),
+            "provider": log.get("provider"),
+            "message_id": log.get("message_id"),
+            "error_message": log.get("error_message"),
+            "sent_at": log.get("sent_at").isoformat() if log.get("sent_at") else None,
+            "created_at": log.get("created_at").isoformat() if log.get("created_at") else None,
+        })
+
+    # Status breakdown counts
+    pipeline = [
+        {"$match": {"automation_rule_id": rule_id}},
+        {"$group": {"_id": "$status", "count": {"$sum": 1}}},
+    ]
+    breakdown_cursor = logs_col.aggregate(pipeline)
+    breakdown: Dict[str, int] = {}
+    async for item in breakdown_cursor:
+        breakdown[item["_id"]] = item["count"]
+
+    return {
+        "rule_id": rule_id,
+        "total": total,
+        "page": page,
+        "limit": limit,
+        "pages": max(1, (total + limit - 1) // limit),
+        "breakdown": breakdown,
+        "logs": rows,
+    }
+
+
+@router.get("/rules/{rule_id}/step-stats")
+async def get_automation_step_stats(rule_id: str):
+    """
+    Per-step execution statistics for an automation rule.
+    Shows each step's template, delay, and how many executions succeeded / failed.
+    """
+    try:
+        ObjectId(rule_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid rule ID")
+
+    steps_col = get_automation_steps_collection()
+    executions_col = get_automation_executions_collection()
+    templates_col = get_templates_collection()
+    logs_col = get_email_logs_collection()
+
+    # Fetch steps ordered
+    steps = await steps_col.find(
+        {"automation_rule_id": rule_id}
+    ).sort("step_order", 1).to_list(length=100)
+
+    if not steps:
+        return {"rule_id": rule_id, "steps": []}
+
+    step_ids = [str(s["_id"]) for s in steps]
+
+    # Template names in batch
+    template_ids = [s.get("email_template_id") for s in steps if s.get("email_template_id")]
+    tmpl_map: Dict[str, str] = {}
+    if template_ids:
+        try:
+            oid_list = [ObjectId(t) for t in template_ids]
+            async for tmpl in templates_col.find(
+                {"_id": {"$in": oid_list}}, {"_id": 1, "name": 1}
+            ):
+                tmpl_map[str(tmpl["_id"])] = tmpl.get("name", "Untitled")
+        except Exception:
+            pass
+
+    # Execution counts per step grouped by status
+    exec_pipeline = [
+        {"$match": {"automation_step_id": {"$in": step_ids}}},
+        {"$group": {
+            "_id": {"step_id": "$automation_step_id", "status": "$status"},
+            "count": {"$sum": 1},
+        }},
+    ]
+    exec_counts: Dict[str, Dict[str, int]] = {}
+    async for item in executions_col.aggregate(exec_pipeline):
+        sid = item["_id"]["step_id"]
+        st = item["_id"]["status"]
+        exec_counts.setdefault(sid, {})[st] = item["count"]
+
+    # Email log counts per step (sent vs failed)
+    log_pipeline = [
+        {"$match": {"automation_step_id": {"$in": step_ids}}},
+        {"$group": {
+            "_id": {"step_id": "$automation_step_id", "status": "$status"},
+            "count": {"$sum": 1},
+        }},
+    ]
+    log_counts: Dict[str, Dict[str, int]] = {}
+    async for item in logs_col.aggregate(log_pipeline):
+        sid = item["_id"]["step_id"]
+        st = item["_id"]["status"]
+        log_counts.setdefault(sid, {})[st] = item["count"]
+
+    rows = []
+    for step in steps:
+        sid = str(step["_id"])
+        ec = exec_counts.get(sid, {})
+        lc = log_counts.get(sid, {})
+
+        delay_hours = step.get("delay_hours", 0) or 0
+        if delay_hours >= 24:
+            delay_label = f"{delay_hours // 24}d {delay_hours % 24}h" if delay_hours % 24 else f"{delay_hours // 24}d"
+        elif delay_hours > 0:
+            delay_label = f"{delay_hours}h"
+        else:
+            delay_label = "Immediate"
+
+        rows.append({
+            "step_id": sid,
+            "step_order": step.get("step_order", 0),
+            "step_type": step.get("step_type", "email"),
+            "subject_line": step.get("subject_line", ""),
+            "delay_hours": delay_hours,
+            "delay_label": delay_label,
+            "template_id": step.get("email_template_id"),
+            "template_name": tmpl_map.get(step.get("email_template_id", ""), "—"),
+            # Execution-level stats
+            "exec_running": ec.get("running", 0),
+            "exec_sent": ec.get("sent", 0),
+            "exec_failed": ec.get("failed", 0),
+            "exec_skipped": ec.get("skipped", 0),
+            # Email-log-level stats (actual delivery outcomes)
+            "emails_sent": lc.get("sent", 0) + lc.get("delivered", 0),
+            "emails_failed": lc.get("failed", 0),
+            "emails_skipped": lc.get("skipped", 0),
+        })
+
+    return {"rule_id": rule_id, "steps": rows}
