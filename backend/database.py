@@ -809,6 +809,7 @@ __all__ = [
     "get_automation_rules_collection",
     "get_automation_steps_collection",
     "get_automation_executions_collection",
+    "get_workflow_instances_collection",
     "get_jobs_collection",
     "get_stats_collection",
     "get_usage_collection",

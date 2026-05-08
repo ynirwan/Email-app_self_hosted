@@ -12,6 +12,8 @@ from database import (
     get_automation_rules_collection,
     get_automation_steps_collection,
     get_automation_executions_collection,
+    get_workflow_instances_collection,
+    get_email_logs_collection,
     get_subscribers_collection,
     get_templates_collection,
     get_segments_collection,
