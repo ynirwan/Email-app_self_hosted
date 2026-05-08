@@ -785,7 +785,7 @@ async def trigger_automation(background_tasks: BackgroundTasks, trigger_data: Di
     """
     Manually trigger automation for testing
     """
-    from tasks.automation_tasks import process_automation_trigger
+    from tasks.automation.automation_tasks import process_automation_trigger
     
     trigger_type = trigger_data.get("trigger")
     subscriber_id = trigger_data.get("subscriber_id")
