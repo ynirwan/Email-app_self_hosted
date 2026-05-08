@@ -47,7 +47,6 @@ import logging
 from datetime import datetime, timedelta
 from typing import Optional
 
-import requests
 from bson import ObjectId
 from celery import shared_task
 
@@ -844,13 +843,17 @@ def send_webhook_step(
             )
 
         try:
-            response = requests.post(
+            import requests as _requests
+            response = _requests.post(
                 webhook_url,
                 data=body_bytes,
                 headers=headers,
                 timeout=10,
             )
-        except requests.Timeout as e:
+        except ImportError:
+            logger.error("'requests' package is not installed — cannot send webhook")
+            raise
+        except _requests.Timeout as e:
             logger.warning(f"Webhook timeout for {webhook_url}: {e}")
             executions_collection.insert_one({
                 "_id": ObjectId(),
@@ -868,7 +871,7 @@ def send_webhook_step(
                 "updated_at": datetime.utcnow(),
             })
             raise self.retry(exc=e)
-        except requests.ConnectionError as e:
+        except _requests.ConnectionError as e:
             logger.warning(f"Webhook connection error for {webhook_url}: {e}")
             raise self.retry(exc=e)
 
@@ -891,7 +894,7 @@ def send_webhook_step(
                 "created_at": datetime.utcnow(),
                 "updated_at": datetime.utcnow(),
             })
-            raise self.retry(exc=requests.HTTPError(err))
+            raise self.retry(exc=_requests.HTTPError(err))
 
         ok = 200 <= response.status_code < 300
         status_str = "sent" if ok else "failed"
