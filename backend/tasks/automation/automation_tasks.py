@@ -1765,12 +1765,19 @@ def check_welcome_automations(self):
         if not new_subscribers:
             return {"message": "No new subscribers", "triggered": 0}
 
+        workflow_instances_collection = get_sync_workflow_instances_collection()
+
         triggered = 0
         for subscriber in new_subscribers:
             sub_id = str(subscriber["_id"])
             for rule in welcome_rules:
                 rule_id = str(rule["_id"])
-                already = executions_collection.find_one(
+                # Guard against double-trigger: check workflow_instances (created at
+                # the very start of start_automation_workflow) rather than
+                # automation_executions (created later in the pipeline). Using
+                # executions left a race window where two consecutive 5-min ticks
+                # could both see "no record" and fire duplicate workflows.
+                already = workflow_instances_collection.find_one(
                     {
                         "automation_rule_id": rule_id,
                         "subscriber_id": sub_id,

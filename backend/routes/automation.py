@@ -482,8 +482,8 @@ async def list_automation_rules(
             "subscribers_completed": rule.get("subscribers_completed", 0),
             "timezone": rule.get("timezone", "UTC"),
             "step_count": step_count_map.get(rule_id_str, 0),
-            "created_at": rule["created_at"],
-            "updated_at": rule["updated_at"]
+            "created_at": _iso_utc(rule.get("created_at")),
+            "updated_at": _iso_utc(rule.get("updated_at")),
         })
     
     return {
@@ -817,6 +817,17 @@ async def trigger_automation(background_tasks: BackgroundTasks, trigger_data: Di
 # OBSERVABILITY ENDPOINTS
 # ===========================
 
+def _iso_utc(dt) -> Optional[str]:
+    """
+    Serialize a naive UTC datetime to an ISO-8601 string with a Z suffix.
+    Without the Z, JavaScript (and browsers) treat the string as LOCAL time,
+    causing timestamps to appear offset by the viewer's UTC offset (e.g. IST
+    users see times shifted by -5:30h).
+    """
+    if dt is None:
+        return None
+    return dt.strftime("%Y-%m-%dT%H:%M:%S.%f") + "Z"
+
 @router.get("/rules/{rule_id}/workflows")
 async def get_automation_workflows(
     rule_id: str,
@@ -872,8 +883,8 @@ async def get_automation_workflows(
             "subscriber_email": sub_info.get("email", "—"),
             "subscriber_name": sub_info.get("name", ""),
             "status": w.get("status", "unknown"),
-            "started_at": w.get("started_at").isoformat() if w.get("started_at") else None,
-            "completed_at": w.get("completed_at").isoformat() if w.get("completed_at") else None,
+            "started_at": _iso_utc(w.get("started_at")),
+            "completed_at": _iso_utc(w.get("completed_at")),
             "total_steps": w.get("total_steps", 0),
             "completed_steps": w.get("completed_steps", 0),
             "emails_sent": w.get("emails_sent", 0),
@@ -932,8 +943,8 @@ async def get_automation_email_logs(
             "provider": log.get("provider"),
             "message_id": log.get("message_id"),
             "error_message": log.get("error_message"),
-            "sent_at": log.get("sent_at").isoformat() if log.get("sent_at") else None,
-            "created_at": log.get("created_at").isoformat() if log.get("created_at") else None,
+            "sent_at": _iso_utc(log.get("sent_at")),
+            "created_at": _iso_utc(log.get("created_at")),
         })
 
     # Status breakdown counts

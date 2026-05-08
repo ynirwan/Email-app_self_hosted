@@ -92,6 +92,129 @@ function Pagination({ page, totalPages, total, onChange }) {
     );
 }
 
+// ─── Subscriber Profile Drawer ────────────────────────────────
+
+const STANDARD_FIELD_LABELS = {
+    first_name: "First Name", last_name: "Last Name", phone: "Phone",
+    company: "Company", job_title: "Job Title", city: "City",
+    country: "Country", timezone: "Timezone", birthday: "Birthday",
+    address: "Address", website: "Website", gender: "Gender", age: "Age",
+};
+
+const DRAWER_STATUS_STYLE = {
+    active: "bg-green-100 text-green-700", inactive: "bg-gray-100 text-gray-600",
+    bounced: "bg-red-100 text-red-700", unsubscribed: "bg-orange-100 text-orange-700",
+};
+
+function SubscriberProfileDrawer({ subscriber, onClose, onEdit }) {
+    if (!subscriber) return null;
+    const stdFields = subscriber.standard_fields || {};
+    const custFields = subscriber.custom_fields || {};
+    const orderedStdKeys = [
+        ...Object.keys(STANDARD_FIELD_LABELS).filter((k) => k in stdFields),
+        ...Object.keys(stdFields).filter((k) => !(k in STANDARD_FIELD_LABELS)),
+    ];
+    const custKeys = Object.keys(custFields);
+    const fmtDate = (iso) => iso
+        ? new Date(iso).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })
+        : "—";
+
+    return (
+        <>
+            <div className="fixed inset-0 bg-black/40 z-40" onClick={onClose} />
+            <div className="fixed right-0 top-0 h-full w-full max-w-sm bg-white shadow-2xl z-50 flex flex-col">
+                <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+                    <h2 className="text-sm font-semibold text-gray-900">Subscriber Profile</h2>
+                    <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl leading-none">✕</button>
+                </div>
+                <div className="flex-1 overflow-y-auto px-5 py-4 space-y-5">
+                    <div className="flex items-start gap-3">
+                        <div className="w-10 h-10 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center text-sm font-bold shrink-0 uppercase">
+                            {(stdFields.first_name?.[0] || subscriber.email?.[0] || "?").toUpperCase()}
+                        </div>
+                        <div className="min-w-0">
+                            <p className="font-semibold text-gray-900 text-sm truncate">
+                                {[stdFields.first_name, stdFields.last_name].filter(Boolean).join(" ") || "—"}
+                            </p>
+                            <p className="text-xs text-gray-500 truncate">{subscriber.email}</p>
+                            <div className="flex items-center gap-2 mt-1">
+                                <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${DRAWER_STATUS_STYLE[subscriber.status] || DRAWER_STATUS_STYLE.inactive}`}>
+                                    {subscriber.status}
+                                </span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div>
+                        <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Standard Fields</p>
+                        {orderedStdKeys.length === 0 ? (
+                            <p className="text-xs text-gray-400 italic">No standard fields recorded.</p>
+                        ) : (
+                            <div className="space-y-2">
+                                {orderedStdKeys.map((key) => {
+                                    const val = stdFields[key];
+                                    if (val === null || val === undefined || val === "") return null;
+                                    return (
+                                        <div key={key} className="flex items-start justify-between gap-2">
+                                            <span className="text-xs text-gray-500 shrink-0 w-24 capitalize">
+                                                {STANDARD_FIELD_LABELS[key] || key.replace(/_/g, " ")}
+                                            </span>
+                                            <span className="text-xs font-medium text-gray-800 text-right break-words min-w-0">{String(val)}</span>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        )}
+                    </div>
+
+                    {custKeys.length > 0 && (
+                        <div>
+                            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Custom Fields</p>
+                            <div className="space-y-2">
+                                {custKeys.map((key) => {
+                                    const val = custFields[key];
+                                    if (val === null || val === undefined || val === "") return null;
+                                    return (
+                                        <div key={key} className="flex items-start justify-between gap-2">
+                                            <span className="text-xs text-gray-500 shrink-0 w-24 capitalize">{key.replace(/_/g, " ")}</span>
+                                            <span className="text-xs font-medium text-gray-800 text-right break-words min-w-0">{String(val)}</span>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    )}
+
+                    <div>
+                        <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Account Info</p>
+                        <div className="space-y-2">
+                            {[
+                                ["Subscribed", fmtDate(subscriber.created_at)],
+                                ["Updated", fmtDate(subscriber.updated_at)],
+                                ["Source", subscriber.source || "—"],
+                                ["ID", subscriber._id],
+                            ].map(([label, value]) => (
+                                <div key={label} className="flex items-start justify-between gap-2">
+                                    <span className="text-xs text-gray-500 shrink-0 w-24">{label}</span>
+                                    <span className="text-xs font-medium text-gray-800 text-right break-all min-w-0">{value || "—"}</span>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                </div>
+                <div className="px-5 py-4 border-t border-gray-100 flex gap-2">
+                    <button onClick={onEdit} className="flex-1 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors">
+                        Edit Subscriber
+                    </button>
+                    <button onClick={onClose} className="px-4 py-2 border border-gray-200 text-sm text-gray-600 font-medium rounded-lg hover:bg-gray-50">
+                        Close
+                    </button>
+                </div>
+            </div>
+        </>
+    );
+}
+
 // ─── Main ─────────────────────────────────────────────────────
 export default function SubscriberListView() {
     const { listName } = useParams();
@@ -112,6 +235,9 @@ export default function SubscriberListView() {
     const [editModalOpen, setEditModalOpen] = useState(false);
     const [editSubscriber, setEditSubscriber] = useState(null);
     const [saving, setSaving] = useState(false);
+
+    // profile drawer
+    const [viewSubscriber, setViewSubscriber] = useState(null);
 
     // toast
     const [toast, setToast] = useState(null);
@@ -441,6 +567,12 @@ export default function SubscriberListView() {
                                         <td className="px-4 py-3 text-right">
                                             <div className="flex items-center justify-end gap-2">
                                                 <button
+                                                    onClick={() => setViewSubscriber(sub)}
+                                                    className="text-xs text-gray-500 hover:text-gray-700 hover:underline font-medium"
+                                                >
+                                                    View
+                                                </button>
+                                                <button
                                                     onClick={() => {
                                                         setEditSubscriber({
                                                             ...sub,
@@ -630,6 +762,20 @@ export default function SubscriberListView() {
                         </div>
                     </div>
                 </div>
+            )}
+
+            {/* ── Subscriber Profile Drawer ── */}
+            {viewSubscriber && (
+                <SubscriberProfileDrawer
+                    subscriber={viewSubscriber}
+                    onClose={() => setViewSubscriber(null)}
+                    onEdit={() => {
+                        const sub = viewSubscriber;
+                        setViewSubscriber(null);
+                        setEditSubscriber({ ...sub, standard_fields: { ...sub.standard_fields }, custom_fields: { ...sub.custom_fields } });
+                        setEditModalOpen(true);
+                    }}
+                />
             )}
         </div>
     );
