@@ -59,6 +59,7 @@ from database import (
     get_sync_templates_collection,
     get_sync_workflow_instances_collection,
 )
+from core.redis_client import get_redis
 
 logger = logging.getLogger(__name__)
 
@@ -1768,15 +1769,36 @@ def check_welcome_automations(self):
         workflow_instances_collection = get_sync_workflow_instances_collection()
 
         triggered = 0
+        redis_client = get_redis()
+
         for subscriber in new_subscribers:
             sub_id = str(subscriber["_id"])
             for rule in welcome_rules:
                 rule_id = str(rule["_id"])
-                # Guard against double-trigger: check workflow_instances (created at
-                # the very start of start_automation_workflow) rather than
-                # automation_executions (created later in the pipeline). Using
-                # executions left a race window where two consecutive 5-min ticks
-                # could both see "no record" and fire duplicate workflows.
+
+                # ── Dedup layer 1: Redis key (written synchronously, TTL 30 min)
+                # This prevents double-firing when the Celery worker is backlogged
+                # and the 5-minute poller tick fires before start_automation_workflow
+                # has written the workflow_instance record to MongoDB.
+                # Key pattern: automation:enqueued:{rule_id}:{sub_id}
+                redis_dedup_key = f"automation:enqueued:{rule_id}:{sub_id}"
+                try:
+                    # NX = only set if not already present; returns True on first set
+                    enqueued = redis_client.set(
+                        redis_dedup_key, "1", ex=1800, nx=True
+                    )
+                    if not enqueued:
+                        # Already enqueued by a previous poller tick — skip
+                        continue
+                except Exception as redis_err:
+                    # Redis failure → fall back to MongoDB check (fails open)
+                    logger.warning(
+                        f"Redis dedup key write failed for {sub_id}/{rule_id}: {redis_err}"
+                    )
+
+                # ── Dedup layer 2: MongoDB check (durable, slower)
+                # Belt-and-suspenders: also catches cases where the Redis key expired
+                # but the workflow was already run long ago.
                 already = workflow_instances_collection.find_one(
                     {
                         "automation_rule_id": rule_id,
@@ -1784,6 +1806,11 @@ def check_welcome_automations(self):
                     }
                 )
                 if already:
+                    # Clean up the Redis key we just set — no work to do
+                    try:
+                        redis_client.delete(redis_dedup_key)
+                    except Exception:
+                        pass
                     continue
 
                 process_automation_trigger.delay(

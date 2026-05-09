@@ -108,7 +108,10 @@ class SegmentCriteria(BaseModel):
     # 6. Email Domain
     emailDomain: Optional[List[str]] = None
 
-    # 7. Custom Fields
+    # 7. Standard Fields — match arbitrary standard_fields.<key> by value
+    standardFields: Optional[Dict[str, str]] = None
+
+    # 8. Custom Fields
     industry: Optional[str] = ""
     companySize: Optional[str] = ""
     customFields: Optional[Dict[str, str]] = None
@@ -191,6 +194,13 @@ def build_segment_query(criteria: SegmentCriteria) -> dict:
             query["standard_fields.country"] = _ci_regex(criteria.geographic.country)
         if criteria.geographic.city and criteria.geographic.city.strip():
             query["standard_fields.city"] = _ci_regex(criteria.geographic.city)
+
+    # 5b. Standard Fields — user-specified key/value pairs in standard_fields.*
+    if criteria.standardFields:
+        for field, value in criteria.standardFields.items():
+            if not field or not value or not str(value).strip():
+                continue
+            query[f"standard_fields.{field}"] = _ci_regex(str(value))
 
     # 6. Email Domain
     if criteria.emailDomain:
@@ -431,6 +441,10 @@ def _criteria_types(criteria: SegmentCriteria) -> List[str]:
         criteria.geographic.country or criteria.geographic.city
     ):
         types.append("geographic")
+    if criteria.standardFields and any(
+        k and v and str(v).strip() for k, v in criteria.standardFields.items()
+    ):
+        types.append("standardFields")
     if criteria.emailDomain:
         types.append("emailDomain")
     if (

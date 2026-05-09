@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useSettings } from "../contexts/SettingsContext";
-import { TrendingUp, Users, Mail, CheckCircle, Activity, Download } from 'lucide-react';
+import { TrendingUp, Users, Mail, CheckCircle, Activity, Download, ArrowLeft } from 'lucide-react';
 import {
   BarChart, Bar, PieChart, Pie, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer
@@ -31,6 +32,7 @@ const StatCard = ({ icon, title, value, subtitle, color }) => {
 
 export default function AutomationAnalytics() {
   const { t, formatDate } = useSettings();
+  const navigate = useNavigate();
   const [loading, setLoading]                   = useState(true);
   const [overview, setOverview]                 = useState(null);
   const [rulesPerformance, setRulesPerformance] = useState([]);
@@ -126,7 +128,14 @@ export default function AutomationAnalytics() {
 
       {/* header controls */}
       <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => navigate('/automation')}
+            className="flex items-center gap-1.5 px-3 py-2 text-sm text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
+          >
+            <ArrowLeft size={15} />
+            Back
+          </button>
           <select value={selectedPeriod} onChange={e => setSelectedPeriod(Number(e.target.value))}
             className="px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 bg-white">
             <option value={7}>{t("analytics.last7Days")}</option>

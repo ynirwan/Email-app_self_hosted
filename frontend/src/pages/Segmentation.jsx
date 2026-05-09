@@ -29,11 +29,17 @@ const EMPTY_CRITERIA = {
   status: [],
   lists: [],
   dateRange: null,
-  profileCompleteness: {},
-  geographic: { country: '', city: '' },
+  standardFields: {},
   emailDomain: [],
   customFields: {},
 };
+
+// All recognised standard field names — used for autocomplete in the editor.
+const STANDARD_FIELD_NAMES = [
+  'first_name', 'last_name', 'phone', 'company', 'job_title',
+  'country', 'city', 'state', 'zip_code', 'website',
+  'date_of_birth', 'language', 'timezone', 'gender',
+];
 
 const STATUS_OPTIONS = [
   { value: 'active', label: 'Active' },
@@ -59,25 +65,21 @@ const EMAIL_DOMAIN_OPTIONS = [
   { value: 'hotmail.com', label: 'hotmail.com' },
 ];
 
-const PROFILE_FIELDS = [
-  { field: 'first_name', label: 'Has first name' },
-  { field: 'last_name', label: 'Has last name' },
-  { field: 'phone', label: 'Has phone' },
-  { field: 'company', label: 'Has company' },
-  { field: 'job_title', label: 'Has job title' },
-];
-
 const getCriteriaTypes = (criteria) => {
   if (!criteria) return [];
   const t = [];
   if (criteria.status?.length) t.push('status');
   if (criteria.lists?.length) t.push('lists');
   if (criteria.dateRange) t.push('dateRange');
+  if (criteria.standardFields && Object.keys(criteria.standardFields).some((k) => k && criteria.standardFields[k])) {
+    t.push('standard fields');
+  }
+  // Legacy: surface old profileCompleteness / geographic segments correctly
   if (criteria.profileCompleteness && Object.values(criteria.profileCompleteness).some(Boolean)) t.push('profile');
   if (criteria.geographic?.country || criteria.geographic?.city) t.push('geographic');
   if (criteria.emailDomain?.length) t.push('domain');
   if (criteria.customFields && Object.keys(criteria.customFields).some((k) => k && criteria.customFields[k])) {
-    t.push('custom');
+    t.push('custom fields');
   }
   return t;
 };
@@ -470,11 +472,7 @@ function SegmentEditor({ existing, lists, onClose, onSaved }) {
     criteria: {
       ...EMPTY_CRITERIA,
       ...(existing?.criteria || {}),
-      geographic: {
-        country: existing?.criteria?.geographic?.country || '',
-        city: existing?.criteria?.geographic?.city || '',
-      },
-      profileCompleteness: existing?.criteria?.profileCompleteness || {},
+      standardFields: existing?.criteria?.standardFields || {},
       customFields: existing?.criteria?.customFields || {},
     },
   });
@@ -520,22 +518,43 @@ function SegmentEditor({ existing, lists, onClose, onSaved }) {
     }));
   };
 
-  const setGeographic = (key, value) => {
+  // ── standard fields helpers ──────────────────────────────────────────────
+
+  const addStandardField = () => {
     setForm((prev) => ({
       ...prev,
       criteria: {
         ...prev.criteria,
-        geographic: { ...prev.criteria.geographic, [key]: value },
+        standardFields: { ...(prev.criteria.standardFields || {}), '': '' },
       },
     }));
   };
 
-  const setProfileCompleteness = (field, checked) => {
+  const renameStandardFieldKey = (oldKey, newKey) => {
     setForm((prev) => {
-      const next = { ...(prev.criteria.profileCompleteness || {}) };
-      if (checked) next[field] = true;
-      else delete next[field];
-      return { ...prev, criteria: { ...prev.criteria, profileCompleteness: next } };
+      const sf = { ...(prev.criteria.standardFields || {}) };
+      const value = sf[oldKey];
+      delete sf[oldKey];
+      sf[newKey] = value ?? '';
+      return { ...prev, criteria: { ...prev.criteria, standardFields: sf } };
+    });
+  };
+
+  const setStandardFieldValue = (key, value) => {
+    setForm((prev) => ({
+      ...prev,
+      criteria: {
+        ...prev.criteria,
+        standardFields: { ...(prev.criteria.standardFields || {}), [key]: value },
+      },
+    }));
+  };
+
+  const removeStandardField = (key) => {
+    setForm((prev) => {
+      const sf = { ...(prev.criteria.standardFields || {}) };
+      delete sf[key];
+      return { ...prev, criteria: { ...prev.criteria, standardFields: sf } };
     });
   };
 
@@ -556,7 +575,6 @@ function SegmentEditor({ existing, lists, onClose, onSaved }) {
       const cf = { ...(prev.criteria.customFields || {}) };
       const value = cf[oldKey];
       delete cf[oldKey];
-      // If newKey collides, last write wins
       cf[newKey] = value ?? '';
       return { ...prev, criteria: { ...prev.criteria, customFields: cf } };
     });
@@ -585,7 +603,12 @@ function SegmentEditor({ existing, lists, onClose, onSaved }) {
   const fetchPreviewCount = async () => {
     setPreviewLoading(true);
     try {
-      // Strip empty custom-field keys before sending
+      // Strip empty keys before sending
+      const cleanStandard = Object.fromEntries(
+        Object.entries(form.criteria.standardFields || {}).filter(
+          ([k, v]) => k && k.trim() && v && String(v).trim(),
+        ),
+      );
       const cleanCustom = Object.fromEntries(
         Object.entries(form.criteria.customFields || {}).filter(
           ([k, v]) => k && k.trim() && v && String(v).trim(),
@@ -594,6 +617,7 @@ function SegmentEditor({ existing, lists, onClose, onSaved }) {
       const payload = {
         criteria: {
           ...form.criteria,
+          standardFields: cleanStandard,
           customFields: cleanCustom,
         },
       };
@@ -615,7 +639,12 @@ function SegmentEditor({ existing, lists, onClose, onSaved }) {
       return;
     }
 
-    // Strip empty custom-field keys
+    // Strip empty keys before sending
+    const cleanStandard = Object.fromEntries(
+      Object.entries(form.criteria.standardFields || {}).filter(
+        ([k, v]) => k && k.trim() && v && String(v).trim(),
+      ),
+    );
     const cleanCustom = Object.fromEntries(
       Object.entries(form.criteria.customFields || {}).filter(
         ([k, v]) => k && k.trim() && v && String(v).trim(),
@@ -628,6 +657,7 @@ function SegmentEditor({ existing, lists, onClose, onSaved }) {
       is_active: form.is_active,
       criteria: {
         ...form.criteria,
+        standardFields: cleanStandard,
         customFields: cleanCustom,
       },
     };
@@ -669,7 +699,7 @@ function SegmentEditor({ existing, lists, onClose, onSaved }) {
               {isEditing ? `Edit "${existing.name}"` : 'Create Segment'}
             </h3>
             <p className="text-xs text-gray-500 mt-1">
-              7 criteria types — combine them to build a dynamic audience
+              5 criteria types — combine them to build a dynamic audience
             </p>
           </div>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-2xl">
@@ -808,55 +838,46 @@ function SegmentEditor({ existing, lists, onClose, onSaved }) {
                 </p>
               </div>
 
-              {/* 4. Profile completeness */}
+              {/* 4. Standard Fields */}
               <div>
-                <label className="block font-semibold mb-2">👤 Profile Completeness</label>
-                <div className="grid grid-cols-2 gap-2">
-                  {PROFILE_FIELDS.map((item) => (
-                    <label
-                      key={item.field}
-                      className="flex items-center bg-gray-50 p-2 rounded hover:bg-gray-100 cursor-pointer"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={!!form.criteria.profileCompleteness?.[item.field]}
-                        onChange={(e) =>
-                          setProfileCompleteness(item.field, e.target.checked)
-                        }
-                        className="mr-2"
-                      />
-                      <span className="text-sm">{item.label}</span>
-                    </label>
-                  ))}
-                </div>
-              </div>
-
-              {/* 5. Geographic */}
-              <div>
-                <label className="block font-semibold mb-2">🌍 Geographic</label>
-                <div className="grid grid-cols-2 gap-2">
-                  <input
-                    type="text"
-                    placeholder="Country (e.g. Germany)"
-                    value={form.criteria.geographic.country}
-                    onChange={(e) => setGeographic('country', e.target.value)}
-                    className="border border-gray-200 rounded p-2 text-sm"
-                  />
-                  <input
-                    type="text"
-                    placeholder="City (e.g. Berlin)"
-                    value={form.criteria.geographic.city}
-                    onChange={(e) => setGeographic('city', e.target.value)}
-                    className="border border-gray-200 rounded p-2 text-sm"
-                  />
-                </div>
-                <p className="text-xs text-gray-400 mt-1">
-                  Matches the <code>country</code> and <code>city</code> standard fields
-                  on each subscriber (case-insensitive).
+                <label className="block font-semibold mb-2">🗂️ Standard Fields</label>
+                <p className="text-xs text-gray-400 mb-2">
+                  Filter by any built-in field (e.g. country, company, language).
+                  Each row matches subscribers whose <code>standard_fields.&lt;name&gt;</code>{' '}
+                  contains the value (case-insensitive).
                 </p>
+
+                <datalist id="standard-field-names">
+                  {STANDARD_FIELD_NAMES.map((f) => (
+                    <option key={f} value={f} />
+                  ))}
+                </datalist>
+
+                {Object.entries(form.criteria.standardFields || {}).length > 0 && (
+                  <div className="space-y-1 mb-2">
+                    {Object.entries(form.criteria.standardFields || {}).map(([key, value], idx) => (
+                      <StandardFieldRow
+                        key={`${idx}-${key}`}
+                        fieldKey={key}
+                        fieldValue={value}
+                        onRenameKey={(newKey) => renameStandardFieldKey(key, newKey)}
+                        onChangeValue={(v) => setStandardFieldValue(key, v)}
+                        onRemove={() => removeStandardField(key)}
+                      />
+                    ))}
+                  </div>
+                )}
+
+                <button
+                  type="button"
+                  onClick={addStandardField}
+                  className="text-blue-600 text-sm hover:underline"
+                >
+                  ➕ Add standard field filter
+                </button>
               </div>
 
-              {/* 6. Email domain */}
+              {/* 5. Email Domain */}
               <div>
                 <label className="block font-semibold mb-2">📧 Email Domain</label>
                 <div className="grid grid-cols-2 gap-2">
@@ -886,7 +907,7 @@ function SegmentEditor({ existing, lists, onClose, onSaved }) {
                 </div>
               </div>
 
-              {/* 7. Custom fields */}
+              {/* 6. Custom Fields */}
               <div>
                 <label className="block font-semibold mb-2">🏷️ Custom Fields</label>
                 {form.criteria.lists?.length === 0 && (
@@ -966,6 +987,52 @@ function SegmentEditor({ existing, lists, onClose, onSaved }) {
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// StandardFieldRow — identical UX to CustomFieldRow but uses the standard
+// field datalist so users get autocomplete for built-in field names.
+// ────────────────────────────────────────────────────────────────────────────
+
+function StandardFieldRow({ fieldKey, fieldValue, onRenameKey, onChangeValue, onRemove }) {
+  const [localKey, setLocalKey] = useState(fieldKey);
+
+  useEffect(() => { setLocalKey(fieldKey); }, [fieldKey]);
+
+  const commitKey = () => {
+    const trimmed = localKey.trim();
+    if (trimmed !== fieldKey) onRenameKey(trimmed);
+  };
+
+  return (
+    <div className="flex gap-2 items-center">
+      <input
+        type="text"
+        list="standard-field-names"
+        placeholder="Field name (e.g. country)"
+        value={localKey}
+        onChange={(e) => setLocalKey(e.target.value)}
+        onBlur={commitKey}
+        onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); commitKey(); } }}
+        className="flex-1 border border-gray-200 rounded px-2 py-1 text-sm"
+      />
+      <input
+        type="text"
+        placeholder="Value (e.g. Germany)"
+        value={fieldValue || ''}
+        onChange={(e) => onChangeValue(e.target.value)}
+        className="flex-1 border border-gray-200 rounded px-2 py-1 text-sm"
+      />
+      <button
+        type="button"
+        onClick={onRemove}
+        className="text-red-600 hover:text-red-800 px-2"
+        aria-label="Remove field"
+      >
+        ❌
+      </button>
     </div>
   );
 }
