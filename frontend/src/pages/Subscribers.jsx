@@ -84,16 +84,41 @@ function Pagination({ page, totalPages, total, onChange }) {
 }
 
 // ── OptInLinkButton ──────────────────────────────────────────────────────────
-// Shows a small popover with the public opt-in API URL for a given list.
-// Users copy this to build/embed their own subscription forms.
+// Shows a popover with two tabs:
+//   "Share link" — the hosted /subscribe/:listId page URL to copy/open
+//   "Embed"      — an HTML snippet to paste into any external webpage
 function OptInLinkButton({ listId }) {
   const [open, setOpen] = useState(false);
-  const [copied, setCopied] = useState(null); // "endpoint" | "listId"
+  const [tab, setTab] = useState("link"); // "link" | "embed"
+  const [copied, setCopied] = useState(false);
   const ref = useRef(null);
 
   const origin = window.location.origin;
-  const endpointUrl = `${origin}/api/public/opt-in`;
-  const listMetaUrl = `${origin}/api/public/list-meta/${encodeURIComponent(listId)}`;
+  const formUrl = `${origin}/subscribe/${encodeURIComponent(listId)}`;
+  const apiUrl  = `${origin}/api/public/opt-in`;
+
+  const embedSnippet = `<!-- ZeniPost opt-in form for "${listId}" -->
+<form action="${apiUrl}" method="POST" style="max-width:420px">
+  <input type="hidden" name="list_id" value="${listId}" />
+  <input type="hidden" name="source"  value="embed" />
+
+  <label style="display:block;margin-bottom:8px;font-size:14px">
+    Email address *
+    <input type="email" name="email" required
+      placeholder="you@example.com"
+      style="display:block;width:100%;margin-top:4px;padding:8px;border:1px solid #d1d5db;border-radius:6px" />
+  </label>
+
+  <label style="display:flex;align-items:flex-start;gap:8px;font-size:13px;margin-bottom:12px">
+    <input type="checkbox" name="consent" value="true" required style="margin-top:3px" />
+    I agree to receive marketing emails and can unsubscribe at any time.
+  </label>
+
+  <button type="submit"
+    style="width:100%;padding:10px;background:#2563eb;color:#fff;border:none;border-radius:6px;font-size:14px;cursor:pointer">
+    Subscribe
+  </button>
+</form>`;
 
   // Close on outside click
   useEffect(() => {
@@ -105,88 +130,92 @@ function OptInLinkButton({ listId }) {
     return () => document.removeEventListener("mousedown", handler);
   }, [open]);
 
-  function copyToClipboard(text, key) {
+  function copyText(text) {
     navigator.clipboard.writeText(text).then(() => {
-      setCopied(key);
-      setTimeout(() => setCopied(null), 2000);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
     });
   }
 
   return (
     <div className="relative" ref={ref}>
       <button
-        onClick={() => setOpen((v) => !v)}
-        title="Public opt-in form details"
+        onClick={() => { setOpen((v) => !v); setTab("link"); }}
+        title="Share opt-in form"
         className="px-3 py-1.5 text-xs font-medium border border-blue-200 rounded-lg hover:bg-blue-50 text-blue-600 transition-colors"
       >
         🔗 Form
       </button>
+
       {open && (
-        <div className="absolute right-0 top-8 z-50 w-80 bg-white border border-gray-200 rounded-xl shadow-lg p-4">
-          <p className="text-xs font-semibold text-gray-700 mb-3">Public opt-in details</p>
-
-          <div className="space-y-3">
-            {/* POST endpoint */}
-            <div>
-              <p className="text-[10px] text-gray-500 uppercase tracking-wider mb-1">
-                Submit endpoint (POST)
-              </p>
-              <div className="flex items-center gap-1.5">
-                <code className="flex-1 text-[10px] bg-gray-50 border border-gray-100 rounded px-2 py-1 font-mono truncate text-gray-700">
-                  {endpointUrl}
-                </code>
-                <button
-                  onClick={() => copyToClipboard(endpointUrl, "endpoint")}
-                  className="flex-shrink-0 text-[10px] px-2 py-1 bg-gray-100 hover:bg-gray-200 rounded transition-colors"
-                >
-                  {copied === "endpoint" ? "✓" : "Copy"}
-                </button>
-              </div>
-            </div>
-
-            {/* List ID */}
-            <div>
-              <p className="text-[10px] text-gray-500 uppercase tracking-wider mb-1">
-                list_id field value
-              </p>
-              <div className="flex items-center gap-1.5">
-                <code className="flex-1 text-[10px] bg-gray-50 border border-gray-100 rounded px-2 py-1 font-mono truncate text-gray-700">
-                  {listId}
-                </code>
-                <button
-                  onClick={() => copyToClipboard(listId, "listId")}
-                  className="flex-shrink-0 text-[10px] px-2 py-1 bg-gray-100 hover:bg-gray-200 rounded transition-colors"
-                >
-                  {copied === "listId" ? "✓" : "Copy"}
-                </button>
-              </div>
-            </div>
-
-            {/* Field schema link */}
-            <div>
-              <p className="text-[10px] text-gray-500 uppercase tracking-wider mb-1">
-                Field schema (GET)
-              </p>
-              <div className="flex items-center gap-1.5">
-                <code className="flex-1 text-[10px] bg-gray-50 border border-gray-100 rounded px-2 py-1 font-mono truncate text-gray-700">
-                  {listMetaUrl}
-                </code>
-                <button
-                  onClick={() => copyToClipboard(listMetaUrl, "schema")}
-                  className="flex-shrink-0 text-[10px] px-2 py-1 bg-gray-100 hover:bg-gray-200 rounded transition-colors"
-                >
-                  {copied === "schema" ? "✓" : "Copy"}
-                </button>
-              </div>
-            </div>
+        <div className="absolute right-0 top-8 z-50 w-96 bg-white border border-gray-200 rounded-xl shadow-xl overflow-hidden">
+          {/* tab bar */}
+          <div className="flex border-b border-gray-100">
+            {[["link", "Share link"], ["embed", "Embed code"]].map(([id, label]) => (
+              <button
+                key={id}
+                onClick={() => { setTab(id); setCopied(false); }}
+                className={`flex-1 py-2.5 text-xs font-medium transition-colors ${
+                  tab === id
+                    ? "border-b-2 border-blue-600 text-blue-600 bg-blue-50/40"
+                    : "text-gray-500 hover:text-gray-700 hover:bg-gray-50"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
           </div>
 
-          <p className="text-[10px] text-gray-400 mt-3 leading-relaxed">
-            POST with <code className="font-mono">email</code>,{" "}
-            <code className="font-mono">consent: true</code>, and{" "}
-            <code className="font-mono">list_id</code> to subscribe. Subscribers receive
-            a confirmation email and are activated after clicking the link.
-          </p>
+          <div className="p-4">
+            {tab === "link" && (
+              <>
+                <p className="text-xs text-gray-500 mb-2 leading-relaxed">
+                  Share this link with your audience. They'll see a branded signup form
+                  and receive a confirmation email after submitting.
+                </p>
+                <div className="flex items-center gap-1.5 mb-3">
+                  <code className="flex-1 text-[11px] bg-gray-50 border border-gray-100 rounded-lg px-2.5 py-1.5 font-mono text-gray-700 truncate">
+                    {formUrl}
+                  </code>
+                  <button
+                    onClick={() => copyText(formUrl)}
+                    className="flex-shrink-0 text-xs px-2.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors"
+                  >
+                    {copied ? "✓ Copied" : "Copy"}
+                  </button>
+                </div>
+                <a
+                  href={formUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-[11px] text-blue-600 hover:underline"
+                >
+                  Open form ↗
+                </a>
+              </>
+            )}
+
+            {tab === "embed" && (
+              <>
+                <p className="text-xs text-gray-500 mb-2 leading-relaxed">
+                  Paste this HTML into any webpage to add a subscription form.
+                  Note: the form action posts directly to the API — no page reload needed
+                  if you handle the response via JavaScript.
+                </p>
+                <div className="relative">
+                  <pre className="text-[10px] bg-gray-50 border border-gray-100 rounded-lg p-3 font-mono text-gray-700 overflow-auto max-h-48 leading-relaxed whitespace-pre-wrap break-all">
+                    {embedSnippet}
+                  </pre>
+                  <button
+                    onClick={() => copyText(embedSnippet)}
+                    className="absolute top-2 right-2 text-[10px] px-2 py-1 bg-gray-700 hover:bg-gray-900 text-white rounded transition-colors"
+                  >
+                    {copied ? "✓" : "Copy"}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
         </div>
       )}
     </div>

@@ -29,16 +29,14 @@ export default function OptInForm() {
   useEffect(() => {
     if (!listId) { setPageState('not_found'); return; }
 
-    API.get(`/api/subscribers/public/list-meta/${encodeURIComponent(listId)}`)
+    API.get(`/api/public/list-meta/${encodeURIComponent(listId)}`)
       .then(res => {
         setListMeta(res.data);
         // Pre-initialize all field values to empty string
-        const initial = {};
-        [...res.data.standard_fields, ...res.data.custom_fields].forEach(f => {
-          initial[f] = '';
-        });
-        // email is always required but rendered separately
-        initial['email'] = '';
+        // standard_fields is string[], custom_fields is { name, type }[]
+        const initial = { email: '' };
+        (res.data.standard_fields || []).forEach(f => { initial[f] = ''; });
+        (res.data.custom_fields || []).forEach(f => { initial[f.name ?? f] = ''; });
         setValues(initial);
         setPageState('idle');
       })
@@ -57,8 +55,9 @@ export default function OptInForm() {
     setErrorMsg('');
 
     // Split values back into standard_fields and custom_fields
+    // standard_fields is string[], custom_fields is { name, type }[]
     const standardKeys = new Set(listMeta?.standard_fields || []);
-    const customKeys = new Set(listMeta?.custom_fields || []);
+    const customKeys = new Set((listMeta?.custom_fields || []).map(f => f.name ?? f));
 
     const standard_fields = {};
     const custom_fields = {};
@@ -70,7 +69,7 @@ export default function OptInForm() {
     }
 
     try {
-      await API.post('/api/subscribers/public/opt-in', {
+      await API.post('/api/public/opt-in', {
         email: values['email'].trim().toLowerCase(),
         consent: true,
         list_id: listId,
@@ -184,19 +183,22 @@ export default function OptInForm() {
           </Field>
         ))}
 
-        {/* Custom fields */}
-        {customFields.map(key => (
-          <Field key={key} label={labelFor(key)}>
-            <input
-              type="text"
-              placeholder={placeholderFor(key)}
-              value={values[key] || ''}
-              onChange={e => handleChange(key, e.target.value)}
-              disabled={isSubmitting}
-              className={inputCls}
-            />
-          </Field>
-        ))}
+        {/* Custom fields — API returns { name, type } objects */}
+        {customFields.map(field => {
+          const key = field.name ?? field;
+          return (
+            <Field key={key} label={labelFor(key)}>
+              <input
+                type="text"
+                placeholder={placeholderFor(key)}
+                value={values[key] || ''}
+                onChange={e => handleChange(key, e.target.value)}
+                disabled={isSubmitting}
+                className={inputCls}
+              />
+            </Field>
+          );
+        })}
 
         {/* GDPR consent */}
         <div className="flex items-start gap-3 pt-1">
