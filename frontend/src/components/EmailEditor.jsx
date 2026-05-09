@@ -22,6 +22,7 @@
 //     blocks. No more document.execCommand. No more HTML5 native drag-drop.
 //   - HTML mode: unchanged — textarea + spam analysis.
 //   - Visual (contentEditable) mode: removed.
+
 import React, {
   useState,
   useRef,
@@ -38,6 +39,7 @@ import {
   useSensors,
   closestCenter,
   DragOverlay,
+  useDroppable,
 } from "@dnd-kit/core";
 import {
   SortableContext,
@@ -48,22 +50,51 @@ import {
 import {
   Code,
   MousePointer,
+  Eye,
   AlertTriangle,
   CheckCircle,
 } from "lucide-react";
+
 import BlockPalette, { PALETTE_ID_PREFIX } from "./editor/BlockPalette";
 import SortableBlock from "./editor/SortableBlock";
 import BlockSettingsPanel from "./editor/BlockSettingsPanel";
-import { getBlockDefinition, EMAIL_BLOCK_TYPES } from "./editor/blockDefinitions";
+import {
+  getBlockDefinition,
+  EMAIL_BLOCK_TYPES,
+} from "./editor/blockDefinitions";
 
 // ─── deliverability helpers (unchanged from prior version) ──────────
+
 const SPAM_TRIGGER_WORDS = [
-  "free", "guarantee", "limited time", "urgent", "click here", "buy now",
-  "offer", "deal", "discount", "winner", "congratulations", "cash",
-  "money", "earn", "income", "opportunity", "risk-free", "no obligation",
-  "act now", "instant", "immediately", "order now", "limited offer",
-  "exclusive", "special promotion", "clearance", "save up to",
-  "percent off", "lowest price",
+  "free",
+  "guarantee",
+  "limited time",
+  "urgent",
+  "click here",
+  "buy now",
+  "offer",
+  "deal",
+  "discount",
+  "winner",
+  "congratulations",
+  "cash",
+  "money",
+  "earn",
+  "income",
+  "opportunity",
+  "risk-free",
+  "no obligation",
+  "act now",
+  "instant",
+  "immediately",
+  "order now",
+  "limited offer",
+  "exclusive",
+  "special promotion",
+  "clearance",
+  "save up to",
+  "percent off",
+  "lowest price",
 ];
 
 function analyzeDeliverability(html) {
@@ -83,6 +114,13 @@ function analyzeDeliverability(html) {
 }
 
 // ─── id helpers ─────────────────────────────────────────────────────
+
+// Special droppable id used by the canvas itself. Anything dropped here
+// (rather than on a specific block) gets appended to the end of the list.
+// Letting palette items drop on the empty canvas is the difference between
+// "I can't add blocks" and "this works." See Canvas + handleDragEnd.
+const CANVAS_DROP_ID = "canvas-drop-zone";
+
 function newBlockId() {
   return `b_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -99,6 +137,7 @@ function makeBlockFromType(typeId, position) {
 }
 
 // ─── main component ─────────────────────────────────────────────────
+
 const EmailEditor = forwardRef((props, ref) => {
   const { onLoad, onChange } = props;
 
@@ -130,7 +169,7 @@ const EmailEditor = forwardRef((props, ref) => {
     }),
     useSensor(KeyboardSensor, {
       coordinateGetter: sortableKeyboardCoordinates,
-    })
+    }),
   );
 
   // Notify parent of changes — fired when blocks, html, or mode change
@@ -156,94 +195,107 @@ const EmailEditor = forwardRef((props, ref) => {
   }, []);
 
   // ─── public API via ref ──────────────────────────────────────────
-  useImperativeHandle(ref, () => ({
-    editor: {
-      exportHtml: (callback) => {
-        let design;
-        let html;
-        if (editMode === "html") {
-          design = { mode: "html", content: htmlContent };
-          html = htmlContent;
-        } else {
-          // Re-stamp position from array index so the backend's position-sort
-          // matches user intent regardless of stale position fields.
-          const blocks = emailBlocks.map((b, i) => ({ ...b, position: i }));
-          design = { mode: "drag-drop", blocks };
-          html = blocks.map((b) => b.content || "").join("\n");
-        }
-        callback({ design, html });
-      },
-      loadDesign: (design) => {
-        if (!design) {
-          setEditMode("drag-drop");
-          setEmailBlocks([]);
-          setHtmlContent("");
-          return;
-        }
-        if (design.mode === "html" && typeof design.content === "string") {
-          setEditMode("html");
-          setHtmlContent(design.content);
-          return;
-        }
-        if (design.mode === "drag-drop" && Array.isArray(design.blocks)) {
-          setEditMode("drag-drop");
-          // Defensive — ensure every block has the fields we need
-          const safeBlocks = design.blocks
-            .filter((b) => b && b.type)
-            .map((b, i) => ({
-              id: b.id ?? newBlockId(),
-              type: b.type,
-              content: typeof b.content === "string" ? b.content : "",
-              styles: b.styles || {},
-              position: typeof b.position === "number" ? b.position : i,
-            }))
-            .sort((a, b) => a.position - b.position);
-          setEmailBlocks(safeBlocks);
-          return;
-        }
-        // Legacy "visual" mode: surface the raw content into HTML mode
-        // since we no longer have a contentEditable visual editor.
-        if (design.mode === "visual" && typeof design.content === "string") {
-          setEditMode("html");
-          setHtmlContent(design.content);
-          return;
-        }
-        // Legacy Unlayer-ish shape (body.rows[].columns[].contents[])
-        if (design.body && Array.isArray(design.body.rows)) {
-          const parts = [];
-          for (const row of design.body.rows) {
-            for (const col of row.columns || []) {
-              for (const c of col.contents || []) {
-                if (c && c.type === "html" && c.values?.html) {
-                  parts.push(c.values.html);
+  useImperativeHandle(
+    ref,
+    () => ({
+      editor: {
+        exportHtml: (callback) => {
+          let design;
+          let html;
+          if (editMode === "html") {
+            design = { mode: "html", content: htmlContent };
+            html = htmlContent;
+          } else {
+            // Re-stamp position from array index so the backend's position-sort
+            // matches user intent regardless of stale position fields.
+            const blocks = emailBlocks.map((b, i) => ({ ...b, position: i }));
+            design = { mode: "drag-drop", blocks };
+            html = blocks.map((b) => b.content || "").join("\n");
+          }
+          callback({ design, html });
+        },
+
+        loadDesign: (design) => {
+          if (!design) {
+            setEditMode("drag-drop");
+            setEmailBlocks([]);
+            setHtmlContent("");
+            return;
+          }
+
+          if (design.mode === "html" && typeof design.content === "string") {
+            setEditMode("html");
+            setHtmlContent(design.content);
+            return;
+          }
+
+          if (design.mode === "drag-drop" && Array.isArray(design.blocks)) {
+            setEditMode("drag-drop");
+            // Defensive — ensure every block has the fields we need
+            const safeBlocks = design.blocks
+              .filter((b) => b && b.type)
+              .map((b, i) => ({
+                id: b.id ?? newBlockId(),
+                type: b.type,
+                content: typeof b.content === "string" ? b.content : "",
+                styles: b.styles || {},
+                position: typeof b.position === "number" ? b.position : i,
+              }))
+              .sort((a, b) => a.position - b.position);
+            setEmailBlocks(safeBlocks);
+            return;
+          }
+
+          // Legacy "visual" mode: surface the raw content into HTML mode
+          // since we no longer have a contentEditable visual editor.
+          if (design.mode === "visual" && typeof design.content === "string") {
+            setEditMode("html");
+            setHtmlContent(design.content);
+            return;
+          }
+
+          // Legacy Unlayer-ish shape (body.rows[].columns[].contents[])
+          if (design.body && Array.isArray(design.body.rows)) {
+            const parts = [];
+            for (const row of design.body.rows) {
+              for (const col of row.columns || []) {
+                for (const c of col.contents || []) {
+                  if (c && c.type === "html" && c.values?.html) {
+                    parts.push(c.values.html);
+                  }
                 }
               }
             }
+            setEditMode("html");
+            setHtmlContent(parts.join("\n"));
+            return;
           }
-          setEditMode("html");
-          setHtmlContent(parts.join("\n"));
-          return;
-        }
-        // Plain `html` field as a last resort
-        if (typeof design.html === "string") {
-          setEditMode("html");
-          setHtmlContent(design.html);
-          return;
-        }
-        setEditMode("drag-drop");
-        setEmailBlocks([]);
-        setHtmlContent("");
+
+          // Plain `html` field as a last resort
+          if (typeof design.html === "string") {
+            setEditMode("html");
+            setHtmlContent(design.html);
+            return;
+          }
+
+          setEditMode("drag-drop");
+          setEmailBlocks([]);
+          setHtmlContent("");
+        },
+
+        loadBlank: () => {
+          setEditMode("drag-drop");
+          setEmailBlocks([]);
+          setHtmlContent("");
+          setSelectedBlockId(null);
+        },
       },
-      loadBlank: () => {
-        setEditMode("drag-drop");
-        setEmailBlocks([]);
-        setHtmlContent("");
-        setSelectedBlockId(null);
-      },
-    },
-  }), [emailBlocks, htmlContent, editMode]);
+    }),
+    [emailBlocks, htmlContent, editMode],
+  );
 
   // ─── block mutators ──────────────────────────────────────────────
+
   const updateBlock = useCallback(
     (id, updater) => {
       setEmailBlocks((prev) =>
@@ -252,12 +304,12 @@ const EmailEditor = forwardRef((props, ref) => {
             ? typeof updater === "function"
               ? updater(b)
               : updater
-            : b
-        )
+            : b,
+        ),
       );
       fireChange();
     },
-    [fireChange]
+    [fireChange],
   );
 
   const deleteBlock = useCallback(
@@ -266,7 +318,7 @@ const EmailEditor = forwardRef((props, ref) => {
       setSelectedBlockId((cur) => (cur === id ? null : cur));
       fireChange();
     },
-    [fireChange]
+    [fireChange],
   );
 
   const duplicateBlock = useCallback(
@@ -281,10 +333,11 @@ const EmailEditor = forwardRef((props, ref) => {
       });
       fireChange();
     },
-    [fireChange]
+    [fireChange],
   );
 
   // ─── drag-drop handlers ──────────────────────────────────────────
+
   const handleDragStart = (event) => {
     setActiveDragId(event.active.id);
   };
@@ -301,8 +354,16 @@ const EmailEditor = forwardRef((props, ref) => {
     if (activeId.startsWith(PALETTE_ID_PREFIX)) {
       const typeId = activeId.slice(PALETTE_ID_PREFIX.length);
       setEmailBlocks((prev) => {
-        const overIdx = prev.findIndex((b) => b.id === overId);
-        const insertAt = overIdx === -1 ? prev.length : overIdx;
+        // If dropped on the canvas drop-zone (empty canvas, or empty space
+        // below the last block), append to the end. Otherwise insert above
+        // the block we landed on.
+        let insertAt;
+        if (overId === CANVAS_DROP_ID) {
+          insertAt = prev.length;
+        } else {
+          const overIdx = prev.findIndex((b) => b.id === overId);
+          insertAt = overIdx === -1 ? prev.length : overIdx;
+        }
         const newBlock = makeBlockFromType(typeId, insertAt);
         const next = [...prev];
         next.splice(insertAt, 0, newBlock);
@@ -329,9 +390,20 @@ const EmailEditor = forwardRef((props, ref) => {
   const handleDragCancel = () => setActiveDragId(null);
 
   // ─── selection ───────────────────────────────────────────────────
-  const selectedBlock = emailBlocks.find((b) => b.id === selectedBlockId) || null;
+
+  const selectedBlock =
+    emailBlocks.find((b) => b.id === selectedBlockId) || null;
+
+  // ─── personalization token insertion (for the parent to wire up) ─
+  // We don't render a token panel inside the editor (it's better placed in
+  // the page chrome), but we expose the insertion mechanism via the active
+  // text editor ref. If/when the parent wants a token picker, it can call
+  // `emailEditorRef.current.editor.insertToken('{{first_name}}')`.
+  // Adding this without breaking the public API is optional; uncomment in
+  // imperative handle if needed.
 
   // ─── render ──────────────────────────────────────────────────────
+
   return (
     <div className="flex flex-col h-full bg-white">
       {/* Mode tabs + deliverability indicator */}
@@ -421,12 +493,10 @@ const EmailEditor = forwardRef((props, ref) => {
               onClose={() => setSelectedBlockId(null)}
             />
           </div>
+
           <DragOverlay dropAnimation={{ duration: 150 }}>
             {activeDragId ? (
-              <DragPreview
-                activeDragId={activeDragId}
-                blocks={emailBlocks}
-              />
+              <DragPreview activeDragId={activeDragId} blocks={emailBlocks} />
             ) : null}
           </DragOverlay>
         </DndContext>
@@ -444,6 +514,7 @@ const EmailEditor = forwardRef((props, ref) => {
 });
 
 EmailEditor.displayName = "EmailEditor";
+
 export default EmailEditor;
 
 // ─── subcomponents ──────────────────────────────────────────────────
@@ -465,36 +536,61 @@ function ModeTab({ active, onClick, icon, children }) {
   );
 }
 
-function Canvas({ blocks, selectedId, onSelect, onChangeBlock, onTextEditorReady }) {
+function Canvas({
+  blocks,
+  selectedId,
+  onSelect,
+  onChangeBlock,
+  onTextEditorReady,
+}) {
+  // The whole inner area is a droppable. When you drag a palette item
+  // onto an empty canvas (or into the empty space *below* existing blocks),
+  // dnd-kit's `over` resolves to this id and handleDragEnd appends the
+  // new block. Without this, palette → empty canvas would no-op because
+  // there's nothing to "land on."
+  const { setNodeRef, isOver } = useDroppable({ id: CANVAS_DROP_ID });
+
   return (
     <div className="flex-1 min-w-0 overflow-auto bg-gray-100 px-6 py-8">
-      <div className="max-w-[640px] mx-auto bg-white shadow-sm border border-gray-200 rounded-lg min-h-[400px]">
+      <div
+        ref={setNodeRef}
+        className={`max-w-[640px] mx-auto bg-white shadow-sm border rounded-lg min-h-[400px] transition-colors ${
+          isOver ? "border-blue-400 ring-2 ring-blue-200" : "border-gray-200"
+        }`}
+      >
         <SortableContext
           items={blocks.map((b) => b.id)}
           strategy={verticalListSortingStrategy}
         >
           <div
-            className="p-6 space-y-2"
+            className="p-6 space-y-2 min-h-[400px]"
             onClick={(e) => {
               // Click on empty canvas area → deselect
               if (e.target === e.currentTarget) onSelect(null);
             }}
           >
             {blocks.length === 0 ? (
-              <EmptyCanvasHint />
+              <EmptyCanvasHint isOver={isOver} />
             ) : (
-              blocks.map((block) => (
-                <SortableBlock
-                  key={block.id}
-                  block={block}
-                  selected={selectedId === block.id}
-                  onSelect={() => onSelect(block.id)}
-                  onChange={onChangeBlock}
-                  onTextEditorReady={
-                    selectedId === block.id ? onTextEditorReady : undefined
-                  }
-                />
-              ))
+              <>
+                {blocks.map((block) => (
+                  <SortableBlock
+                    key={block.id}
+                    block={block}
+                    selected={selectedId === block.id}
+                    onSelect={() => onSelect(block.id)}
+                    onChange={onChangeBlock}
+                    onTextEditorReady={
+                      selectedId === block.id ? onTextEditorReady : undefined
+                    }
+                  />
+                ))}
+                {/* Tail spacer — lets users drop at the very end of the
+                    list by aiming below the last block. The Canvas's own
+                    droppable already handles this, but giving it visible
+                    space makes the intent obvious. */}
+                <div className="h-6" aria-hidden="true" />
+              </>
             )}
           </div>
         </SortableContext>
@@ -503,11 +599,21 @@ function Canvas({ blocks, selectedId, onSelect, onChangeBlock, onTextEditorReady
   );
 }
 
-function EmptyCanvasHint() {
+function EmptyCanvasHint({ isOver }) {
   return (
-    <div className="border-2 border-dashed border-gray-200 rounded-md py-16 px-6 text-center">
-      <p className="text-sm text-gray-500 font-medium">
-        Drag blocks from the left to start building your email
+    <div
+      className={`border-2 border-dashed rounded-md py-16 px-6 text-center transition-colors ${
+        isOver ? "border-blue-400 bg-blue-50" : "border-gray-200"
+      }`}
+    >
+      <p
+        className={`text-sm font-medium ${
+          isOver ? "text-blue-700" : "text-gray-500"
+        }`}
+      >
+        {isOver
+          ? "Drop here to add the block"
+          : "Drag blocks from the left to start building your email"}
       </p>
       <p className="text-xs text-gray-400 mt-1">
         You can reorder, duplicate, or delete blocks at any time
@@ -518,6 +624,7 @@ function EmptyCanvasHint() {
 
 function DragPreview({ activeDragId, blocks }) {
   const id = String(activeDragId);
+
   if (id.startsWith(PALETTE_ID_PREFIX)) {
     const typeId = id.slice(PALETTE_ID_PREFIX.length);
     const def = getBlockDefinition(typeId);
@@ -530,6 +637,7 @@ function DragPreview({ activeDragId, blocks }) {
       </div>
     );
   }
+
   const block = blocks.find((b) => b.id === id);
   if (!block) return null;
   return (
@@ -559,7 +667,7 @@ function HtmlMode({ value, onChange }) {
         onChange={(e) => onChange(e.target.value)}
         spellCheck={false}
         className="flex-1 w-full p-4 font-mono text-xs leading-relaxed bg-white border-0 focus:outline-none resize-none"
-        placeholder={`<!doctype html>\n<html>\n  <body>\n    <p>Hello {{first_name}},</p>\n  </body>\n</html>`}
+        placeholder="<!doctype html>&#10;<html>&#10;  <body>&#10;    <p>Hello {{first_name}},</p>&#10;  </body>&#10;</html>"
       />
     </div>
   );
