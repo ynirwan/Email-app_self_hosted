@@ -18,6 +18,7 @@ const STATUS_STYLE = {
     inactive: "bg-gray-100  text-gray-600",
     bounced: "bg-red-100   text-red-700",
     unsubscribed: "bg-orange-100 text-orange-700",
+    pending_confirmation: "bg-yellow-100 text-yellow-700",
 };
 
 function useDebounce(value, delay) {
@@ -229,7 +230,8 @@ export default function SubscriberListView() {
     const [searchTerm, setSearchTerm] = useState("");
     const [statusFilter, setStatusFilter] = useState("");
     const [customFieldKeys, setCustomFieldKeys] = useState([]);
-    const [showAllCustomFields, setShowAllCustomFields] = useState(false);
+    const [standardFieldKeys, setStandardFieldKeys] = useState([]); // extra std fields beyond first/last name
+    const [showAllFields, setShowAllFields] = useState(false);
 
     // edit modal
     const [editModalOpen, setEditModalOpen] = useState(false);
@@ -273,11 +275,24 @@ export default function SubscriberListView() {
                             );
                     });
                     setCustomFieldKeys(Array.from(keys));
+
+                    // Collect standard field keys seen in this page, excluding
+                    // first_name / last_name which are already shown in the Name column
+                    const stdKeys = new Set();
+                    data.subscribers.forEach((sub) => {
+                        if (sub.standard_fields) {
+                            Object.keys(sub.standard_fields).forEach((k) => {
+                                if (k !== "first_name" && k !== "last_name") stdKeys.add(k);
+                            });
+                        }
+                    });
+                    setStandardFieldKeys(Array.from(stdKeys));
                 } else {
                     setSubscribers([]);
                     setTotalPages(1);
                     setTotalCount(0);
                     setCustomFieldKeys([]);
+                    setStandardFieldKeys([]);
                 }
             } catch (e) {
                 console.error(e);
@@ -353,10 +368,17 @@ export default function SubscriberListView() {
         }
     };
 
-    // limit visible custom field columns to avoid unusable wide tables
-    const visibleCustomKeys = showAllCustomFields
-        ? customFieldKeys
-        : customFieldKeys.slice(0, 3);
+    // All extra columns = standard fields (beyond name) + custom fields
+    // Show first 4 total by default; "Show all" expands everything
+    const allExtraKeys = [
+        ...standardFieldKeys.map((k) => ({ key: k, src: "standard" })),
+        ...customFieldKeys.map((k) => ({ key: k, src: "custom" })),
+    ];
+    const VISIBLE_DEFAULT = 4;
+    const visibleExtraKeys = showAllFields
+        ? allExtraKeys
+        : allExtraKeys.slice(0, VISIBLE_DEFAULT);
+    const hiddenCount = allExtraKeys.length - VISIBLE_DEFAULT;
 
     return (
         <div className="space-y-5">
@@ -431,6 +453,7 @@ export default function SubscriberListView() {
                         <option value="inactive">Inactive</option>
                         <option value="bounced">Bounced</option>
                         <option value="unsubscribed">Unsubscribed</option>
+                        <option value="pending_confirmation">Pending confirmation</option>
                     </select>
 
                     {(searchTerm || statusFilter) && (
@@ -445,16 +468,14 @@ export default function SubscriberListView() {
                         </button>
                     )}
 
-                    {customFieldKeys.length > 3 && (
+                    {allExtraKeys.length > VISIBLE_DEFAULT && (
                         <button
-                            onClick={() =>
-                                setShowAllCustomFields(!showAllCustomFields)
-                            }
-                            className="ml-auto text-xs text-blue-600 hover:underline"
+                            onClick={() => setShowAllFields(!showAllFields)}
+                            className="ml-auto text-xs text-blue-600 hover:underline whitespace-nowrap"
                         >
-                            {showAllCustomFields
+                            {showAllFields
                                 ? "Fewer columns"
-                                : `+${customFieldKeys.length - 3} more fields`}
+                                : `+${hiddenCount} more field${hiddenCount !== 1 ? "s" : ""}`}
                         </button>
                     )}
                 </div>
@@ -498,12 +519,19 @@ export default function SubscriberListView() {
                                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                                         {t("common.status")}
                                     </th>
-                                    {visibleCustomKeys.map((k) => (
+                                    {visibleExtraKeys.map(({ key, src }) => (
                                         <th
-                                            key={k}
-                                            className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap max-w-[120px]"
+                                            key={`${src}:${key}`}
+                                            className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap max-w-[140px]"
                                         >
-                                            {k.replace(/_/g, " ")}
+                                            <span className="flex items-center gap-1">
+                                                {key.replace(/_/g, " ")}
+                                                {src === "custom" && (
+                                                    <span className="text-[9px] bg-purple-100 text-purple-600 px-1 rounded font-medium normal-case tracking-normal">
+                                                        custom
+                                                    </span>
+                                                )}
+                                            </span>
                                         </th>
                                     ))}
                                     <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">
@@ -543,20 +571,20 @@ export default function SubscriberListView() {
                                                  sub.status}
                                             </span>
                                         </td>
-                                        {visibleCustomKeys.map((k) => {
-                                            const display = fieldDisplay(
-                                                sub.custom_fields?.[k],
-                                            );
+                                        {visibleExtraKeys.map(({ key, src }) => {
+                                            const raw =
+                                                src === "standard"
+                                                    ? sub.standard_fields?.[key]
+                                                    : sub.custom_fields?.[key];
+                                            const display = fieldDisplay(raw);
                                             return (
                                                 <td
-                                                    key={k}
-                                                    className="px-4 py-3 text-gray-500 max-w-[120px] truncate"
+                                                    key={`${src}:${key}`}
+                                                    className="px-4 py-3 text-gray-500 max-w-[140px] truncate"
                                                     title={display ?? ""}
                                                 >
                                                     {display ?? (
-                                                        <span className="text-gray-300">
-                                                            —
-                                                        </span>
+                                                        <span className="text-gray-200">—</span>
                                                     )}
                                                 </td>
                                             );

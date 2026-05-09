@@ -84,20 +84,22 @@ function Pagination({ page, totalPages, total, onChange }) {
 }
 
 // ── OptInLinkButton ──────────────────────────────────────────────────────────
-// Shows a popover with two tabs:
-//   "Share link" — the hosted /subscribe/:listId page URL to copy/open
-//   "Embed"      — an HTML snippet to paste into any external webpage
+// Popover uses position:fixed + bounding-rect coords so it escapes
+// overflow:hidden / overflow-x:auto table containers without clipping.
 function OptInLinkButton({ listId }) {
   const [open, setOpen] = useState(false);
-  const [tab, setTab] = useState("link"); // "link" | "embed"
+  const [pos, setPos] = useState({ top: 0, left: 0 }); // fixed coords
+  const [tab, setTab] = useState("link");
   const [copied, setCopied] = useState(false);
-  const ref = useRef(null);
+  const btnRef = useRef(null);
+  const popRef = useRef(null);
 
   const origin = window.location.origin;
   const formUrl = `${origin}/subscribe/${encodeURIComponent(listId)}`;
   const apiUrl  = `${origin}/api/public/opt-in`;
 
-  const embedSnippet = `<!-- ZeniPost opt-in form for "${listId}" -->
+  const embedSnippet =
+`<!-- ZeniPost opt-in form for "${listId}" -->
 <form action="${apiUrl}" method="POST" style="max-width:420px">
   <input type="hidden" name="list_id" value="${listId}" />
   <input type="hidden" name="source"  value="embed" />
@@ -106,28 +108,56 @@ function OptInLinkButton({ listId }) {
     Email address *
     <input type="email" name="email" required
       placeholder="you@example.com"
-      style="display:block;width:100%;margin-top:4px;padding:8px;border:1px solid #d1d5db;border-radius:6px" />
+      style="display:block;width:100%;margin-top:4px;padding:8px;
+             border:1px solid #d1d5db;border-radius:6px" />
   </label>
 
-  <label style="display:flex;align-items:flex-start;gap:8px;font-size:13px;margin-bottom:12px">
-    <input type="checkbox" name="consent" value="true" required style="margin-top:3px" />
+  <label style="display:flex;align-items:flex-start;gap:8px;
+                font-size:13px;margin-bottom:12px">
+    <input type="checkbox" name="consent" value="true"
+           required style="margin-top:3px" />
     I agree to receive marketing emails and can unsubscribe at any time.
   </label>
 
   <button type="submit"
-    style="width:100%;padding:10px;background:#2563eb;color:#fff;border:none;border-radius:6px;font-size:14px;cursor:pointer">
+    style="width:100%;padding:10px;background:#2563eb;color:#fff;
+           border:none;border-radius:6px;font-size:14px;cursor:pointer">
     Subscribe
   </button>
 </form>`;
 
-  // Close on outside click
+  function toggle() {
+    if (open) { setOpen(false); return; }
+    const rect = btnRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const POPOVER_W = 384; // w-96
+    // prefer right-aligned; if it would overflow viewport, shift left
+    let left = rect.right - POPOVER_W;
+    if (left < 8) left = Math.min(rect.left, window.innerWidth - POPOVER_W - 8);
+    // prefer below the button; if too close to bottom, show above
+    let top = rect.bottom + 6;
+    if (top + 420 > window.innerHeight) top = rect.top - 420 - 6;
+    setPos({ top, left });
+    setTab("link");
+    setCopied(false);
+    setOpen(true);
+  }
+
+  // Close on outside click or scroll
   useEffect(() => {
     if (!open) return;
-    function handler(e) {
-      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
+    function close(e) {
+      if (
+        popRef.current && !popRef.current.contains(e.target) &&
+        btnRef.current && !btnRef.current.contains(e.target)
+      ) setOpen(false);
     }
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
+    document.addEventListener("mousedown", close);
+    document.addEventListener("scroll", () => setOpen(false), { capture: true, passive: true });
+    return () => {
+      document.removeEventListener("mousedown", close);
+      document.removeEventListener("scroll", close, { capture: true });
+    };
   }, [open]);
 
   function copyText(text) {
@@ -138,9 +168,10 @@ function OptInLinkButton({ listId }) {
   }
 
   return (
-    <div className="relative" ref={ref}>
+    <>
       <button
-        onClick={() => { setOpen((v) => !v); setTab("link"); }}
+        ref={btnRef}
+        onClick={toggle}
         title="Share opt-in form"
         className="px-3 py-1.5 text-xs font-medium border border-blue-200 rounded-lg hover:bg-blue-50 text-blue-600 transition-colors"
       >
@@ -148,7 +179,11 @@ function OptInLinkButton({ listId }) {
       </button>
 
       {open && (
-        <div className="absolute right-0 top-8 z-50 w-96 bg-white border border-gray-200 rounded-xl shadow-xl overflow-hidden">
+        <div
+          ref={popRef}
+          style={{ position: "fixed", top: pos.top, left: pos.left, zIndex: 9999 }}
+          className="w-96 bg-white border border-gray-200 rounded-xl shadow-2xl overflow-hidden"
+        >
           {/* tab bar */}
           <div className="flex border-b border-gray-100">
             {[["link", "Share link"], ["embed", "Embed code"]].map(([id, label]) => (
@@ -164,46 +199,51 @@ function OptInLinkButton({ listId }) {
                 {label}
               </button>
             ))}
+            <button
+              onClick={() => setOpen(false)}
+              className="px-3 text-gray-300 hover:text-gray-500 text-base leading-none"
+              title="Close"
+            >
+              ✕
+            </button>
           </div>
 
           <div className="p-4">
             {tab === "link" && (
               <>
-                <p className="text-xs text-gray-500 mb-2 leading-relaxed">
+                <p className="text-xs text-gray-500 mb-3 leading-relaxed">
                   Share this link with your audience. They'll see a branded signup form
-                  and receive a confirmation email after submitting.
+                  and receive a confirmation email to activate.
                 </p>
                 <div className="flex items-center gap-1.5 mb-3">
-                  <code className="flex-1 text-[11px] bg-gray-50 border border-gray-100 rounded-lg px-2.5 py-1.5 font-mono text-gray-700 truncate">
+                  <code className="flex-1 text-[11px] bg-gray-50 border border-gray-100 rounded-lg px-2.5 py-2 font-mono text-gray-700 truncate">
                     {formUrl}
                   </code>
                   <button
                     onClick={() => copyText(formUrl)}
-                    className="flex-shrink-0 text-xs px-2.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors"
+                    className="flex-shrink-0 text-xs px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors whitespace-nowrap"
                   >
-                    {copied ? "✓ Copied" : "Copy"}
+                    {copied ? "✓ Copied" : "Copy link"}
                   </button>
                 </div>
                 <a
                   href={formUrl}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="text-[11px] text-blue-600 hover:underline"
+                  className="inline-flex items-center gap-1 text-[11px] text-blue-600 hover:underline"
                 >
-                  Open form ↗
+                  Preview form ↗
                 </a>
               </>
             )}
 
             {tab === "embed" && (
               <>
-                <p className="text-xs text-gray-500 mb-2 leading-relaxed">
-                  Paste this HTML into any webpage to add a subscription form.
-                  Note: the form action posts directly to the API — no page reload needed
-                  if you handle the response via JavaScript.
+                <p className="text-xs text-gray-500 mb-3 leading-relaxed">
+                  Paste this HTML into any page. The form posts directly to your API.
                 </p>
                 <div className="relative">
-                  <pre className="text-[10px] bg-gray-50 border border-gray-100 rounded-lg p-3 font-mono text-gray-700 overflow-auto max-h-48 leading-relaxed whitespace-pre-wrap break-all">
+                  <pre className="text-[10px] bg-gray-50 border border-gray-100 rounded-lg p-3 font-mono text-gray-700 overflow-auto max-h-52 leading-relaxed whitespace-pre-wrap break-all">
                     {embedSnippet}
                   </pre>
                   <button
@@ -218,7 +258,7 @@ function OptInLinkButton({ listId }) {
           </div>
         </div>
       )}
-    </div>
+    </>
   );
 }
 
@@ -1582,7 +1622,7 @@ export default function Subscribers() {
                           }
                           className="px-3 py-1.5 text-xs font-medium border border-gray-200 rounded-lg hover:bg-gray-50 text-gray-600 transition-colors"
                         >
-                          {t('common.edit')}
+                          View / Edit
                         </button>
                         <button
                           onClick={() => handleExportList(list._id)}

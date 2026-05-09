@@ -771,20 +771,24 @@ async def process_upload_chunks(
                                 bypass_document_validation=True,
                             )
 
-                            # ✅ Calculate accurate stats
-                            chunk_stats["new_records"] += result.upserted_count
-                            chunk_stats["updated_records"] += result.modified_count
-                            chunk_stats["processed"] += (
-                                result.upserted_count + result.modified_count
+                            # ── Accurate, mutually-exclusive counters ─────────────
+                            # existing_in_batch: emails already in the DB for this list
+                            existing_in_batch = sum(
+                                1 for e in batch_emails
+                                if e in existing_emails and e in chunk_emails_processed
                             )
+                            truly_updated  = result.modified_count
+                            # True duplicates = existed AND data was identical (MongoDB
+                            # matched the doc but made no change → modified_count = 0)
+                            true_duplicates = max(0, existing_in_batch - truly_updated)
 
-                            # ✅ Count duplicates that were updated (existing records)
-                            for email in batch_emails:
-                                if (
-                                    email in existing_emails
-                                    and email in chunk_emails_processed
-                                ):
-                                    chunk_stats["duplicates"] += 1
+                            chunk_stats["new_records"]    += result.upserted_count
+                            chunk_stats["updated_records"] += truly_updated
+                            chunk_stats["duplicates"]      += true_duplicates
+                            # processed = every row that reached the DB (new + existing)
+                            chunk_stats["processed"] += (
+                                result.upserted_count + existing_in_batch
+                            )
 
                             logger.debug(
                                 f"Chunk {chunk_index + 1} batch: "
