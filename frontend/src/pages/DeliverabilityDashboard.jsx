@@ -252,7 +252,7 @@ export default function DeliverabilityDashboard() {
     setLoading(true);
     setError(null);
     try {
-      const res = await API.get(`/api/deliverability/health?days=${d}`);
+      const res = await API.get(`/deliverability/health?days=${d}`);
       setData(res.data);
     } catch (err) {
       setError(err?.response?.data?.detail || 'Failed to load deliverability data.');
