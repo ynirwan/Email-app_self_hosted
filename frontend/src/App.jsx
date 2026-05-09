@@ -30,6 +30,7 @@ import AutomationAnalytics from "./pages/AutomationAnalytics";
 import AutomationCampaignAnalytics from "./pages/AutomationCampaignAnalytics";
 import OptInForm from "./pages/OptInForm";
 import TrackingSettings from "./pages/TrackingSettings";
+import DeliverabilityDashboard from "./pages/DeliverabilityDashboard";
 
 // Wrapper: gives each edit session a unique key so React fully remounts the
 // AutomationBuilder when navigating between different edit routes (or create → edit).
@@ -101,6 +102,8 @@ const App = () => {
               path="/automation/analytics/:id"
               element={<AutomationCampaignAnalytics />}
             />
+
+            <Route path="deliverability" element={<DeliverabilityDashboard />} />
 
             {/* Settings with nested tabs */}
             <Route path="settings" element={<SettingsPage />}>

@@ -15,6 +15,7 @@ const PAGE_TITLES = {
   "/templates": { title: "Templates", icon: "📄" },
   "/automation": { title: "Automation", icon: "🤖" },
   "/automation/analytics": { title: "Automation Analytics", icon: "📊" },
+  "/deliverability": { title: "Deliverability Health", icon: "📬" },
   "/ab-testing": { title: "A/B Testing", icon: "⚖️ " },
   "/ab-testing/create": { title: "Create A/B Test", icon: "⚖️ " },
   "/audit": { title: "Audit Trail", icon: "📋" },

@@ -46,7 +46,8 @@ export default function Sidebar() {
         { to: "/campaigns",  label: t("nav.campaigns"),  icon: "📢", description: t("nav.campaigns.sub") },
         { to: "/templates",  label: t("nav.templates"),  icon: "📄", description: t("nav.templates.sub") },
         { to: "/ab-testing", label: t("nav.abTesting"),  icon: "⚖️ ", description: t("nav.abTesting.sub") },
-        { to: "/automation", label: t("nav.automation"), icon: "🤖", description: t("nav.automation.sub") },
+        { to: "/automation",     label: t("nav.automation"),     icon: "🤖", description: t("nav.automation.sub") },
+        { to: "/deliverability", label: t("nav.deliverability"), icon: "📬", description: t("nav.deliverability.sub") },
       ],
     },
     {

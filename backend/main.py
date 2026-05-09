@@ -138,6 +138,7 @@ from routes import (
     tracking,
     test_email,
     public_optin,
+    deliverability,
 )
 
 # ============================================
@@ -822,6 +823,13 @@ app.include_router(
 
 app.include_router(
     audit.router, prefix="/api/audit", tags=["audit"], dependencies=_auth_dep
+)
+
+app.include_router(
+    deliverability.router,
+    prefix="/api",
+    tags=["Deliverability"],
+    dependencies=_auth_dep,
 )
 
 logger.info(f"✅ {len(app.routes)} routes registered")
