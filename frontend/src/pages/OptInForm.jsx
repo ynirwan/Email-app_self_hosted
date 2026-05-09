@@ -135,14 +135,36 @@ export default function OptInForm() {
   const standardFields = listMeta?.standard_fields || [];
   const customFields = listMeta?.custom_fields || [];
 
+  // ── form_config with safe defaults ─────────────────────────────────────────
+  const cfg = listMeta?.form_config || {};
+  const btnColor    = cfg.button_color  || '#2563eb';
+  const btnText     = cfg.button_text   || 'Subscribe';
+  const formTitle   = cfg.form_title    || 'Subscribe';
+  const formSubtitle = cfg.form_subtitle || '';
+
+  // Derive a slightly darker shade for the hover state
+  function darken(hex) {
+    try {
+      const n = parseInt(hex.replace('#', ''), 16);
+      const r = Math.max(0, ((n >> 16) & 0xff) - 20);
+      const g = Math.max(0, ((n >> 8)  & 0xff) - 20);
+      const b = Math.max(0, ( n        & 0xff) - 20);
+      return `#${[r, g, b].map(x => x.toString(16).padStart(2, '0')).join('')}`;
+    } catch { return hex; }
+  }
+
   return (
     <Shell>
       {/* Header */}
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">Subscribe</h1>
-        <p className="text-sm text-gray-500 mt-1">
-          Join the <span className="font-medium text-gray-700">{listId}</span> mailing list.
-        </p>
+        <h1 className="text-2xl font-bold text-gray-900">{formTitle}</h1>
+        {formSubtitle ? (
+          <p className="text-sm text-gray-500 mt-1">{formSubtitle}</p>
+        ) : (
+          <p className="text-sm text-gray-500 mt-1">
+            Join the <span className="font-medium text-gray-700">{listId}</span> mailing list.
+          </p>
+        )}
       </div>
 
       {/* Error banner */}
@@ -209,8 +231,7 @@ export default function OptInForm() {
             onChange={e => setConsent(e.target.checked)}
             disabled={isSubmitting}
             required
-            className="mt-0.5 h-4 w-4 rounded border-gray-300 text-blue-600
-                       focus:ring-blue-500 cursor-pointer flex-shrink-0"
+            className="mt-0.5 h-4 w-4 rounded border-gray-300 cursor-pointer flex-shrink-0"
           />
           <label htmlFor="consent" className="text-sm text-gray-600 cursor-pointer leading-5">
             I agree to receive marketing emails and confirm I have read the privacy policy.
@@ -222,11 +243,15 @@ export default function OptInForm() {
         <button
           type="submit"
           disabled={isSubmitting}
-          className="w-full py-3 px-4 bg-blue-600 hover:bg-blue-700
-                     text-white text-sm font-semibold rounded-lg shadow-sm
-                     transition-colors focus:outline-none focus:ring-2
-                     focus:ring-offset-2 focus:ring-blue-500
+          style={{
+            backgroundColor: isSubmitting ? undefined : btnColor,
+            '--btn-hover-bg': darken(btnColor),
+          }}
+          className="w-full py-3 px-4 text-white text-sm font-semibold rounded-lg shadow-sm
+                     transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2
                      disabled:opacity-60 disabled:cursor-not-allowed mt-2"
+          onMouseEnter={e => { if (!isSubmitting) e.currentTarget.style.backgroundColor = darken(btnColor); }}
+          onMouseLeave={e => { if (!isSubmitting) e.currentTarget.style.backgroundColor = btnColor; }}
         >
           {isSubmitting ? (
             <span className="flex items-center justify-center gap-2">
@@ -238,7 +263,7 @@ export default function OptInForm() {
               </svg>
               Subscribing…
             </span>
-          ) : 'Subscribe'}
+          ) : btnText}
         </button>
       </form>
     </Shell>

@@ -84,22 +84,35 @@ function Pagination({ page, totalPages, total, onChange }) {
 }
 
 // ── OptInLinkButton ──────────────────────────────────────────────────────────
-// Popover uses position:fixed + bounding-rect coords so it escapes
-// overflow:hidden / overflow-x:auto table containers without clipping.
+// Popover uses position:fixed + bounding-rect so it escapes overflow:hidden/auto
+// table containers without clipping. Prefers to open ABOVE the trigger button.
 function OptInLinkButton({ listId }) {
-  const [open, setOpen] = useState(false);
-  const [pos, setPos] = useState({ top: 0, left: 0 }); // fixed coords
-  const [tab, setTab] = useState("link");
+  const [open, setOpen]     = useState(false);
+  const [pos, setPos]       = useState({ top: 0, left: 0 });
+  const [tab, setTab]       = useState("link");
   const [copied, setCopied] = useState(false);
   const btnRef = useRef(null);
   const popRef = useRef(null);
+
+  // ── form config state ──────────────────────────────────────────────────────
+  const [cfg, setCfg]         = useState({ button_color: "#2563eb", button_text: "Subscribe", form_title: "Subscribe", form_subtitle: "" });
+  const [cfgSaving, setCfgSaving] = useState(false);
+  const [cfgSaved,  setCfgSaved]  = useState(false);
 
   const origin = window.location.origin;
   const formUrl = `${origin}/subscribe/${encodeURIComponent(listId)}`;
   const apiUrl  = `${origin}/api/public/opt-in`;
 
+  // Load existing form config when popover opens
+  useEffect(() => {
+    if (!open) return;
+    API.get(`/subscribers/lists/${encodeURIComponent(listId)}/form-config`)
+      .then(r => setCfg(r.data))
+      .catch(() => {}); // silently ignore; defaults are fine
+  }, [open, listId]);
+
   const embedSnippet =
-`<!-- ZeniPost opt-in form for "${listId}" -->
+`<!-- Opt-in form for "${listId}" -->
 <form action="${apiUrl}" method="POST" style="max-width:420px">
   <input type="hidden" name="list_id" value="${listId}" />
   <input type="hidden" name="source"  value="embed" />
@@ -120,23 +133,29 @@ function OptInLinkButton({ listId }) {
   </label>
 
   <button type="submit"
-    style="width:100%;padding:10px;background:#2563eb;color:#fff;
+    style="width:100%;padding:10px;background:${cfg.button_color};color:#fff;
            border:none;border-radius:6px;font-size:14px;cursor:pointer">
-    Subscribe
+    ${cfg.button_text || "Subscribe"}
   </button>
 </form>`;
+
+  const POPOVER_H = 460;
+  const POPOVER_W = 400;
 
   function toggle() {
     if (open) { setOpen(false); return; }
     const rect = btnRef.current?.getBoundingClientRect();
     if (!rect) return;
-    const POPOVER_W = 384; // w-96
-    // prefer right-aligned; if it would overflow viewport, shift left
+    // Prefer ABOVE the button; fall back to below only if not enough space above
+    let top;
+    if (rect.top - POPOVER_H - 8 >= 0) {
+      top = rect.top - POPOVER_H - 6;
+    } else {
+      top = rect.bottom + 6;
+    }
+    // Right-align with button; shift left if it would overflow viewport
     let left = rect.right - POPOVER_W;
     if (left < 8) left = Math.min(rect.left, window.innerWidth - POPOVER_W - 8);
-    // prefer below the button; if too close to bottom, show above
-    let top = rect.bottom + 6;
-    if (top + 420 > window.innerHeight) top = rect.top - 420 - 6;
     setPos({ top, left });
     setTab("link");
     setCopied(false);
@@ -167,6 +186,19 @@ function OptInLinkButton({ listId }) {
     });
   }
 
+  async function saveConfig() {
+    setCfgSaving(true);
+    try {
+      await API.patch(`/subscribers/lists/${encodeURIComponent(listId)}/form-config`, cfg);
+      setCfgSaved(true);
+      setTimeout(() => setCfgSaved(false), 2500);
+    } catch {
+      // noop — user can retry
+    } finally {
+      setCfgSaving(false);
+    }
+  }
+
   return (
     <>
       <button
@@ -181,12 +213,12 @@ function OptInLinkButton({ listId }) {
       {open && (
         <div
           ref={popRef}
-          style={{ position: "fixed", top: pos.top, left: pos.left, zIndex: 9999 }}
-          className="w-96 bg-white border border-gray-200 rounded-xl shadow-2xl overflow-hidden"
+          style={{ position: "fixed", top: pos.top, left: pos.left, zIndex: 9999, width: POPOVER_W }}
+          className="bg-white border border-gray-200 rounded-xl shadow-2xl overflow-hidden"
         >
           {/* tab bar */}
           <div className="flex border-b border-gray-100">
-            {[["link", "Share link"], ["embed", "Embed code"]].map(([id, label]) => (
+            {[["link", "Share link"], ["embed", "Embed"], ["style", "Customise"]].map(([id, label]) => (
               <button
                 key={id}
                 onClick={() => { setTab(id); setCopied(false); }}
@@ -203,17 +235,16 @@ function OptInLinkButton({ listId }) {
               onClick={() => setOpen(false)}
               className="px-3 text-gray-300 hover:text-gray-500 text-base leading-none"
               title="Close"
-            >
-              ✕
-            </button>
+            >✕</button>
           </div>
 
           <div className="p-4">
+            {/* ── Share link tab ── */}
             {tab === "link" && (
               <>
                 <p className="text-xs text-gray-500 mb-3 leading-relaxed">
-                  Share this link with your audience. They'll see a branded signup form
-                  and receive a confirmation email to activate.
+                  Share this link with your audience. They'll see your branded signup
+                  form and receive a confirmation email to activate.
                 </p>
                 <div className="flex items-center gap-1.5 mb-3">
                   <code className="flex-1 text-[11px] bg-gray-50 border border-gray-100 rounded-lg px-2.5 py-2 font-mono text-gray-700 truncate">
@@ -237,10 +268,11 @@ function OptInLinkButton({ listId }) {
               </>
             )}
 
+            {/* ── Embed tab ── */}
             {tab === "embed" && (
               <>
                 <p className="text-xs text-gray-500 mb-3 leading-relaxed">
-                  Paste this HTML into any page. The form posts directly to your API.
+                  Paste this HTML into any page. Styling follows your Customise settings.
                 </p>
                 <div className="relative">
                   <pre className="text-[10px] bg-gray-50 border border-gray-100 rounded-lg p-3 font-mono text-gray-700 overflow-auto max-h-52 leading-relaxed whitespace-pre-wrap break-all">
@@ -254,6 +286,110 @@ function OptInLinkButton({ listId }) {
                   </button>
                 </div>
               </>
+            )}
+
+            {/* ── Customise tab ── */}
+            {tab === "style" && (
+              <div className="space-y-4">
+                <p className="text-xs text-gray-500 leading-relaxed">
+                  These settings are saved per list and applied instantly to the hosted form.
+                </p>
+
+                {/* Form title */}
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">Form title</label>
+                  <input
+                    type="text"
+                    value={cfg.form_title}
+                    onChange={e => setCfg(p => ({ ...p, form_title: e.target.value }))}
+                    maxLength={100}
+                    placeholder="Subscribe"
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+
+                {/* Subtitle */}
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">Subtitle / description <span className="text-gray-400">(optional)</span></label>
+                  <input
+                    type="text"
+                    value={cfg.form_subtitle}
+                    onChange={e => setCfg(p => ({ ...p, form_subtitle: e.target.value }))}
+                    maxLength={200}
+                    placeholder="Leave blank to show the list name"
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+
+                {/* Button text */}
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">Button text</label>
+                  <input
+                    type="text"
+                    value={cfg.button_text}
+                    onChange={e => setCfg(p => ({ ...p, button_text: e.target.value }))}
+                    maxLength={50}
+                    placeholder="Subscribe"
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+
+                {/* Button color */}
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">Button colour</label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="color"
+                      value={cfg.button_color}
+                      onChange={e => setCfg(p => ({ ...p, button_color: e.target.value }))}
+                      className="h-9 w-14 cursor-pointer rounded border border-gray-200 p-0.5"
+                    />
+                    <input
+                      type="text"
+                      value={cfg.button_color}
+                      onChange={e => {
+                        const v = e.target.value;
+                        if (/^#[0-9a-fA-F]{0,6}$/.test(v)) setCfg(p => ({ ...p, button_color: v }));
+                      }}
+                      maxLength={7}
+                      className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                    {/* Quick colour presets */}
+                    <div className="flex gap-1">
+                      {["#2563eb","#16a34a","#dc2626","#7c3aed","#ea580c","#0891b2"].map(c => (
+                        <button
+                          key={c}
+                          title={c}
+                          onClick={() => setCfg(p => ({ ...p, button_color: c }))}
+                          style={{ background: c }}
+                          className={`w-5 h-5 rounded-full border-2 transition-transform hover:scale-110 ${cfg.button_color === c ? 'border-gray-800' : 'border-transparent'}`}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Preview */}
+                <div className="pt-1">
+                  <p className="text-xs text-gray-400 mb-2">Preview</p>
+                  <button
+                    style={{ backgroundColor: cfg.button_color }}
+                    className="w-full py-2.5 text-white text-sm font-semibold rounded-lg"
+                    disabled
+                  >
+                    {cfg.button_text || "Subscribe"}
+                  </button>
+                </div>
+
+                {/* Save */}
+                <button
+                  onClick={saveConfig}
+                  disabled={cfgSaving}
+                  className="w-full py-2 bg-gray-900 hover:bg-gray-700 text-white text-xs font-semibold rounded-lg transition-colors disabled:opacity-50"
+                >
+                  {cfgSaving ? "Saving…" : cfgSaved ? "✓ Saved!" : "Save changes"}
+                </button>
+              </div>
             )}
           </div>
         </div>

@@ -349,6 +349,7 @@ async def get_list_meta(list_id: str):
             {"name": k, "type": v.get("type", "string") if isinstance(v, dict) else "string"}
             for k, v in registry.get("custom", {}).items()
         ],
+        "form_config": registry.get("form_config", {}),
     }
 
 

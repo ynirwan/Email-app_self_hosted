@@ -3004,3 +3004,40 @@ async def update_list_registry(list_name: str, registry: ListFieldRegistry):
     doc["updated_at"] = datetime.utcnow()
     await col.update_one({"list_name": list_name}, {"$set": doc}, upsert=True)
     return {"success": True, "list_name": list_name}
+
+
+# ── Form config endpoints ──────────────────────────────────────────────────────
+
+class FormConfig(BaseModel):
+    """Cosmetic customisation options for the public opt-in form."""
+    button_color: str = Field(default="#2563eb", max_length=20)
+    button_text: str  = Field(default="Subscribe", max_length=50)
+    form_title: str   = Field(default="Subscribe", max_length=100)
+    form_subtitle: str = Field(default="", max_length=200)
+
+
+@router.get("/lists/{list_name}/form-config")
+async def get_list_form_config(list_name: str):
+    """Return the current form customisation config for a list."""
+    from database import get_lists_collection
+    col = get_lists_collection()
+    doc = await col.find_one({"list_name": list_name}, {"form_config": 1})
+    if not doc or not doc.get("form_config"):
+        return FormConfig().model_dump()
+    return doc["form_config"]
+
+
+@router.patch("/lists/{list_name}/form-config")
+async def update_list_form_config(list_name: str, config: FormConfig):
+    """
+    Save cosmetic customisation for the public opt-in form.
+    Only persists known / validated fields — prevents arbitrary key injection.
+    """
+    from database import get_lists_collection
+    col = get_lists_collection()
+    await col.update_one(
+        {"list_name": list_name},
+        {"$set": {"form_config": config.model_dump(), "updated_at": datetime.utcnow()}},
+        upsert=True,
+    )
+    return {"success": True, "list_name": list_name, "form_config": config.model_dump()}
