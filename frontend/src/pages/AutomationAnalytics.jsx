@@ -43,16 +43,35 @@ export default function AutomationAnalytics() {
   const loadAnalytics = useCallback(async () => {
     try {
       setLoading(true); setError(null);
-      const [overviewRes, performanceRes, triggerRes, realtimeRes] = await Promise.all([
+
+      // Use allSettled so that one failing endpoint doesn't blank the entire page.
+      const [overviewRes, performanceRes, triggerRes, realtimeRes] = await Promise.allSettled([
         API.get(`/automation/analytics/overview?days=${selectedPeriod}`),
         API.get(`/automation/analytics/rules/performance?days=${selectedPeriod}&limit=10`),
         API.get(`/automation/analytics/triggers/comparison?days=${selectedPeriod}`),
         API.get('/automation/analytics/realtime'),
       ]);
-      setOverview(overviewRes.data);
-      setRulesPerformance(performanceRes.data.rules || []);
-      setTriggerComparison(triggerRes.data.triggers || []);
-      setRealtimeStats(realtimeRes.data);
+
+      if (overviewRes.status === 'fulfilled') {
+        setOverview(overviewRes.value.data);
+      } else {
+        // Core overview failed — surface a page-level error
+        setError(t("automation.analytics.loadError"));
+      }
+
+      if (performanceRes.status === 'fulfilled') {
+        setRulesPerformance(performanceRes.value.data?.rules || []);
+      }
+
+      if (triggerRes.status === 'fulfilled') {
+        setTriggerComparison(triggerRes.value.data?.triggers || []);
+      }
+
+      if (realtimeRes.status === 'fulfilled') {
+        setRealtimeStats(realtimeRes.value.data);
+      }
+      // If realtime fails, realtimeStats stays null and the live banner is simply hidden.
+
     } catch {
       setError(t("automation.analytics.loadError"));
     } finally { setLoading(false); }
@@ -60,12 +79,14 @@ export default function AutomationAnalytics() {
 
   useEffect(() => {
     loadAnalytics();
+    // Periodically refresh only the realtime section — failures are silent to
+    // avoid flashing error states mid-session.
     const interval = setInterval(async () => {
       try {
         const res = await API.get('/automation/analytics/realtime');
-        setRealtimeStats(res.data);
-      } catch { /* silent */ }
-    }, 30000);
+        setRealtimeStats(res.data ?? null);
+      } catch { /* intentionally silent — stale realtime data is acceptable */ }
+    }, 30_000);
     return () => clearInterval(interval);
   }, [loadAnalytics]);
 

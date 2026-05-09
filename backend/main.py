@@ -16,6 +16,22 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.base import BaseHTTPMiddleware
 
 # ============================================
+# GLOBAL UTC DATETIME FIX
+# ============================================
+# FastAPI's default jsonable_encoder calls datetime.isoformat() which produces
+# strings WITHOUT a timezone marker, e.g. "2026-05-08T09:00:00".
+# JavaScript's new Date() treats such strings as LOCAL time, so IST users
+# (UTC+5:30) see all timestamps shifted by -5:30h.
+# Patching ENCODERS_BY_TYPE here fixes this app-wide: every route that returns
+# a dict containing a naive UTC datetime will now emit "...Z" instead.
+from fastapi import encoders as _fe
+_fe.ENCODERS_BY_TYPE[datetime] = lambda dt: (
+    dt.strftime("%Y-%m-%dT%H:%M:%S.%f") + "Z"
+    if dt.tzinfo is None
+    else dt.isoformat()
+)
+
+# ============================================
 # PRODUCTION IMPORTS WITH FALLBACKS
 # ============================================
 
@@ -121,6 +137,7 @@ from routes import (
     unsubscribe,
     tracking,
     test_email,
+    public_optin,
 )
 
 # ============================================
@@ -692,7 +709,7 @@ async def root():
 # ============================================
 # REGISTER APPLICATION ROUTES
 # ============================================
-# Public routes: /api/auth (login/register), /api/webhooks, /api/unsubscribe
+# Public routes: /api/auth (login/register), /api/webhooks, /api/unsubscribe, /api/public/*
 # All other routes require a valid JWT via Depends(get_current_user)
 
 _auth_dep = [Depends(get_current_user)]
@@ -705,6 +722,9 @@ app.include_router(webhooks.router, prefix="/api", tags=["Webhooks"])
 
 # Unsubscribe — public (clicked from email, no user session)
 app.include_router(unsubscribe.router, prefix="/api", tags=["Unsubscribe"])
+
+# Public opt-in — public (submitted from embedded form, no user session)
+app.include_router(public_optin.router, prefix="/api", tags=["Public Opt-In"])
 
 # Tracking — public (pixel/click/unsubscribe-confirm, hit directly from emails)
 # Routes: GET /t/o/{token}.gif  GET /t/c/{token}  GET /t/verify/{token}  POST /t/u/{token}

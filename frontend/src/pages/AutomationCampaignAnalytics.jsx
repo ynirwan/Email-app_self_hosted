@@ -6,28 +6,30 @@ import {
 } from "lucide-react";
 import { useParams, useNavigate } from "react-router-dom";
 import API from "../api";
+import { useSettings } from "../contexts/SettingsContext";
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
 const fmt = (n) => Number(n ?? 0).toLocaleString();
 
-function relTime(iso) {
+/**
+ * Returns a relative time string ("2h ago") falling back to a formatted date
+ * for entries older than a week. Accepts the user's formatDateTime function
+ * from useSettings() so the fallback respects their configured timezone.
+ */
+function relTime(iso, formatFn) {
   if (!iso) return "—";
   const diff = Date.now() - new Date(iso).getTime();
   if (diff < 60_000) return "just now";
   if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
   if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`;
   if (diff < 7 * 86_400_000) return `${Math.floor(diff / 86_400_000)}d ago`;
-  // Older than a week: show actual date
-  return fmtDate(iso);
+  return formatFn ? formatFn(iso) : new Date(iso).toLocaleString();
 }
 
-function fmtDate(iso) {
+function fmtDateWith(iso, formatFn) {
   if (!iso) return "—";
-  return new Date(iso).toLocaleString(undefined, {
-    month: "short", day: "numeric",
-    hour: "2-digit", minute: "2-digit",
-  });
+  return formatFn ? formatFn(iso) : new Date(iso).toLocaleString();
 }
 
 function Spinner() {
@@ -218,6 +220,7 @@ function StepsTab({ ruleId }) {
 // ─── Tab: Active Workflows ───────────────────────────────────────────────────
 
 function WorkflowsTab({ ruleId }) {
+  const { formatDateTime } = useSettings();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -299,11 +302,11 @@ function WorkflowsTab({ ruleId }) {
                     <td className="px-4 py-3 text-center text-xs tabular-nums text-gray-600">
                       {w.emails_sent}
                     </td>
-                    <td className="px-4 py-3 text-xs text-gray-500" title={fmtDate(w.started_at)}>
-                      {relTime(w.started_at)}
+                    <td className="px-4 py-3 text-xs text-gray-500" title={fmtDateWith(w.started_at, formatDateTime)}>
+                      {relTime(w.started_at, formatDateTime)}
                     </td>
-                    <td className="px-4 py-3 text-xs text-gray-500" title={fmtDate(w.completed_at)}>
-                      {w.completed_at ? relTime(w.completed_at) : "—"}
+                    <td className="px-4 py-3 text-xs text-gray-500" title={fmtDateWith(w.completed_at, formatDateTime)}>
+                      {w.completed_at ? relTime(w.completed_at, formatDateTime) : "—"}
                     </td>
                     <td className="px-4 py-3 text-xs text-red-600 max-w-[160px]">
                       {w.error ? (
@@ -325,6 +328,7 @@ function WorkflowsTab({ ruleId }) {
 // ─── Tab: Email Logs ─────────────────────────────────────────────────────────
 
 function EmailLogsTab({ ruleId }) {
+  const { formatDateTime } = useSettings();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -424,8 +428,8 @@ function EmailLogsTab({ ruleId }) {
                       <td className="px-4 py-3 text-xs text-gray-500">
                         {log.provider || "—"}
                       </td>
-                      <td className="px-4 py-3 text-xs text-gray-500" title={fmtDate(log.sent_at)}>
-                        {log.sent_at ? relTime(log.sent_at) : relTime(log.created_at)}
+                      <td className="px-4 py-3 text-xs text-gray-500" title={fmtDateWith(log.sent_at, formatDateTime)}>
+                        {log.sent_at ? relTime(log.sent_at, formatDateTime) : relTime(log.created_at, formatDateTime)}
                       </td>
                       <td className="px-4 py-3 text-xs text-red-600 max-w-[200px]">
                         {log.error_message ? (
@@ -467,7 +471,7 @@ function EmailLogsTab({ ruleId }) {
                             )}
                             <div>
                               <span className="text-gray-400 uppercase tracking-wide text-[10px]">Created</span>
-                              <p className="text-gray-700 mt-0.5">{fmtDate(log.created_at)}</p>
+                              <p className="text-gray-700 mt-0.5">{fmtDateWith(log.created_at, formatDateTime)}</p>
                             </div>
                           </div>
                         </td>

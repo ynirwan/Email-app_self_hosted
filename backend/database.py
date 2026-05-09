@@ -556,6 +556,10 @@ async def ensure_indexes():
         await subscribers.create_index([("list", ASCENDING)])
         await subscribers.create_index([("status", ASCENDING)])
         await subscribers.create_index([("created_at", DESCENDING)])
+        # Sparse index for confirmation tokens — only present on pending_confirmation docs
+        await subscribers.create_index(
+            [("confirmation_token", ASCENDING)], sparse=True, unique=True
+        )
 
         # Campaigns indexes
         campaigns = get_campaigns_collection()
@@ -651,6 +655,9 @@ def ensure_indexes_sync():
         )
         db.subscribers.create_index([("list", ASCENDING)])
         db.subscribers.create_index([("status", ASCENDING)])
+        db.subscribers.create_index(
+            [("confirmation_token", ASCENDING)], sparse=True, unique=True
+        )
 
         # Campaigns indexes
         db.campaigns.create_index([("status", ASCENDING)])

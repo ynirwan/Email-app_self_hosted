@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import API from "../api";
+import { useSettings } from "../contexts/SettingsContext";
 
 const ERROR_TYPE_LABELS = {
   auth_failed:           "Auth Failed",
@@ -37,6 +38,7 @@ export default function ProviderErrorBanner({
   onResumed,            // callback after resume
 }) {
   const navigate = useNavigate();
+  const { formatDateTime } = useSettings();
 
   const [senderName,  setSenderName]  = useState("");
   const [senderEmail, setSenderEmail] = useState("");
@@ -140,7 +142,7 @@ export default function ProviderErrorBanner({
               {smtp_code && <p><span className="text-gray-500">SMTP code:</span> {smtp_code}</p>}
               <p className="break-all"><span className="text-gray-500">Raw error:</span> {raw_message || "—"}</p>
               {detected_at && (
-                <p><span className="text-gray-500">Detected:</span> {new Date(detected_at).toLocaleString()}</p>
+                <p><span className="text-gray-500">Detected:</span> {formatDateTime(detected_at)}</p>
               )}
             </div>
           </details>

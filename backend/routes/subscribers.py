@@ -579,6 +579,33 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, List, Tuple
 
 
+async def _append_import_errors(jobs_collection, job_id: str, errors: list):
+    """
+    Append per-row import errors to the job document.
+    Capped at 200 entries to prevent unbounded document growth.
+    Each error dict: {"email": str, "row": int, "reason": str}
+    Uses $push + $slice so only the last 200 errors are retained (FIFO cap).
+    """
+    if not errors:
+        return
+    try:
+        await jobs_collection.update_one(
+            {"_id": job_id},
+            {
+                "$push": {
+                    "import_errors": {
+                        "$each": errors,
+                        "$slice": -200,
+                    }
+                },
+                "$inc": {"failed_records": len(errors)},
+                "$set": {"updated_at": datetime.utcnow()},
+            },
+        )
+    except Exception as e:
+        logger.warning(f"Failed to append import errors for job {job_id}: {e}")
+
+
 async def process_upload_chunks(
     job_id: str, list_name: str, chunk_files: List[str], total_records: int
 ) -> int:
@@ -646,13 +673,24 @@ async def process_upload_chunks(
                     batch = chunk_subscribers[i : i + batch_size]
                     operations = []
                     batch_emails = []
+                    row_errors = []  # Collect per-row errors; flushed after each batch
 
                     for subscriber_data in batch:
-                        email = subscriber_data.get("email")
+                        email = subscriber_data.get("email", "")
+                        row_num = subscriber_data.get("_row", i + batch.index(subscriber_data))
+
                         if not email:
+                            row_errors.append({"email": "", "row": row_num, "reason": "missing email"})
+                            chunk_stats["errors"] += 1
                             continue
 
                         email = email.lower().strip()
+
+                        if not re.match(r"[^@]+@[^@]+\.[^@]+", email):
+                            row_errors.append({"email": email, "row": row_num, "reason": "invalid email format"})
+                            chunk_stats["errors"] += 1
+                            continue
+
                         batch_emails.append(email)
 
                         # ✅ Track duplicates within the same chunk
@@ -760,6 +798,10 @@ async def process_upload_chunks(
                                 f"Batch error in chunk {chunk_index + 1}: {batch_error}"
                             )
                             chunk_stats["errors"] += len(operations)
+
+                    # Flush row-level errors to the job document after each batch
+                    if row_errors:
+                        await _append_import_errors(jobs_collection, job_id, row_errors)
 
                 logger.info(
                     f"✅ Completed chunk {chunk_index + 1}: "
@@ -1040,9 +1082,16 @@ async def get_job_status():
         jobs_collection = get_jobs_collection()
         subscribers_collection = get_subscribers_collection()
 
-        cleanup_cutoff = datetime.utcnow() - timedelta(minutes=5)
+        # Keep completed/partially_completed jobs for 24 hours so the summary
+        # card remains queryable until the next day.  Use completion_time
+        # (set at end of processing) rather than updated_at to avoid edge cases
+        # where a background heartbeat nudges updated_at after completion.
+        cleanup_cutoff = datetime.utcnow() - timedelta(hours=24)
         await jobs_collection.delete_many(
-            {"status": "completed", "updated_at": {"$lt": cleanup_cutoff}}
+            {
+                "status": {"$in": ["completed", "partially_completed"]},
+                "completion_time": {"$lt": cleanup_cutoff},
+            }
         )
 
         cursor = jobs_collection.find({}, sort=[("created_at", -1)], limit=50)
@@ -1121,6 +1170,86 @@ async def get_job_status():
     except Exception as e:
         logger.error(f"Get job status failed: {e}")
         raise HTTPException(status_code=500, detail="Failed to get job statuses")
+
+
+@router.get("/jobs/{job_id}/summary")
+async def get_import_job_summary(job_id: str):
+    """
+    Returns a structured import summary for a given job_id.
+    Safe to poll during processing — returns partial data while running.
+    All response fields are stable across job states so the UI can render
+    progressively without branching on status.
+    """
+    try:
+        jobs_collection = get_jobs_collection()
+        job = await jobs_collection.find_one({"job_id": job_id})
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+
+        job_status       = job.get("status", "unknown")
+        total            = job.get("total_records", 0)
+        processed        = job.get("processed_records", 0)
+        new_recs         = job.get("new_records", 0)
+        updated          = job.get("updated_records", 0)
+        dupes            = job.get("duplicate_records", 0)
+        failed           = job.get("failed_records", 0)
+        progress         = job.get("progress", 0.0)
+
+        # Unaccounted rows = total - (new + updated + dupes + failed); floor at 0
+        unaccounted = max(0, total - new_recs - updated - dupes - failed)
+
+        breakdown = [
+            {"label": "New subscribers", "count": new_recs,  "color": "green"},
+            {"label": "Updated",         "count": updated,   "color": "blue"},
+            {"label": "Duplicates",      "count": dupes,     "color": "yellow"},
+            {"label": "Failed rows",     "count": failed,    "color": "red"},
+        ]
+        if unaccounted > 0 and job_status not in ("completed", "partially_completed"):
+            breakdown.append({"label": "Pending", "count": unaccounted, "color": "gray"})
+
+        created_at      = job.get("created_at")
+        completion_time = job.get("completion_time")
+        elapsed_seconds = None
+        if created_at and completion_time:
+            elapsed_seconds = (completion_time - created_at).total_seconds()
+        elif created_at:
+            elapsed_seconds = (datetime.utcnow() - created_at).total_seconds()
+
+        return {
+            "job_id":      job_id,
+            "list_name":   job.get("list_name"),
+            "status":      job_status,
+            "progress":    round(progress, 1),
+            # Core counters
+            "total_input": total,
+            "processed":   processed,
+            "new_records": new_recs,
+            "updated":     updated,
+            "duplicates":  dupes,
+            "failed":      failed,
+            # Rates (percentages)
+            "duplicate_rate": round((dupes  / total * 100) if total else 0, 1),
+            "failure_rate":   round((failed / total * 100) if total else 0, 1),
+            "success_rate":   round(((new_recs + updated) / total * 100) if total else 0, 1),
+            # Performance
+            "records_per_second": job.get("final_records_per_second") or job.get("records_per_second", 0),
+            "elapsed_seconds":    round(elapsed_seconds, 1) if elapsed_seconds else None,
+            "processing_method":  job.get("processing_method", "standard"),
+            # Visual breakdown bar
+            "breakdown": breakdown,
+            # Per-row errors (capped at 200 in _append_import_errors)
+            "import_errors":    job.get("import_errors", []),
+            "has_more_errors":  failed > 200,
+            # Timestamps (serialised as UTC by the global ENCODERS_BY_TYPE patch)
+            "created_at":      created_at,
+            "completion_time": completion_time,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to retrieve import summary for job {job_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve import summary")
 
 
 # ✅ FIXED: Remove 'self' parameter from all helper functions

@@ -74,12 +74,40 @@ export default function AutomationDashboard() {
 
   const setRowBusy = (id, v) => setActionLoading((p) => ({ ...p, [id]: v }));
 
+  // Open/click rate averages come from the analytics performance endpoint,
+  // not the rules list (which doesn't carry those fields).
+  const [rateStats, setRateStats] = useState({ avgOpen: 0, avgClick: 0 });
+
   const fetchAutomations = useCallback(async () => {
     try {
       setLoading(true);
-      const response = await API.get("/automation/rules");
-      const data = response?.data?.rules || response?.data || [];
-      setAutomations(Array.isArray(data) ? data : []);
+
+      // Fetch rules + performance in parallel; either can fail independently.
+      const [rulesRes, perfRes] = await Promise.allSettled([
+        API.get("/automation/rules"),
+        API.get("/automation/analytics/rules/performance?days=30&limit=100"),
+      ]);
+
+      // ── Rules list ────────────────────────────────────────────────────────
+      if (rulesRes.status === "fulfilled") {
+        const data = rulesRes.value?.data?.rules || rulesRes.value?.data || [];
+        setAutomations(Array.isArray(data) ? data : []);
+      } else {
+        toast("Failed to load automations", "error");
+        setAutomations([]);
+      }
+
+      // ── Open / click rate averages ────────────────────────────────────────
+      if (perfRes.status === "fulfilled") {
+        const perfRules = perfRes.value?.data?.rules || [];
+        if (perfRules.length > 0) {
+          const avgOpen  = perfRules.reduce((s, r) => s + (r.open_rate  || 0), 0) / perfRules.length;
+          const avgClick = perfRules.reduce((s, r) => s + (r.click_rate || 0), 0) / perfRules.length;
+          setRateStats({ avgOpen, avgClick });
+        }
+      }
+      // If performance fetch fails, rateStats stays at {0, 0} — non-fatal.
+
     } catch {
       toast("Failed to load automations", "error");
       setAutomations([]);
@@ -166,23 +194,17 @@ export default function AutomationDashboard() {
 
   const stats = useMemo(
     () => ({
-      total: automations.length,
-      active: automations.filter((a) => a.status === "active").length,
-      paused: automations.filter((a) => a.status === "paused").length,
-      draft: automations.filter((a) => a.status === "draft").length,
+      total:     automations.length,
+      active:    automations.filter((a) => a.status === "active").length,
+      paused:    automations.filter((a) => a.status === "paused").length,
+      draft:     automations.filter((a) => a.status === "draft").length,
+      // totalSent is stored on each rule document and returned by the list endpoint
       totalSent: automations.reduce((s, a) => s + (a.emails_sent || 0), 0),
-      avgOpen:
-        automations.length > 0
-          ? automations.reduce((s, a) => s + (a.open_rate || 0), 0) /
-            automations.length
-          : 0,
-      avgClick:
-        automations.length > 0
-          ? automations.reduce((s, a) => s + (a.click_rate || 0), 0) /
-            automations.length
-          : 0,
+      // open/click rates come from the analytics endpoint (not on the list payload)
+      avgOpen:  rateStats.avgOpen,
+      avgClick: rateStats.avgClick,
     }),
-    [automations],
+    [automations, rateStats],
   );
 
   const filtered = useMemo(() => {

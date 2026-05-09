@@ -11,6 +11,49 @@ import { Link, useNavigate } from "react-router-dom";
 import API from "../api";
 import { useSettings } from "../contexts/SettingsContext";
 
+/**
+ * Convert a naive date + time string to a UTC Date, interpreting the input
+ * as being in the given IANA timezone (e.g. "Asia/Kolkata").
+ * Uses the Intl offset-finding trick — no external library needed.
+ *
+ *   naiveToUTC("2026-05-08", "14:30", "Asia/Kolkata")
+ *   → Date object for 2026-05-08T09:00:00Z  (14:30 IST = 09:00 UTC)
+ */
+function naiveToUTC(dateStr, timeStr, ianaTz) {
+  // Step 1: Treat the naive datetime as if it were UTC (approximation)
+  const approx = new Date(`${dateStr}T${timeStr}:00Z`);
+
+  // Step 2: Find what the target timezone's wall-clock time is at this UTC instant
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: ianaTz,
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit",
+    hour12: false,
+  }).formatToParts(approx).reduce((acc, p) => { acc[p.type] = p.value; return acc; }, {});
+
+  // Step 3: Compute how far the TZ wall-clock is from our target naive time
+  const wantedMs  = approx.getTime(); // naive parsed as UTC
+  const gotMs     = new Date(
+    `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}:${parts.second}Z`
+  ).getTime(); // TZ wall-clock treated as UTC for arithmetic only
+  const offsetMs  = wantedMs - gotMs; // e.g. IST → +19800000 (5h30m)
+
+  // Step 4: Correct the approximation
+  return new Date(approx.getTime() + offsetMs);
+}
+
+/** Return a human-readable short timezone label, e.g. "IST (Asia/Kolkata)" */
+function tzLabel(ianaTz) {
+  try {
+    const abbr = new Intl.DateTimeFormat("en-US", {
+      timeZone: ianaTz, timeZoneName: "short",
+    }).formatToParts(new Date()).find((p) => p.type === "timeZoneName")?.value ?? ianaTz;
+    return `${abbr} (${ianaTz})`;
+  } catch {
+    return ianaTz;
+  }
+}
+
 // ── Status badge ──────────────────────────────────────────────────────────────
 function StatusBadge({ status, pauseReason, t }) {
   const isPausedByError =
@@ -237,7 +280,7 @@ const BtnSecondary = ({ children, onClick }) => (
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 export default function Campaigns() {
-  const { t, formatDate, formatDateTime } = useSettings();
+  const { t, formatDate, formatDateTime, timezone } = useSettings();
   const [campaigns, setCampaigns] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -336,9 +379,10 @@ export default function Campaigns() {
     if (!selectedCampaign || !scheduleDate || !scheduleTime) return;
     try {
       setScheduling(true);
-      const scheduledTime = new Date(
-        `${scheduleDate}T${scheduleTime}`,
-      ).toISOString();
+      // Interpret the user's date/time input in their configured Settings timezone,
+      // not the browser's local timezone — these can differ for travelling users
+      // or users who have set a different timezone in their profile.
+      const scheduledTime = naiveToUTC(scheduleDate, scheduleTime, timezone || "UTC").toISOString();
       await API.post(`/campaigns/${selectedCampaign._id}/schedule`, {
         scheduled_time: scheduledTime,
       });
@@ -650,6 +694,10 @@ export default function Campaigns() {
             {t("campaigns.modal.scheduleDesc", { title: selectedCampaign.title })}
           </p>
           <div className="space-y-3 mb-4">
+            {/* Timezone note */}
+            <p className="text-xs text-blue-600 bg-blue-50 border border-blue-100 rounded px-3 py-1.5">
+              🌐 Times are in your configured timezone: <strong>{tzLabel(timezone || "UTC")}</strong>
+            </p>
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">
                 {t("campaigns.modal.dateLabel")}
@@ -661,12 +709,6 @@ export default function Campaigns() {
                 onChange={(e) => setScheduleDate(e.target.value)}
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
               />
-              {scheduleDate && scheduleTime && (
-                <p className="text-sm text-purple-600 bg-purple-50 p-2 rounded">
-                  {t("campaigns.modal.willSendOn")}
-                  {formatDateTime(`${scheduleDate}T${scheduleTime}`)}
-                </p>
-              )}
             </div>
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">
@@ -679,6 +721,12 @@ export default function Campaigns() {
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
               />
             </div>
+            {scheduleDate && scheduleTime && (
+              <p className="text-sm text-purple-600 bg-purple-50 p-2 rounded">
+                {t("campaigns.modal.willSendOn")}
+                <strong>{formatDateTime(naiveToUTC(scheduleDate, scheduleTime, timezone || "UTC").toISOString())}</strong>
+              </p>
+            )}
           </div>
           <div className="flex justify-end gap-3">
             <BtnSecondary onClick={closeModals}>Cancel</BtnSecondary>

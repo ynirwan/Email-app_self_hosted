@@ -16,6 +16,7 @@ class SubscriberStatus(str, Enum):
     INACTIVE = "inactive"
     BOUNCED = "bounced"
     UNSUBSCRIBED = "unsubscribed"
+    PENDING_CONFIRMATION = "pending_confirmation"
 
 
 class FieldType(str, Enum):
@@ -177,3 +178,33 @@ class ChunkMetadata(BaseModel):
 class BulkUploadRequest(BaseModel):
     list_name: str
     overwrite_existing: bool = False
+
+
+class PublicOptInRequest(BaseModel):
+    """Payload for the public opt-in endpoint. No auth required."""
+
+    email: EmailStr
+    consent: bool
+    list_id: str  # list name used as ID
+    standard_fields: Dict[str, Any] = Field(default_factory=dict)
+    custom_fields: Dict[str, Any] = Field(default_factory=dict)
+    source: str = "public_form"
+
+    @field_validator("email")
+    @classmethod
+    def normalize(cls, v):
+        return v.lower().strip()
+
+    @field_validator("list_id")
+    @classmethod
+    def validate_list_id(cls, v):
+        if not v or not v.strip():
+            raise ValueError("list_id cannot be empty")
+        return v.strip()
+
+    @field_validator("consent")
+    @classmethod
+    def require_consent(cls, v):
+        if not v:
+            raise ValueError("Consent is required to subscribe")
+        return v

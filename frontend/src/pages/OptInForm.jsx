@@ -1,128 +1,320 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import axios from 'axios';
 
-// Public Opt-in Form Component
+const API = axios.create({ baseURL: import.meta.env.VITE_API_URL || '' });
+
+/**
+ * Public opt-in landing page.
+ * Route: /subscribe/:listId
+ *
+ * - Fetches the list's actual field schema from the backend
+ * - Renders standard + custom fields dynamically (same fields as the list uses)
+ * - Sends data in the same standard_fields / custom_fields shape as SubscriberIn
+ * - Double opt-in: success state shows "check your email"
+ */
 export default function OptInForm() {
   const { listId } = useParams();
-  const [formData, setFormData] = useState({
-    email: '',
-    first_name: '',
-    last_name: '',
-    consent: false
-  });
-  const [status, setStatus] = useState({ type: '', message: '' });
-  const [loading, setLoading] = useState(false);
 
+  // page-level states: loading | idle | submitting | success | error | not_found
+  const [pageState, setPageState] = useState('loading');
+
+  const [listMeta, setListMeta] = useState(null);  // { list_name, standard_fields[], custom_fields[] }
+  const [values, setValues] = useState({});         // { fieldKey: value }
+  const [consent, setConsent] = useState(false);
+  const [errorMsg, setErrorMsg] = useState('');
+  const [submittedEmail, setSubmittedEmail] = useState('');
+
+  // ── 1. Load list field schema ──────────────────────────────────────────────
+  useEffect(() => {
+    if (!listId) { setPageState('not_found'); return; }
+
+    API.get(`/api/subscribers/public/list-meta/${encodeURIComponent(listId)}`)
+      .then(res => {
+        setListMeta(res.data);
+        // Pre-initialize all field values to empty string
+        const initial = {};
+        [...res.data.standard_fields, ...res.data.custom_fields].forEach(f => {
+          initial[f] = '';
+        });
+        // email is always required but rendered separately
+        initial['email'] = '';
+        setValues(initial);
+        setPageState('idle');
+      })
+      .catch(err => {
+        if (err.response?.status === 404) setPageState('not_found');
+        else setPageState('not_found'); // Any error → treat as not found (safe default)
+      });
+  }, [listId]);
+
+  // ── 2. Submit ──────────────────────────────────────────────────────────────
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!formData.consent) {
-      setStatus({ type: 'error', message: 'You must provide consent to subscribe.' });
-      return;
+    if (!consent) { setErrorMsg('You must give consent to subscribe.'); return; }
+
+    setPageState('submitting');
+    setErrorMsg('');
+
+    // Split values back into standard_fields and custom_fields
+    const standardKeys = new Set(listMeta?.standard_fields || []);
+    const customKeys = new Set(listMeta?.custom_fields || []);
+
+    const standard_fields = {};
+    const custom_fields = {};
+
+    for (const [k, v] of Object.entries(values)) {
+      if (k === 'email') continue;
+      if (standardKeys.has(k)) standard_fields[k] = v;
+      else if (customKeys.has(k)) custom_fields[k] = v;
     }
 
-    setLoading(true);
     try {
-      // Note: This uses a public endpoint we'll need to ensure exists or use existing subscriber endpoint if permitted
-      const response = await axios.post(`${import.meta.env.VITE_API_URL || ''}/api/subscribers/public/opt-in`, {
-        ...formData,
+      await API.post('/api/subscribers/public/opt-in', {
+        email: values['email'].trim().toLowerCase(),
+        consent: true,
         list_id: listId,
         source: 'public_form',
-        opt_in_ip: 'client_side', // Backend should capture actual IP
-        opt_in_timestamp: new Date().toISOString()
+        standard_fields,
+        custom_fields,
       });
-      setStatus({ type: 'success', message: 'Thank you for subscribing!' });
-      setFormData({ email: '', first_name: '', last_name: '', consent: false });
+      setSubmittedEmail(values['email']);
+      setPageState('success');
     } catch (err) {
-      setStatus({ 
-        type: 'error', 
-        message: err.response?.data?.detail || 'Failed to subscribe. Please try again.' 
-      });
-    } finally {
-      setLoading(false);
+      const status = err.response?.status;
+      const detail = err.response?.data?.detail;
+
+      if (status === 404) { setPageState('not_found'); return; }
+      if (status === 429) { setErrorMsg('Too many attempts. Please wait a moment.'); }
+      else if (status === 422) {
+        const d = err.response?.data?.detail;
+        setErrorMsg(Array.isArray(d) ? d[0]?.msg : (d || 'Please check your input.'));
+      } else {
+        setErrorMsg(detail || 'Something went wrong. Please try again.');
+      }
+      setPageState('error');
     }
   };
 
+  const handleChange = (key, val) =>
+    setValues(prev => ({ ...prev, [key]: val }));
+
+  // ── Render ─────────────────────────────────────────────────────────────────
+
+  if (pageState === 'loading') return <Shell><Spinner /></Shell>;
+
+  if (pageState === 'not_found') return (
+    <Shell>
+      <div className="text-center py-6">
+        <div className="text-6xl mb-4">📭</div>
+        <h2 className="text-xl font-semibold text-gray-800 mb-2">Form not found</h2>
+        <p className="text-gray-500 text-sm">
+          This subscription form is no longer active or the link is incorrect.
+        </p>
+      </div>
+    </Shell>
+  );
+
+  if (pageState === 'success') return (
+    <Shell>
+      <div className="text-center py-6">
+        <div className="text-6xl mb-4">📬</div>
+        <h2 className="text-xl font-semibold text-gray-800 mb-2">Check your inbox!</h2>
+        <p className="text-gray-600 text-sm mb-1">
+          We sent a confirmation email to:
+        </p>
+        <p className="font-medium text-gray-900 mb-4">{submittedEmail}</p>
+        <p className="text-gray-400 text-xs">
+          Click the link in that email to complete your subscription.
+          Check your spam folder if you don't see it.
+        </p>
+      </div>
+    </Shell>
+  );
+
+  const isSubmitting = pageState === 'submitting';
+  const standardFields = listMeta?.standard_fields || [];
+  const customFields = listMeta?.custom_fields || [];
+
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col justify-center py-12 sm:px-6 lg:px-8">
-      <div className="sm:mx-auto sm:w-full sm:max-w-md">
-        <h2 className="mt-6 text-center text-3xl font-extrabold text-gray-900">
-          Subscribe to our list
-        </h2>
+    <Shell>
+      {/* Header */}
+      <div className="mb-6">
+        <h1 className="text-2xl font-bold text-gray-900">Subscribe</h1>
+        <p className="text-sm text-gray-500 mt-1">
+          Join the <span className="font-medium text-gray-700">{listId}</span> mailing list.
+        </p>
       </div>
 
-      <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md">
-        <div className="bg-white py-8 px-4 shadow sm:rounded-lg sm:px-10">
-          {status.message && (
-            <div className={`mb-4 p-4 rounded-md ${status.type === 'success' ? 'bg-green-50 text-green-800' : 'bg-red-50 text-red-800'}`}>
-              {status.message}
-            </div>
-          )}
-
-          <form className="space-y-6" onSubmit={handleSubmit}>
-            <div>
-              <label htmlFor="email" className="block text-sm font-medium text-gray-700">
-                Email address *
-              </label>
-              <div className="mt-1">
-                <input
-                  id="email"
-                  name="email"
-                  type="email"
-                  required
-                  className="appearance-none block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
-                  value={formData.email}
-                  onChange={(e) => setFormData({...formData, email: e.target.value})}
-                />
-              </div>
-            </div>
-
-            <div>
-              <label htmlFor="first_name" className="block text-sm font-medium text-gray-700">
-                First Name
-              </label>
-              <div className="mt-1">
-                <input
-                  id="first_name"
-                  name="first_name"
-                  type="text"
-                  className="appearance-none block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
-                  value={formData.first_name}
-                  onChange={(e) => setFormData({...formData, first_name: e.target.value})}
-                />
-              </div>
-            </div>
-
-            <div className="flex items-start">
-              <div className="flex items-center h-5">
-                <input
-                  id="consent"
-                  name="consent"
-                  type="checkbox"
-                  required
-                  className="focus:ring-blue-500 h-4 w-4 text-blue-600 border-gray-300 rounded"
-                  checked={formData.consent}
-                  onChange={(e) => setFormData({...formData, consent: e.target.checked})}
-                />
-              </div>
-              <div className="ml-3 text-sm">
-                <label htmlFor="consent" className="font-medium text-gray-700">GDPR Consent</label>
-                <p className="text-gray-500">I agree to receive marketing emails and confirm that I have read the privacy policy. I can unsubscribe at any time.</p>
-              </div>
-            </div>
-
-            <div>
-              <button
-                type="submit"
-                disabled={loading}
-                className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:bg-gray-400"
-              >
-                {loading ? 'Subscribing...' : 'Subscribe'}
-              </button>
-            </div>
-          </form>
+      {/* Error banner */}
+      {pageState === 'error' && errorMsg && (
+        <div className="mb-4 p-3 rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm">
+          {errorMsg}
         </div>
+      )}
+
+      <form onSubmit={handleSubmit} className="space-y-4">
+
+        {/* Email — always first */}
+        <Field label="Email address" required>
+          <input
+            type="email"
+            required
+            autoComplete="email"
+            placeholder="you@example.com"
+            value={values['email'] || ''}
+            onChange={e => handleChange('email', e.target.value)}
+            disabled={isSubmitting}
+            className={inputCls}
+          />
+        </Field>
+
+        {/* Standard fields — rendered in order returned by API */}
+        {standardFields.map(key => (
+          <Field key={key} label={labelFor(key)}>
+            <input
+              type={inputTypeFor(key)}
+              autoComplete={autoCompleteFor(key)}
+              placeholder={placeholderFor(key)}
+              value={values[key] || ''}
+              onChange={e => handleChange(key, e.target.value)}
+              disabled={isSubmitting}
+              className={inputCls}
+            />
+          </Field>
+        ))}
+
+        {/* Custom fields */}
+        {customFields.map(key => (
+          <Field key={key} label={labelFor(key)}>
+            <input
+              type="text"
+              placeholder={placeholderFor(key)}
+              value={values[key] || ''}
+              onChange={e => handleChange(key, e.target.value)}
+              disabled={isSubmitting}
+              className={inputCls}
+            />
+          </Field>
+        ))}
+
+        {/* GDPR consent */}
+        <div className="flex items-start gap-3 pt-1">
+          <input
+            id="consent"
+            type="checkbox"
+            checked={consent}
+            onChange={e => setConsent(e.target.checked)}
+            disabled={isSubmitting}
+            required
+            className="mt-0.5 h-4 w-4 rounded border-gray-300 text-blue-600
+                       focus:ring-blue-500 cursor-pointer flex-shrink-0"
+          />
+          <label htmlFor="consent" className="text-sm text-gray-600 cursor-pointer leading-5">
+            I agree to receive marketing emails and confirm I have read the privacy policy.
+            I can unsubscribe at any time.{' '}
+            <span className="text-red-500">*</span>
+          </label>
+        </div>
+
+        <button
+          type="submit"
+          disabled={isSubmitting}
+          className="w-full py-3 px-4 bg-blue-600 hover:bg-blue-700
+                     text-white text-sm font-semibold rounded-lg shadow-sm
+                     transition-colors focus:outline-none focus:ring-2
+                     focus:ring-offset-2 focus:ring-blue-500
+                     disabled:opacity-60 disabled:cursor-not-allowed mt-2"
+        >
+          {isSubmitting ? (
+            <span className="flex items-center justify-center gap-2">
+              <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none">
+                <circle cx="12" cy="12" r="10" stroke="currentColor"
+                  strokeWidth="4" className="opacity-25" />
+                <path fill="currentColor" className="opacity-75"
+                  d="M4 12a8 8 0 018-8v8H4z" />
+              </svg>
+              Subscribing…
+            </span>
+          ) : 'Subscribe'}
+        </button>
+      </form>
+    </Shell>
+  );
+}
+
+// ── Layout wrapper ─────────────────────────────────────────────────────────────
+function Shell({ children }) {
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50
+                    flex flex-col items-center justify-center p-4">
+      <div className="w-full max-w-md">
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-8">
+          {children}
+        </div>
+        <p className="text-center text-xs text-gray-400 mt-4">
+          Powered by ZeniPost · Your data is safe
+        </p>
       </div>
     </div>
   );
 }
+
+// ── Field wrapper ──────────────────────────────────────────────────────────────
+function Field({ label, required, children }) {
+  return (
+    <div>
+      <label className="block text-sm font-medium text-gray-700 mb-1">
+        {label}
+        {required && <span className="text-red-500 ml-0.5">*</span>}
+      </label>
+      {children}
+    </div>
+  );
+}
+
+function Spinner() {
+  return (
+    <div className="flex justify-center py-8">
+      <svg className="animate-spin h-8 w-8 text-blue-500" viewBox="0 0 24 24" fill="none">
+        <circle cx="12" cy="12" r="10" stroke="currentColor"
+          strokeWidth="4" className="opacity-25" />
+        <path fill="currentColor" className="opacity-75" d="M4 12a8 8 0 018-8v8H4z" />
+      </svg>
+    </div>
+  );
+}
+
+// ── Shared input class ─────────────────────────────────────────────────────────
+const inputCls = `w-full px-3 py-2 border border-gray-200 rounded-lg text-sm
+  bg-white text-gray-900 placeholder-gray-400
+  focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent
+  disabled:bg-gray-50 disabled:text-gray-400 transition-shadow`;
+
+// ── Field metadata helpers ─────────────────────────────────────────────────────
+// Maps field key → human-readable label, input type, autocomplete, placeholder.
+// Falls back gracefully for unknown custom field names.
+
+const FIELD_META = {
+  first_name: { label: 'First name', type: 'text', ac: 'given-name', ph: 'Jane' },
+  last_name: { label: 'Last name', type: 'text', ac: 'family-name', ph: 'Doe' },
+  phone: { label: 'Phone number', type: 'tel', ac: 'tel', ph: '+1 555 000 0000' },
+  company: { label: 'Company', type: 'text', ac: 'organization', ph: 'Acme Inc.' },
+  job_title: { label: 'Job title', type: 'text', ac: 'organization-title', ph: 'Marketing Manager' },
+  country: { label: 'Country', type: 'text', ac: 'country-name', ph: 'United States' },
+  city: { label: 'City', type: 'text', ac: 'address-level2', ph: 'New York' },
+  state: { label: 'State', type: 'text', ac: 'address-level1', ph: 'NY' },
+  zip_code: { label: 'ZIP / Postcode', type: 'text', ac: 'postal-code', ph: '10001' },
+  website: { label: 'Website', type: 'url', ac: 'url', ph: 'https://example.com' },
+  date_of_birth: { label: 'Date of birth', type: 'date', ac: 'bday', ph: '' },
+  language: { label: 'Language', type: 'text', ac: 'language', ph: 'English' },
+  timezone: { label: 'Timezone', type: 'text', ac: 'off', ph: 'America/New_York' },
+  gender: { label: 'Gender', type: 'text', ac: 'sex', ph: '' },
+};
+
+function labelFor(key) {
+  return FIELD_META[key]?.label ?? key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+}
+function inputTypeFor(key) { return FIELD_META[key]?.type ?? 'text'; }
+function autoCompleteFor(key) { return FIELD_META[key]?.ac ?? 'off'; }
+function placeholderFor(key) { return FIELD_META[key]?.ph ?? ''; }

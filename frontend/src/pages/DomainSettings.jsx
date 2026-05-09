@@ -279,7 +279,7 @@ function DomainPicker({ label, description, checkPath, value, onChange, verified
 
 // ─── Main page ────────────────────────────────────────────────────────────────
 export default function DomainSettings() {
-  const { t } = useSettings();
+  const { t, formatDate } = useSettings();
   // ── domain state
   const [domains,    setDomains]    = useState([]);
   const [newDomain,  setNewDomain]  = useState('');
@@ -488,7 +488,7 @@ export default function DomainSettings() {
                         {domain.status?.charAt(0).toUpperCase() + domain.status?.slice(1)}
                       </span>
                     </div>
-                    <p className="text-xs text-gray-400 mt-0.5">Added {new Date(domain.created_at).toLocaleDateString()}</p>
+                    <p className="text-xs text-gray-400 mt-0.5">Added {formatDate(domain.created_at)}</p>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
                     {(domain.status === 'pending' || domain.status === 'failed') && (<>

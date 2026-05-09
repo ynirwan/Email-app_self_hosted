@@ -4,6 +4,10 @@ import API from "../api";
 import Papa from "papaparse";
 import { useNavigate } from "react-router-dom";
 import { useSettings } from "../contexts/SettingsContext";
+import ImportSummaryCard from "../components/ImportSummaryCard";
+
+// Statuses that mean a job is done (success, partial, or hard failure)
+const TERMINAL_STATUSES = new Set(["completed", "partially_completed", "failed"]);
 
 function useDebounce(value, delay) {
   const [debouncedValue, setDebouncedValue] = useState(value);
@@ -22,6 +26,7 @@ const STATUS_STYLE = {
   inactive: "bg-gray-100  text-gray-600",
   bounced: "bg-red-100   text-red-700",
   unsubscribed: "bg-orange-100 text-orange-700",
+  pending_confirmation: "bg-yellow-100 text-yellow-700",
 };
 
 function ListHealthBar({ total, active }) {
@@ -74,6 +79,116 @@ function Pagination({ page, totalPages, total, onChange }) {
           </button>
         ))}
       </div>
+    </div>
+  );
+}
+
+// ── OptInLinkButton ──────────────────────────────────────────────────────────
+// Shows a small popover with the public opt-in API URL for a given list.
+// Users copy this to build/embed their own subscription forms.
+function OptInLinkButton({ listId }) {
+  const [open, setOpen] = useState(false);
+  const [copied, setCopied] = useState(null); // "endpoint" | "listId"
+  const ref = useRef(null);
+
+  const origin = window.location.origin;
+  const endpointUrl = `${origin}/api/public/opt-in`;
+  const listMetaUrl = `${origin}/api/public/list-meta/${encodeURIComponent(listId)}`;
+
+  // Close on outside click
+  useEffect(() => {
+    if (!open) return;
+    function handler(e) {
+      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
+    }
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+
+  function copyToClipboard(text, key) {
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(key);
+      setTimeout(() => setCopied(null), 2000);
+    });
+  }
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        onClick={() => setOpen((v) => !v)}
+        title="Public opt-in form details"
+        className="px-3 py-1.5 text-xs font-medium border border-blue-200 rounded-lg hover:bg-blue-50 text-blue-600 transition-colors"
+      >
+        🔗 Form
+      </button>
+      {open && (
+        <div className="absolute right-0 top-8 z-50 w-80 bg-white border border-gray-200 rounded-xl shadow-lg p-4">
+          <p className="text-xs font-semibold text-gray-700 mb-3">Public opt-in details</p>
+
+          <div className="space-y-3">
+            {/* POST endpoint */}
+            <div>
+              <p className="text-[10px] text-gray-500 uppercase tracking-wider mb-1">
+                Submit endpoint (POST)
+              </p>
+              <div className="flex items-center gap-1.5">
+                <code className="flex-1 text-[10px] bg-gray-50 border border-gray-100 rounded px-2 py-1 font-mono truncate text-gray-700">
+                  {endpointUrl}
+                </code>
+                <button
+                  onClick={() => copyToClipboard(endpointUrl, "endpoint")}
+                  className="flex-shrink-0 text-[10px] px-2 py-1 bg-gray-100 hover:bg-gray-200 rounded transition-colors"
+                >
+                  {copied === "endpoint" ? "✓" : "Copy"}
+                </button>
+              </div>
+            </div>
+
+            {/* List ID */}
+            <div>
+              <p className="text-[10px] text-gray-500 uppercase tracking-wider mb-1">
+                list_id field value
+              </p>
+              <div className="flex items-center gap-1.5">
+                <code className="flex-1 text-[10px] bg-gray-50 border border-gray-100 rounded px-2 py-1 font-mono truncate text-gray-700">
+                  {listId}
+                </code>
+                <button
+                  onClick={() => copyToClipboard(listId, "listId")}
+                  className="flex-shrink-0 text-[10px] px-2 py-1 bg-gray-100 hover:bg-gray-200 rounded transition-colors"
+                >
+                  {copied === "listId" ? "✓" : "Copy"}
+                </button>
+              </div>
+            </div>
+
+            {/* Field schema link */}
+            <div>
+              <p className="text-[10px] text-gray-500 uppercase tracking-wider mb-1">
+                Field schema (GET)
+              </p>
+              <div className="flex items-center gap-1.5">
+                <code className="flex-1 text-[10px] bg-gray-50 border border-gray-100 rounded px-2 py-1 font-mono truncate text-gray-700">
+                  {listMetaUrl}
+                </code>
+                <button
+                  onClick={() => copyToClipboard(listMetaUrl, "schema")}
+                  className="flex-shrink-0 text-[10px] px-2 py-1 bg-gray-100 hover:bg-gray-200 rounded transition-colors"
+                >
+                  {copied === "schema" ? "✓" : "Copy"}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <p className="text-[10px] text-gray-400 mt-3 leading-relaxed">
+            POST with <code className="font-mono">email</code>,{" "}
+            <code className="font-mono">consent: true</code>, and{" "}
+            <code className="font-mono">list_id</code> to subscribe. Subscribers receive
+            a confirmation email and are activated after clicking the link.
+          </p>
+        </div>
+      )}
     </div>
   );
 }
@@ -283,6 +398,7 @@ const STANDARD_FIELD_LABELS = {
 };
 
 function SubscriberProfileDrawer({ subscriber, onClose, onEdit }) {
+  const { formatDate } = useSettings();
   if (!subscriber) return null;
 
   const stdFields = subscriber.standard_fields || {};
@@ -296,12 +412,8 @@ function SubscriberProfileDrawer({ subscriber, onClose, onEdit }) {
 
   const custKeys = Object.keys(custFields);
 
-  const fmtDate = (iso) => {
-    if (!iso) return "—";
-    return new Date(iso).toLocaleDateString(undefined, {
-      year: "numeric", month: "short", day: "numeric",
-    });
-  };
+  // Use Settings-aware formatter so dates respect the user's configured timezone
+  const fmtDate = (iso) => formatDate(iso);
 
   return (
     <>
@@ -664,6 +776,8 @@ export default function Subscribers() {
   const [editingSubscriber, setEditingSubscriber] = useState(null);
   const [processingJobs, setProcessingJobs] = useState(new Map());
   const [showProcessingBanner, setShowProcessingBanner] = useState(false);
+  // Each entry: { jobId, listName } — one card per completed import job
+  const [completedImports, setCompletedImports] = useState([]);
   const [notifications, setNotifications] = useState([]);
   const [listFields, setListFields] = useState({ standard: [], custom: [] });
   const [loadingFields, setLoadingFields] = useState(false);
@@ -715,12 +829,28 @@ export default function Subscribers() {
         const jobs = response.data.jobs || [];
         const updatedJobs = new Map();
         let hasActive = false;
+
         jobs.forEach((job) => {
-          if (job.status === "completed") return;
+          // Detect jobs that just reached a terminal state while we were tracking them
+          if (TERMINAL_STATUSES.has(job.status)) {
+            // Only show the summary card if we were actively tracking this job
+            setProcessingJobs((prev) => {
+              if (prev.has(job.list_name)) {
+                // Was active — surface a summary card (deduplicated by job_id)
+                setCompletedImports((cards) => {
+                  const already = cards.some((c) => c.jobId === job.job_id);
+                  if (already) return cards;
+                  return [...cards, { jobId: job.job_id, listName: job.list_name }];
+                });
+              }
+              return prev;
+            });
+            return; // Don't keep terminal jobs in updatedJobs
+          }
           updatedJobs.set(job.list_name, job);
-          if (["pending", "processing", "failed"].includes(job.status))
-            hasActive = true;
+          if (["pending", "processing"].includes(job.status)) hasActive = true;
         });
+
         setProcessingJobs(updatedJobs);
         setShowProcessingBanner(hasActive || updatedJobs.size > 0);
         if (!hasActive) {
@@ -1248,6 +1378,27 @@ export default function Subscribers() {
         showToast={showToast}
       />
 
+      {/* ── Import summary cards (one per completed job) ── */}
+      {completedImports.length > 0 && (
+        <div className="space-y-3">
+          {completedImports.map(({ jobId, listName: jListName }) => (
+            <ImportSummaryCard
+              key={jobId}
+              jobId={jobId}
+              listName={jListName}
+              onDismiss={() =>
+                setCompletedImports((prev) => prev.filter((c) => c.jobId !== jobId))
+              }
+              onViewList={(name) => {
+                // Navigate to the list view — adapt if your routing pattern differs
+                navigate(`/subscribers?list=${encodeURIComponent(name)}`);
+                setCompletedImports((prev) => prev.filter((c) => c.jobId !== jobId));
+              }}
+            />
+          ))}
+        </div>
+      )}
+
       {error && (
         <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm flex items-center justify-between">
           {error}
@@ -1410,6 +1561,7 @@ export default function Subscribers() {
                         >
                           {t('subscribers.export')}
                         </button>
+                        <OptInLinkButton listId={list._id} />
                         {isFailed && (
                           <button
                             onClick={async () => {

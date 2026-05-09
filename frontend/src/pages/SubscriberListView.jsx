@@ -107,6 +107,7 @@ const DRAWER_STATUS_STYLE = {
 };
 
 function SubscriberProfileDrawer({ subscriber, onClose, onEdit }) {
+    const { formatDate } = useSettings();
     if (!subscriber) return null;
     const stdFields = subscriber.standard_fields || {};
     const custFields = subscriber.custom_fields || {};
@@ -115,9 +116,8 @@ function SubscriberProfileDrawer({ subscriber, onClose, onEdit }) {
         ...Object.keys(stdFields).filter((k) => !(k in STANDARD_FIELD_LABELS)),
     ];
     const custKeys = Object.keys(custFields);
-    const fmtDate = (iso) => iso
-        ? new Date(iso).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })
-        : "—";
+    // Use Settings-aware formatter so dates respect the user's configured timezone
+    const fmtDate = (iso) => formatDate(iso);
 
     return (
         <>
