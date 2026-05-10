@@ -16,9 +16,9 @@ import {
   Type,
   Link,
   Share2,
-  Video,
-  Quote,
-  Code2,
+  Film,
+  MessageSquare,
+  Code,
   Minus,
   AlignLeft,
 } from "lucide-react";
@@ -57,7 +57,7 @@ export const EMAIL_BLOCK_TYPES = [
   {
     id: "quote",
     name: "Quote",
-    icon: Quote,
+    icon: MessageSquare,
     defaultContent:
       '<blockquote style="margin:0;padding:16px 20px;border-left:4px solid #2563eb;background:#f8fafc;border-radius:4px;">' +
       '<p style="font-size:16px;font-style:italic;color:#374151;margin:0 0 10px 0;">"Your compelling quote or testimonial goes here."</p>' +
@@ -69,7 +69,7 @@ export const EMAIL_BLOCK_TYPES = [
   {
     id: "rawhtml",
     name: "HTML Block",
-    icon: Code2,
+    icon: Code,
     defaultContent:
       '<!-- Custom HTML block -->\n<div style="padding:8px;">\n  <p style="margin:0;font-family:Arial,sans-serif;">Custom HTML here</p>\n</div>',
     category: "content",
@@ -89,7 +89,7 @@ export const EMAIL_BLOCK_TYPES = [
   {
     id: "video",
     name: "Video",
-    icon: Video,
+    icon: Film,
     defaultContent:
       '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">' +
       '<tr><td align="center" style="padding:0;">' +

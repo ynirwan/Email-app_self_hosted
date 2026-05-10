@@ -659,7 +659,7 @@ function DragPreview({ activeDragId, blocks }) {
     const Icon = def.icon;
     return (
       <div className="inline-flex items-center gap-2 px-3 py-2 bg-white rounded-md border border-blue-400 shadow-lg text-xs font-medium text-gray-700">
-        <Icon size={14} className="text-blue-600" />
+        {Icon && <Icon size={14} className="text-blue-600" />}
         {def.name}
       </div>
     );

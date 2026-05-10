@@ -37,7 +37,7 @@ function PaletteItem({ def }) {
         transition-colors duration-100
         ${isDragging ? "opacity-30" : ""}`}
     >
-      <Icon size={13} className="text-gray-400 flex-shrink-0" />
+      {Icon && <Icon size={13} className="text-gray-400 flex-shrink-0" />}
       <span className="truncate leading-none">{def.name}</span>
     </div>
   );
