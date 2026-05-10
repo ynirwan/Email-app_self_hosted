@@ -265,14 +265,15 @@ const EmailEditor = forwardRef((props, ref) => {
             setEmailBlocks(safeBlocks);
             return;
           }
-          // Legacy visual mode
+          // Backwards-compat: templates saved in old "visual" or Unlayer format
+          // are migrated into HTML mode on load. The UI no longer exposes those
+          // modes but existing data must still open without errors.
           if (design.mode === "visual" && typeof design.content === "string") {
             setEditMode("html");
             contentModeRef.current = "html";
             setHtmlContent(design.content);
             return;
           }
-          // Legacy Unlayer-ish shape
           if (design.body && Array.isArray(design.body.rows)) {
             const parts = [];
             for (const row of design.body.rows) {
@@ -395,15 +396,16 @@ const EmailEditor = forwardRef((props, ref) => {
   const selectedBlock = emailBlocks.find((b) => b.id === selectedBlockId) || null;
 
   // ─── preview HTML (memoized) ──────────────────────────────────────
+  // editMode is included so the memo recomputes when the user switches modes,
+  // picking up the latest contentModeRef.current at that point.
   const previewHtml = useMemo(() => {
     const body =
       contentModeRef.current === "html"
         ? htmlContent
         : emailBlocks.map((b) => b.content || "").join("\n");
     return buildPreviewHtml(body);
-    // recompute whenever blocks or html changes, regardless of current view mode
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [emailBlocks, htmlContent]);
+  }, [emailBlocks, htmlContent, editMode]);
 
   // ─── render ───────────────────────────────────────────────────────
 

@@ -5,9 +5,10 @@
 // area. Click the body to open the preview modal; hover reveals the
 // action menu (Edit / Duplicate / Delete).
 //
-// The thumbnail iframe uses `srcdoc` rather than fetching anything, so
-// it costs zero extra requests and degrades gracefully if the template
-// has no usable HTML yet.
+// Mode notes:
+//   - Only "drag-drop" and "html" are active modes.
+//   - Legacy templates saved with mode "visual" or "legacy" display as
+//     "HTML" since those editor modes no longer exist.
 
 import React, { useMemo, useState, useRef, useEffect } from "react";
 import { Eye, Copy, Trash2, Pencil, MoreHorizontal, FileText } from "lucide-react";
@@ -17,37 +18,20 @@ import {
   buildThumbnailSrcDoc,
 } from "../utils/templateRender";
 
-// Scale a 600px-wide email render down to the card's preview area.
-// Card preview area is 256px tall; scale 0.42 lets the user see roughly
-// the top ~600px of the email comfortably.
 const THUMB_SOURCE_WIDTH = 600;
 const THUMB_RENDER_SCALE = 0.42;
 
-const MODE_BADGE_STYLES = {
-  visual: "bg-blue-50 text-blue-700 ring-1 ring-blue-100",
-  html: "bg-purple-50 text-purple-700 ring-1 ring-purple-100",
-  "drag-drop": "bg-green-50 text-green-700 ring-1 ring-green-100",
-  legacy: "bg-gray-100 text-gray-600 ring-1 ring-gray-200",
+// Active modes only — visual/legacy fall back to HTML styling
+const MODE_BADGE = {
+  "drag-drop": { style: "bg-green-50 text-green-700 ring-1 ring-green-100", label: "Drag & Drop" },
+  "html":      { style: "bg-purple-50 text-purple-700 ring-1 ring-purple-100", label: "HTML" },
 };
+const DEFAULT_BADGE = { style: "bg-gray-100 text-gray-600 ring-1 ring-gray-200", label: "HTML" };
 
-const MODE_LABEL = {
-  visual: "Visual",
-  html: "HTML",
-  "drag-drop": "Drag & Drop",
-  legacy: "Legacy",
-};
+function getModeBadge(mode) {
+  return MODE_BADGE[mode] || DEFAULT_BADGE;
+}
 
-/**
- * @typedef {import('../utils/templateRender').TemplateDoc} TemplateDoc
- *
- * @param {Object} props
- * @param {TemplateDoc} props.template
- * @param {(template: TemplateDoc) => void} props.onPreview
- * @param {(template: TemplateDoc) => void} props.onEdit
- * @param {(template: TemplateDoc) => void} props.onDuplicate
- * @param {(template: TemplateDoc) => void} props.onDelete
- * @param {(timestamp: string | Date) => string} [props.formatDate]
- */
 export default function TemplateCard({
   template,
   onPreview,
@@ -59,22 +43,19 @@ export default function TemplateCard({
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef(null);
 
-  const mode = getTemplateMode(template);
-  const html = useMemo(() => getTemplateHtml(template), [template]);
-  const srcDoc = useMemo(() => buildThumbnailSrcDoc(html), [html]);
+  const mode    = getTemplateMode(template);
+  const html    = useMemo(() => getTemplateHtml(template), [template]);
+  const srcDoc  = useMemo(() => buildThumbnailSrcDoc(html), [html]);
   const isEmpty = !html.trim();
+  const badge   = getModeBadge(mode);
 
   // Close the kebab menu on outside click / escape
   useEffect(() => {
     if (!menuOpen) return;
     const onDocClick = (e) => {
-      if (menuRef.current && !menuRef.current.contains(e.target)) {
-        setMenuOpen(false);
-      }
+      if (menuRef.current && !menuRef.current.contains(e.target)) setMenuOpen(false);
     };
-    const onKey = (e) => {
-      if (e.key === "Escape") setMenuOpen(false);
-    };
+    const onKey = (e) => { if (e.key === "Escape") setMenuOpen(false); };
     document.addEventListener("mousedown", onDocClick);
     document.addEventListener("keydown", onKey);
     return () => {
@@ -83,15 +64,13 @@ export default function TemplateCard({
     };
   }, [menuOpen]);
 
-  const lastEditedAt = template.updated_at || template.created_at;
-
-  // Handlers — all stop propagation so they don't trigger the card's
-  // primary onClick (preview).
   const stop = (fn) => (e) => {
     e.stopPropagation();
     setMenuOpen(false);
     fn(template);
   };
+
+  const fieldCount = Array.isArray(template.fields) ? template.fields.length : 0;
 
   return (
     <div
@@ -99,15 +78,12 @@ export default function TemplateCard({
       tabIndex={0}
       onClick={() => onPreview(template)}
       onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          onPreview(template);
-        }
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onPreview(template); }
       }}
       className="group relative flex flex-col bg-white rounded-xl border border-gray-200 shadow-sm hover:shadow-md hover:border-gray-300 transition-all duration-150 overflow-hidden focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 cursor-pointer"
     >
-      {/* ── Thumbnail ────────────────────────────────────────── */}
-      <div className="relative h-64 bg-gray-50 border-b border-gray-100 overflow-hidden">
+      {/* ── Thumbnail ──────────────────────────────────────────── */}
+      <div className="relative h-56 bg-gray-50 border-b border-gray-100 overflow-hidden">
         {isEmpty ? (
           <div className="h-full w-full flex flex-col items-center justify-center text-gray-300">
             <FileText size={32} />
@@ -118,7 +94,7 @@ export default function TemplateCard({
             className="absolute top-0 left-0 origin-top-left pointer-events-none"
             style={{
               width: THUMB_SOURCE_WIDTH,
-              height: 64 * 16, // tall sandbox so the iframe contains the email naturally
+              height: 64 * 16,
               transform: `scale(${THUMB_RENDER_SCALE})`,
             }}
           >
@@ -134,28 +110,23 @@ export default function TemplateCard({
           </div>
         )}
 
-        {/* Hover overlay — appears on group hover */}
+        {/* Hover overlay */}
         <div className="absolute inset-0 bg-gradient-to-t from-black/30 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-150 flex items-end justify-center pb-4 pointer-events-none">
           <span className="px-3 py-1.5 bg-white/95 backdrop-blur text-xs font-medium text-gray-700 rounded-full shadow-sm flex items-center gap-1.5">
             <Eye size={12} /> Preview
           </span>
         </div>
 
-        {/* Mode badge — top-left of thumbnail */}
-        <span
-          className={`absolute top-2.5 left-2.5 text-[10px] font-medium px-2 py-0.5 rounded-md ${MODE_BADGE_STYLES[mode]}`}
-        >
-          {MODE_LABEL[mode]}
+        {/* Mode badge */}
+        <span className={`absolute top-2.5 left-2.5 text-[10px] font-medium px-2 py-0.5 rounded-md ${badge.style}`}>
+          {badge.label}
         </span>
 
-        {/* Kebab menu — top-right */}
+        {/* Kebab menu */}
         <div ref={menuRef} className="absolute top-2 right-2">
           <button
             type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              setMenuOpen((v) => !v);
-            }}
+            onClick={(e) => { e.stopPropagation(); setMenuOpen((v) => !v); }}
             aria-label="Template actions"
             aria-haspopup="menu"
             aria-expanded={menuOpen}
@@ -170,26 +141,17 @@ export default function TemplateCard({
               className="absolute right-0 top-9 z-10 w-40 bg-white rounded-lg shadow-lg border border-gray-200 py-1 text-sm"
               onClick={(e) => e.stopPropagation()}
             >
-              <button
-                role="menuitem"
-                onClick={stop(onEdit)}
-                className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-gray-700 hover:bg-gray-50"
-              >
+              <button role="menuitem" onClick={stop(onEdit)}
+                className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-gray-700 hover:bg-gray-50">
                 <Pencil size={13} /> Edit
               </button>
-              <button
-                role="menuitem"
-                onClick={stop(onDuplicate)}
-                className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-gray-700 hover:bg-gray-50"
-              >
+              <button role="menuitem" onClick={stop(onDuplicate)}
+                className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-gray-700 hover:bg-gray-50">
                 <Copy size={13} /> Duplicate
               </button>
               <div className="my-1 border-t border-gray-100" />
-              <button
-                role="menuitem"
-                onClick={stop(onDelete)}
-                className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-red-600 hover:bg-red-50"
-              >
+              <button role="menuitem" onClick={stop(onDelete)}
+                className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-red-600 hover:bg-red-50">
                 <Trash2 size={13} /> Delete
               </button>
             </div>
@@ -197,31 +159,48 @@ export default function TemplateCard({
         </div>
       </div>
 
-      {/* ── Body ─────────────────────────────────────────────── */}
-      <div className="flex-1 flex flex-col p-4 gap-1">
+      {/* ── Card body ──────────────────────────────────────────── */}
+      <div className="flex-1 flex flex-col px-4 py-3 gap-1.5">
+        {/* Name */}
         <h3 className="font-semibold text-sm text-gray-900 truncate" title={template.name}>
           {template.name || "Untitled template"}
         </h3>
 
-        {template.subject ? (
-          <p className="text-xs text-gray-500 truncate" title={template.subject}>
-            {template.subject}
-          </p>
-        ) : template.description ? (
-          <p className="text-xs text-gray-500 truncate" title={template.description}>
+        {/* Description if present */}
+        {template.description ? (
+          <p className="text-xs text-gray-400 truncate" title={template.description}>
             {template.description}
           </p>
         ) : (
-          <p className="text-xs text-gray-300 italic">No subject set</p>
+          <p className="text-xs text-gray-300 italic">No description</p>
         )}
 
-        <div className="flex items-center justify-between mt-2 pt-2 border-t border-gray-50 text-[11px] text-gray-400">
-          <span>
-            {Array.isArray(template.fields) && template.fields.length > 0
-              ? `${template.fields.length} field${template.fields.length === 1 ? "" : "s"}`
-              : "No personalization"}
-          </span>
-          {lastEditedAt && formatDate && <span>{formatDate(lastEditedAt)}</span>}
+        {/* Fields pill */}
+        {fieldCount > 0 && (
+          <div className="flex gap-1 flex-wrap">
+            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-50 text-blue-600">
+              {fieldCount} token{fieldCount === 1 ? "" : "s"}
+            </span>
+          </div>
+        )}
+
+        {/* Timestamps */}
+        <div className="mt-auto pt-2 border-t border-gray-50 space-y-0.5 text-[11px] text-gray-400">
+          {template.created_at && formatDate && (
+            <div className="flex justify-between">
+              <span className="text-gray-300">Created</span>
+              <span>{formatDate(template.created_at)}</span>
+            </div>
+          )}
+          {template.updated_at && formatDate && (
+            <div className="flex justify-between">
+              <span className="text-gray-300">Updated</span>
+              <span>{formatDate(template.updated_at)}</span>
+            </div>
+          )}
+          {!template.created_at && !template.updated_at && (
+            <span className="text-gray-300 italic">No date info</span>
+          )}
         </div>
       </div>
     </div>
