@@ -274,12 +274,13 @@ export default function TemplatesPage() {
             </div>
           </div>
 
-          <div style={{ height: 600 }}>
+          <div style={{ height: 620 }}>
             <EmailEditor
               ref={emailEditorRef}
               onLoad={handleEditorLoad}
               key={editTemplate._id || editTemplate.name || 'new'}
               onChange={() => setIsDirty(true)}
+              templateMeta={editTemplate}
             />
           </div>
         </div>

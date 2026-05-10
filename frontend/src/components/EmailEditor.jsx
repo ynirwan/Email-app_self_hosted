@@ -1,8 +1,6 @@
 // frontend/src/components/EmailEditor.jsx
 //
-// Email editor — drag-drop and HTML modes. The "visual" (contentEditable)
-// mode of the prior version has been removed because it duplicated
-// drag-drop functionality on top of a deprecated browser API.
+// Email editor — drag-drop, HTML, and preview modes.
 //
 // PUBLIC API — DO NOT BREAK. Consumers (TemplatesPage, TemplateEditor,
 // CreateCampaign) drive this component through forwardRef:
@@ -14,14 +12,12 @@
 //   editor.loadDesign(design)    — accepts the same shape exportHtml returned
 //   editor.loadBlank()
 //
+// Optional prop: templateMeta — { name, created_at, updated_at, fields, content_json }
+//   When provided, an ℹ info button appears in the toolbar that shows a
+//   popover with template metadata.
+//
 // The drag-drop block shape (id, type, content, styles, position) MUST stay
 // identical to what backend/routes/templates.py:TemplateRenderer reads.
-//
-// What changed inside:
-//   - Drag-drop: Tiptap for text/header rich-text, @dnd-kit for sortable
-//     blocks. No more document.execCommand. No more HTML5 native drag-drop.
-//   - HTML mode: unchanged — textarea + spam analysis.
-//   - Visual (contentEditable) mode: removed.
 
 import React, {
   useState,
@@ -30,6 +26,7 @@ import React, {
   useEffect,
   forwardRef,
   useImperativeHandle,
+  useMemo,
 } from "react";
 import {
   DndContext,
@@ -53,6 +50,11 @@ import {
   Eye,
   AlertTriangle,
   CheckCircle,
+  Monitor,
+  Tablet,
+  Smartphone,
+  Info,
+  X,
 } from "lucide-react";
 
 import BlockPalette, { PALETTE_ID_PREFIX } from "./editor/BlockPalette";
@@ -63,38 +65,14 @@ import {
   EMAIL_BLOCK_TYPES,
 } from "./editor/blockDefinitions";
 
-// ─── deliverability helpers (unchanged from prior version) ──────────
+// ─── deliverability helpers ─────────────────────────────────────────
 
 const SPAM_TRIGGER_WORDS = [
-  "free",
-  "guarantee",
-  "limited time",
-  "urgent",
-  "click here",
-  "buy now",
-  "offer",
-  "deal",
-  "discount",
-  "winner",
-  "congratulations",
-  "cash",
-  "money",
-  "earn",
-  "income",
-  "opportunity",
-  "risk-free",
-  "no obligation",
-  "act now",
-  "instant",
-  "immediately",
-  "order now",
-  "limited offer",
-  "exclusive",
-  "special promotion",
-  "clearance",
-  "save up to",
-  "percent off",
-  "lowest price",
+  "free","guarantee","limited time","urgent","click here","buy now","offer",
+  "deal","discount","winner","congratulations","cash","money","earn","income",
+  "opportunity","risk-free","no obligation","act now","instant","immediately",
+  "order now","limited offer","exclusive","special promotion","clearance",
+  "save up to","percent off","lowest price",
 ];
 
 function analyzeDeliverability(html) {
@@ -103,7 +81,6 @@ function analyzeDeliverability(html) {
   for (const word of SPAM_TRIGGER_WORDS) {
     if (text.includes(word)) warnings.push(`Contains "${word}"`);
   }
-  // Image-to-text ratio rough check
   const imgCount = (html || "").match(/<img/gi)?.length || 0;
   const wordCount = text.split(/\s+/).filter(Boolean).length;
   if (imgCount > 0 && wordCount < 20) {
@@ -113,12 +90,38 @@ function analyzeDeliverability(html) {
   return { score, warnings };
 }
 
+// ─── preview HTML builder ────────────────────────────────────────────
+
+function buildPreviewHtml(bodyContent) {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 0; font-family: Arial, Helvetica, sans-serif; background: #f4f5f6; }
+  .email-wrapper { max-width: 600px; margin: 0 auto; background: #ffffff; }
+  .email-body { padding: 24px; }
+  img { max-width: 100%; height: auto; }
+  a { color: inherit; }
+  blockquote { margin: 0; }
+  p { margin: 0 0 1em 0; }
+  h1, h2, h3, h4 { margin: 0 0 0.75em 0; }
+</style>
+</head>
+<body>
+<div class="email-wrapper">
+  <div class="email-body">
+    ${bodyContent}
+  </div>
+</div>
+</body>
+</html>`;
+}
+
 // ─── id helpers ─────────────────────────────────────────────────────
 
-// Special droppable id used by the canvas itself. Anything dropped here
-// (rather than on a specific block) gets appended to the end of the list.
-// Letting palette items drop on the empty canvas is the difference between
-// "I can't add blocks" and "this works." See Canvas + handleDragEnd.
 const CANVAS_DROP_ID = "canvas-drop-zone";
 
 function newBlockId() {
@@ -136,78 +139,95 @@ function makeBlockFromType(typeId, position) {
   };
 }
 
+// ─── date formatting helper ──────────────────────────────────────────
+
+function fmtDate(iso) {
+  if (!iso) return null;
+  try {
+    return new Date(iso).toLocaleString(undefined, {
+      year: "numeric", month: "short", day: "numeric",
+      hour: "2-digit", minute: "2-digit",
+    });
+  } catch {
+    return iso;
+  }
+}
+
 // ─── main component ─────────────────────────────────────────────────
 
 const EmailEditor = forwardRef((props, ref) => {
-  const { onLoad, onChange } = props;
+  const { onLoad, onChange, templateMeta } = props;
 
-  // Mode: "drag-drop" or "html". Default is drag-drop.
+  // "drag-drop" | "html" | "preview"
   const [editMode, setEditMode] = useState("drag-drop");
+  // track which non-preview mode was active before entering preview
+  const contentModeRef = useRef("drag-drop");
 
   // Drag-drop state
   const [emailBlocks, setEmailBlocks] = useState([]);
   const [selectedBlockId, setSelectedBlockId] = useState(null);
   const [activeDragId, setActiveDragId] = useState(null);
 
-  // HTML mode state (unchanged shape)
+  // HTML mode state
   const [htmlContent, setHtmlContent] = useState("");
 
   // Deliverability
-  const [deliverability, setDeliverability] = useState({
-    score: 100,
-    warnings: [],
-  });
+  const [deliverability, setDeliverability] = useState({ score: 100, warnings: [] });
   const [showDeliverabilityPanel, setShowDeliverabilityPanel] = useState(false);
 
-  // Token reference into the currently-active rich-text editor
+  // Template info popover
+  const [showInfoPanel, setShowInfoPanel] = useState(false);
+
+  // Preview viewport
+  const [previewViewport, setPreviewViewport] = useState("desktop");
+
   const activeTextEditorRef = useRef(null);
 
-  // Sensors — pointer for mouse/touch, keyboard for accessibility
   const sensors = useSensors(
-    useSensor(PointerSensor, {
-      activationConstraint: { distance: 4 }, // small distance to allow simple clicks
-    }),
-    useSensor(KeyboardSensor, {
-      coordinateGetter: sortableKeyboardCoordinates,
-    }),
+    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
 
-  // Notify parent of changes — fired when blocks, html, or mode change
   const fireChange = useCallback(() => {
     if (onChange) onChange();
   }, [onChange]);
 
-  // ─── recompute deliverability on content change ──────────────────
+  // ─── recompute deliverability ──────────────────────────────────────
   useEffect(() => {
-    let html = "";
-    if (editMode === "drag-drop") {
-      html = emailBlocks.map((b) => b.content || "").join("\n");
-    } else {
-      html = htmlContent;
-    }
+    let html = editMode === "html" ? htmlContent : emailBlocks.map((b) => b.content || "").join("\n");
     setDeliverability(analyzeDeliverability(html));
   }, [emailBlocks, htmlContent, editMode]);
 
-  // ─── onLoad callback ─────────────────────────────────────────────
+  // ─── onLoad callback ──────────────────────────────────────────────
   useEffect(() => {
     if (onLoad) onLoad();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ─── public API via ref ──────────────────────────────────────────
+  // ─── mode switching helpers ────────────────────────────────────────
+  const switchMode = useCallback((mode) => {
+    if (mode !== "preview") {
+      contentModeRef.current = mode;
+    }
+    setEditMode(mode);
+    setSelectedBlockId(null);
+    setShowInfoPanel(false);
+    setShowDeliverabilityPanel(false);
+  }, []);
+
+  // ─── public API via ref ───────────────────────────────────────────
   useImperativeHandle(
     ref,
     () => ({
       editor: {
         exportHtml: (callback) => {
-          let design;
-          let html;
-          if (editMode === "html") {
+          // Use contentModeRef to export the actual content mode even if currently previewing
+          const mode = contentModeRef.current;
+          let design, html;
+          if (mode === "html") {
             design = { mode: "html", content: htmlContent };
             html = htmlContent;
           } else {
-            // Re-stamp position from array index so the backend's position-sort
-            // matches user intent regardless of stale position fields.
             const blocks = emailBlocks.map((b, i) => ({ ...b, position: i }));
             design = { mode: "drag-drop", blocks };
             html = blocks.map((b) => b.content || "").join("\n");
@@ -218,20 +238,20 @@ const EmailEditor = forwardRef((props, ref) => {
         loadDesign: (design) => {
           if (!design) {
             setEditMode("drag-drop");
+            contentModeRef.current = "drag-drop";
             setEmailBlocks([]);
             setHtmlContent("");
             return;
           }
-
           if (design.mode === "html" && typeof design.content === "string") {
             setEditMode("html");
+            contentModeRef.current = "html";
             setHtmlContent(design.content);
             return;
           }
-
           if (design.mode === "drag-drop" && Array.isArray(design.blocks)) {
             setEditMode("drag-drop");
-            // Defensive — ensure every block has the fields we need
+            contentModeRef.current = "drag-drop";
             const safeBlocks = design.blocks
               .filter((b) => b && b.type)
               .map((b, i) => ({
@@ -245,66 +265,59 @@ const EmailEditor = forwardRef((props, ref) => {
             setEmailBlocks(safeBlocks);
             return;
           }
-
-          // Legacy "visual" mode: surface the raw content into HTML mode
-          // since we no longer have a contentEditable visual editor.
+          // Legacy visual mode
           if (design.mode === "visual" && typeof design.content === "string") {
             setEditMode("html");
+            contentModeRef.current = "html";
             setHtmlContent(design.content);
             return;
           }
-
-          // Legacy Unlayer-ish shape (body.rows[].columns[].contents[])
+          // Legacy Unlayer-ish shape
           if (design.body && Array.isArray(design.body.rows)) {
             const parts = [];
             for (const row of design.body.rows) {
               for (const col of row.columns || []) {
                 for (const c of col.contents || []) {
-                  if (c && c.type === "html" && c.values?.html) {
-                    parts.push(c.values.html);
-                  }
+                  if (c?.type === "html" && c.values?.html) parts.push(c.values.html);
                 }
               }
             }
             setEditMode("html");
+            contentModeRef.current = "html";
             setHtmlContent(parts.join("\n"));
             return;
           }
-
-          // Plain `html` field as a last resort
           if (typeof design.html === "string") {
             setEditMode("html");
+            contentModeRef.current = "html";
             setHtmlContent(design.html);
             return;
           }
-
           setEditMode("drag-drop");
+          contentModeRef.current = "drag-drop";
           setEmailBlocks([]);
           setHtmlContent("");
         },
 
         loadBlank: () => {
           setEditMode("drag-drop");
+          contentModeRef.current = "drag-drop";
           setEmailBlocks([]);
           setHtmlContent("");
           setSelectedBlockId(null);
         },
       },
     }),
-    [emailBlocks, htmlContent, editMode],
+    [emailBlocks, htmlContent],
   );
 
-  // ─── block mutators ──────────────────────────────────────────────
+  // ─── block mutators ───────────────────────────────────────────────
 
   const updateBlock = useCallback(
     (id, updater) => {
       setEmailBlocks((prev) =>
         prev.map((b) =>
-          b.id === id
-            ? typeof updater === "function"
-              ? updater(b)
-              : updater
-            : b,
+          b.id === id ? (typeof updater === "function" ? updater(b) : updater) : b,
         ),
       );
       fireChange();
@@ -336,45 +349,35 @@ const EmailEditor = forwardRef((props, ref) => {
     [fireChange],
   );
 
-  // ─── drag-drop handlers ──────────────────────────────────────────
+  // ─── drag-drop handlers ───────────────────────────────────────────
 
-  const handleDragStart = (event) => {
-    setActiveDragId(event.active.id);
-  };
+  const handleDragStart = (event) => setActiveDragId(event.active.id);
 
   const handleDragEnd = (event) => {
     setActiveDragId(null);
     const { active, over } = event;
     if (!over) return;
-
     const activeId = String(active.id);
-    const overId = String(over.id);
+    const overId   = String(over.id);
 
-    // Case 1: dragging a palette item onto the canvas
     if (activeId.startsWith(PALETTE_ID_PREFIX)) {
       const typeId = activeId.slice(PALETTE_ID_PREFIX.length);
       setEmailBlocks((prev) => {
-        // If dropped on the canvas drop-zone (empty canvas, or empty space
-        // below the last block), append to the end. Otherwise insert above
-        // the block we landed on.
-        let insertAt;
-        if (overId === CANVAS_DROP_ID) {
-          insertAt = prev.length;
-        } else {
-          const overIdx = prev.findIndex((b) => b.id === overId);
-          insertAt = overIdx === -1 ? prev.length : overIdx;
-        }
+        let insertAt = overId === CANVAS_DROP_ID
+          ? prev.length
+          : (() => {
+              const overIdx = prev.findIndex((b) => b.id === overId);
+              return overIdx === -1 ? prev.length : overIdx;
+            })();
         const newBlock = makeBlockFromType(typeId, insertAt);
         const next = [...prev];
         next.splice(insertAt, 0, newBlock);
-        // Re-stamp positions
         return next.map((b, i) => ({ ...b, position: i }));
       });
       fireChange();
       return;
     }
 
-    // Case 2: reordering existing blocks
     if (activeId !== overId) {
       setEmailBlocks((prev) => {
         const oldIndex = prev.findIndex((b) => b.id === activeId);
@@ -389,63 +392,104 @@ const EmailEditor = forwardRef((props, ref) => {
 
   const handleDragCancel = () => setActiveDragId(null);
 
-  // ─── selection ───────────────────────────────────────────────────
+  const selectedBlock = emailBlocks.find((b) => b.id === selectedBlockId) || null;
 
-  const selectedBlock =
-    emailBlocks.find((b) => b.id === selectedBlockId) || null;
+  // ─── preview HTML (memoized) ──────────────────────────────────────
+  const previewHtml = useMemo(() => {
+    const body =
+      contentModeRef.current === "html"
+        ? htmlContent
+        : emailBlocks.map((b) => b.content || "").join("\n");
+    return buildPreviewHtml(body);
+    // recompute whenever blocks or html changes, regardless of current view mode
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [emailBlocks, htmlContent]);
 
-  // ─── personalization token insertion (for the parent to wire up) ─
-  // We don't render a token panel inside the editor (it's better placed in
-  // the page chrome), but we expose the insertion mechanism via the active
-  // text editor ref. If/when the parent wants a token picker, it can call
-  // `emailEditorRef.current.editor.insertToken('{{first_name}}')`.
-  // Adding this without breaking the public API is optional; uncomment in
-  // imperative handle if needed.
-
-  // ─── render ──────────────────────────────────────────────────────
+  // ─── render ───────────────────────────────────────────────────────
 
   return (
     <div className="flex flex-col h-full bg-white">
-      {/* Mode tabs + deliverability indicator */}
+
+      {/* ── Mode tabs + toolbar ───────────────────────────────────── */}
       <div className="flex items-center justify-between border-b border-gray-200 px-4 flex-shrink-0">
         <div className="flex items-center">
           <ModeTab
             active={editMode === "drag-drop"}
-            onClick={() => setEditMode("drag-drop")}
+            onClick={() => switchMode("drag-drop")}
             icon={<MousePointer size={14} />}
           >
             Drag &amp; drop
           </ModeTab>
           <ModeTab
             active={editMode === "html"}
-            onClick={() => setEditMode("html")}
+            onClick={() => switchMode("html")}
             icon={<Code size={14} />}
           >
             HTML
           </ModeTab>
+          <ModeTab
+            active={editMode === "preview"}
+            onClick={() => switchMode("preview")}
+            icon={<Eye size={14} />}
+          >
+            Preview
+          </ModeTab>
         </div>
-        <button
-          type="button"
-          onClick={() => setShowDeliverabilityPanel((v) => !v)}
-          className={`flex items-center gap-1.5 px-3 py-1 rounded text-xs font-medium ${
-            deliverability.warnings.length === 0
-              ? "text-green-700 bg-green-50 hover:bg-green-100"
-              : "text-amber-700 bg-amber-50 hover:bg-amber-100"
-          }`}
-          title="Show deliverability checks"
-        >
-          {deliverability.warnings.length === 0 ? (
-            <CheckCircle size={12} />
-          ) : (
-            <AlertTriangle size={12} />
+
+        <div className="flex items-center gap-1.5">
+          {/* Template info button */}
+          {templateMeta && (
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowInfoPanel((v) => !v);
+                  setShowDeliverabilityPanel(false);
+                }}
+                className={`flex items-center gap-1 px-2.5 py-1 rounded text-xs font-medium transition-colors ${
+                  showInfoPanel
+                    ? "bg-gray-200 text-gray-800"
+                    : "text-gray-500 hover:bg-gray-100"
+                }`}
+                title="Template info"
+              >
+                <Info size={13} />
+              </button>
+              {showInfoPanel && (
+                <TemplateInfoPopover
+                  meta={templateMeta}
+                  onClose={() => setShowInfoPanel(false)}
+                />
+              )}
+            </div>
           )}
-          {deliverability.score}/100
-        </button>
+
+          {/* Deliverability score */}
+          <button
+            type="button"
+            onClick={() => {
+              setShowDeliverabilityPanel((v) => !v);
+              setShowInfoPanel(false);
+            }}
+            className={`flex items-center gap-1.5 px-3 py-1 rounded text-xs font-medium ${
+              deliverability.warnings.length === 0
+                ? "text-green-700 bg-green-50 hover:bg-green-100"
+                : "text-amber-700 bg-amber-50 hover:bg-amber-100"
+            }`}
+            title="Show deliverability checks"
+          >
+            {deliverability.warnings.length === 0
+              ? <CheckCircle size={12} />
+              : <AlertTriangle size={12} />
+            }
+            {deliverability.score}/100
+          </button>
+        </div>
       </div>
 
-      {/* Optional deliverability panel */}
+      {/* ── Deliverability panel ──────────────────────────────────── */}
       {showDeliverabilityPanel && (
-        <div className="border-b border-gray-200 bg-amber-50/50 px-4 py-2">
+        <div className="border-b border-gray-200 bg-amber-50/50 px-4 py-2 flex-shrink-0">
           {deliverability.warnings.length === 0 ? (
             <p className="text-xs text-green-700 flex items-center gap-1.5">
               <CheckCircle size={12} /> No deliverability issues detected.
@@ -463,8 +507,14 @@ const EmailEditor = forwardRef((props, ref) => {
         </div>
       )}
 
-      {/* Body */}
-      {editMode === "drag-drop" ? (
+      {/* ── Body ──────────────────────────────────────────────────── */}
+      {editMode === "preview" ? (
+        <PreviewMode
+          previewHtml={previewHtml}
+          viewport={previewViewport}
+          setViewport={setPreviewViewport}
+        />
+      ) : editMode === "drag-drop" ? (
         <DndContext
           sensors={sensors}
           collisionDetection={closestCenter}
@@ -479,17 +529,13 @@ const EmailEditor = forwardRef((props, ref) => {
               selectedId={selectedBlockId}
               onSelect={setSelectedBlockId}
               onChangeBlock={(updated) => updateBlock(updated.id, updated)}
-              onTextEditorReady={(ed) => {
-                activeTextEditorRef.current = ed;
-              }}
+              onTextEditorReady={(ed) => { activeTextEditorRef.current = ed; }}
             />
             <BlockSettingsPanel
               block={selectedBlock}
               onChange={(updated) => updateBlock(updated.id, updated)}
               onDelete={() => selectedBlock && deleteBlock(selectedBlock.id)}
-              onDuplicate={() =>
-                selectedBlock && duplicateBlock(selectedBlock.id)
-              }
+              onDuplicate={() => selectedBlock && duplicateBlock(selectedBlock.id)}
               onClose={() => setSelectedBlockId(null)}
             />
           </div>
@@ -503,10 +549,7 @@ const EmailEditor = forwardRef((props, ref) => {
       ) : (
         <HtmlMode
           value={htmlContent}
-          onChange={(v) => {
-            setHtmlContent(v);
-            fireChange();
-          }}
+          onChange={(v) => { setHtmlContent(v); fireChange(); }}
         />
       )}
     </div>
@@ -514,10 +557,9 @@ const EmailEditor = forwardRef((props, ref) => {
 });
 
 EmailEditor.displayName = "EmailEditor";
-
 export default EmailEditor;
 
-// ─── subcomponents ──────────────────────────────────────────────────
+// ─── ModeTab ──────────────────────────────────────────────────────────
 
 function ModeTab({ active, onClick, icon, children }) {
   return (
@@ -536,18 +578,9 @@ function ModeTab({ active, onClick, icon, children }) {
   );
 }
 
-function Canvas({
-  blocks,
-  selectedId,
-  onSelect,
-  onChangeBlock,
-  onTextEditorReady,
-}) {
-  // The whole inner area is a droppable. When you drag a palette item
-  // onto an empty canvas (or into the empty space *below* existing blocks),
-  // dnd-kit's `over` resolves to this id and handleDragEnd appends the
-  // new block. Without this, palette → empty canvas would no-op because
-  // there's nothing to "land on."
+// ─── Canvas ───────────────────────────────────────────────────────────
+
+function Canvas({ blocks, selectedId, onSelect, onChangeBlock, onTextEditorReady }) {
   const { setNodeRef, isOver } = useDroppable({ id: CANVAS_DROP_ID });
 
   return (
@@ -565,7 +598,6 @@ function Canvas({
           <div
             className="p-6 space-y-2 min-h-[400px]"
             onClick={(e) => {
-              // Click on empty canvas area → deselect
               if (e.target === e.currentTarget) onSelect(null);
             }}
           >
@@ -585,10 +617,6 @@ function Canvas({
                     }
                   />
                 ))}
-                {/* Tail spacer — lets users drop at the very end of the
-                    list by aiming below the last block. The Canvas's own
-                    droppable already handles this, but giving it visible
-                    space makes the intent obvious. */}
                 <div className="h-6" aria-hidden="true" />
               </>
             )}
@@ -606,11 +634,7 @@ function EmptyCanvasHint({ isOver }) {
         isOver ? "border-blue-400 bg-blue-50" : "border-gray-200"
       }`}
     >
-      <p
-        className={`text-sm font-medium ${
-          isOver ? "text-blue-700" : "text-gray-500"
-        }`}
-      >
+      <p className={`text-sm font-medium ${isOver ? "text-blue-700" : "text-gray-500"}`}>
         {isOver
           ? "Drop here to add the block"
           : "Drag blocks from the left to start building your email"}
@@ -622,9 +646,10 @@ function EmptyCanvasHint({ isOver }) {
   );
 }
 
+// ─── DragPreview ──────────────────────────────────────────────────────
+
 function DragPreview({ activeDragId, blocks }) {
   const id = String(activeDragId);
-
   if (id.startsWith(PALETTE_ID_PREFIX)) {
     const typeId = id.slice(PALETTE_ID_PREFIX.length);
     const def = getBlockDefinition(typeId);
@@ -637,28 +662,24 @@ function DragPreview({ activeDragId, blocks }) {
       </div>
     );
   }
-
   const block = blocks.find((b) => b.id === id);
   if (!block) return null;
   return (
     <div className="bg-white shadow-lg rounded-md border border-blue-400 px-4 py-3 max-w-md opacity-90">
-      <div
-        className="pointer-events-none"
-        dangerouslySetInnerHTML={{ __html: block.content }}
-      />
+      <div className="pointer-events-none" dangerouslySetInnerHTML={{ __html: block.content }} />
     </div>
   );
 }
 
+// ─── HtmlMode ─────────────────────────────────────────────────────────
+
 function HtmlMode({ value, onChange }) {
   return (
     <div className="flex-1 min-h-0 flex flex-col bg-gray-50">
-      <div className="px-4 py-2 border-b border-gray-200 bg-white">
+      <div className="px-4 py-2 border-b border-gray-200 bg-white flex-shrink-0">
         <p className="text-xs text-gray-500">
           Edit raw HTML. Personalization tokens like{" "}
-          <code className="px-1 py-0.5 bg-gray-100 rounded">
-            {"{{first_name}}"}
-          </code>{" "}
+          <code className="px-1 py-0.5 bg-gray-100 rounded">{"{{first_name}}"}</code>{" "}
           are preserved on send.
         </p>
       </div>
@@ -667,8 +688,142 @@ function HtmlMode({ value, onChange }) {
         onChange={(e) => onChange(e.target.value)}
         spellCheck={false}
         className="flex-1 w-full p-4 font-mono text-xs leading-relaxed bg-white border-0 focus:outline-none resize-none"
-        placeholder="<!doctype html>&#10;<html>&#10;  <body>&#10;    <p>Hello {{first_name}},</p>&#10;  </body>&#10;</html>"
+        placeholder={"<!doctype html>\n<html>\n  <body>\n    <p>Hello {{first_name}},</p>\n  </body>\n</html>"}
       />
+    </div>
+  );
+}
+
+// ─── PreviewMode ──────────────────────────────────────────────────────
+
+function PreviewMode({ previewHtml, viewport, setViewport }) {
+  const iframeRef = useRef(null);
+
+  const viewportWidth = {
+    desktop: "100%",
+    tablet: "768px",
+    mobile: "375px",
+  }[viewport];
+
+  // Auto-resize iframe to fit content height
+  const handleIframeLoad = (e) => {
+    try {
+      const doc = e.target.contentDocument || e.target.contentWindow?.document;
+      if (doc) {
+        const h = doc.documentElement.scrollHeight || doc.body.scrollHeight;
+        e.target.style.height = Math.max(h + 32, 400) + "px";
+      }
+    } catch {
+      // cross-origin safety — no-op
+    }
+  };
+
+  return (
+    <div className="flex-1 min-h-0 flex flex-col bg-gray-100">
+      {/* Viewport controls */}
+      <div className="px-4 py-2 bg-white border-b border-gray-200 flex items-center justify-between flex-shrink-0">
+        <div className="flex items-center gap-1">
+          {[
+            { mode: "desktop", Icon: Monitor,    label: "Desktop" },
+            { mode: "tablet",  Icon: Tablet,     label: "Tablet"  },
+            { mode: "mobile",  Icon: Smartphone, label: "Mobile"  },
+          ].map(({ mode, Icon, label }) => (
+            <button
+              key={mode}
+              type="button"
+              onClick={() => setViewport(mode)}
+              title={label}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-colors ${
+                viewport === mode
+                  ? "bg-blue-600 text-white"
+                  : "text-gray-500 hover:bg-gray-100"
+              }`}
+            >
+              <Icon size={13} />
+              {label}
+            </button>
+          ))}
+        </div>
+        <p className="text-[11px] text-gray-400">
+          Live preview · personalization tokens shown as-is
+        </p>
+      </div>
+
+      {/* Preview pane */}
+      <div className="flex-1 overflow-auto flex justify-center p-6">
+        <div
+          className="bg-white shadow-lg transition-all duration-200 overflow-hidden"
+          style={{
+            width: viewportWidth,
+            maxWidth: "100%",
+            minHeight: 400,
+            border: viewport !== "desktop" ? "2px solid #d1d5db" : "none",
+            borderRadius: viewport !== "desktop" ? 8 : 0,
+          }}
+        >
+          <iframe
+            ref={iframeRef}
+            srcDoc={previewHtml}
+            title="Email preview"
+            className="w-full border-0 block"
+            style={{ minHeight: 400 }}
+            onLoad={handleIframeLoad}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── TemplateInfoPopover ──────────────────────────────────────────────
+
+function TemplateInfoPopover({ meta, onClose }) {
+  const mode = meta?.content_json?.mode || "new";
+  const fields = Array.isArray(meta?.fields) ? meta.fields : [];
+
+  return (
+    <div className="absolute right-0 top-full mt-1 w-64 bg-white border border-gray-200 rounded-lg shadow-lg z-50 text-xs">
+      <div className="flex items-center justify-between px-3 py-2 border-b border-gray-100">
+        <span className="font-semibold text-gray-700 truncate pr-2">
+          {meta?.name || "Untitled template"}
+        </span>
+        <button
+          type="button"
+          onClick={onClose}
+          className="text-gray-400 hover:text-gray-600 flex-shrink-0"
+        >
+          <X size={12} />
+        </button>
+      </div>
+      <div className="px-3 py-2.5 space-y-1.5">
+        <InfoRow label="Mode" value={mode} />
+        {meta?.created_at && (
+          <InfoRow label="Created" value={fmtDate(meta.created_at)} />
+        )}
+        {meta?.updated_at && (
+          <InfoRow label="Last saved" value={fmtDate(meta.updated_at)} />
+        )}
+        {meta?.subject && (
+          <InfoRow label="Subject" value={meta.subject} />
+        )}
+        <InfoRow
+          label="Tokens"
+          value={
+            fields.length > 0
+              ? fields.map((f) => `{{${f}}}`).join(", ")
+              : "None detected"
+          }
+        />
+      </div>
+    </div>
+  );
+}
+
+function InfoRow({ label, value }) {
+  return (
+    <div className="flex gap-2">
+      <span className="text-gray-400 w-20 flex-shrink-0">{label}</span>
+      <span className="text-gray-700 break-all">{value}</span>
     </div>
   );
 }
