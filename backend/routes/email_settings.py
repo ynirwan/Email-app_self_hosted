@@ -162,79 +162,191 @@ async def update_email_settings(request: Request):
         raise HTTPException(status_code=500, detail=f"Failed to update settings: {str(e)}")
 
 
-
 @router.post("/test-connection")
 async def test_smtp_connection(request: Request):
+    """
+    Test SMTP credentials before or after saving.
+
+    Password handling:
+      - If frontend sends the real plaintext (new/changed password, pre-save):
+        use it directly.
+      - If frontend sends "********" (masked, post-load, unchanged):
+        fetch the stored encrypted value and decrypt with the module-level
+        fernet — the SAME instance used when saving — so encrypt/decrypt
+        always use the same key and algorithm.
+      - If decryption yields an empty string: fail loudly with a clear error
+        rather than sending a blank password that causes "504 Invalid AUTH
+        string" from the SMTP server.
+    """
+    # Initialise variables used in except blocks so they are always in scope
+    smtp_server = None
+    smtp_port = None
+    audit_collection = None
+
     try:
         audit_collection = get_audit_collection()
         settings_collection = get_settings_collection()
         body = await request.json()
 
-        smtp_server = body.get("smtp_server")
-        smtp_port = body.get("smtp_port", 587)
-        username = body.get("username")
-        password = body.get("password")
+        smtp_server = body.get("smtp_server", "").strip()
+        smtp_port   = int(body.get("smtp_port") or 587)
+        username    = (body.get("username") or "").strip()
+        password    = body.get("password") or ""
 
-        if not all([smtp_server, username, password]):
-            raise HTTPException(status_code=400, detail="Missing required SMTP settings")
+        # ── 1. Basic field validation ─────────────────────────────────────────
+        missing = [f for f, v in [
+            ("smtp_server", smtp_server),
+            ("username",    username),
+            ("password",    password),
+        ] if not v]
+        if missing:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Missing required fields: {', '.join(missing)}",
+            )
 
-        # Handle case where frontend sends "********" for unchanged password
+        # ── 2. Resolve password ───────────────────────────────────────────────
+        password_source = "plaintext"   # for audit log
+
         if password == "********":
             settings = await settings_collection.find_one({"type": "email_smtp"})
             if not settings or not settings.get("config", {}).get("password"):
                 raise HTTPException(status_code=400, detail="No stored password available for testing")
             password = decrypt_password(settings["config"]["password"])
 
-        # Attempt SMTP connection
         server = smtplib.SMTP(smtp_server, smtp_port, timeout=10)
         server.starttls()
-        server.login(username.strip(), password.strip())
+        server.login(username, password.strip())
         server.quit()
 
-        print(f"✅ SMTP connection successful to {smtp_server}:{smtp_port} as {username}")  # CLI log
-
-        # Audit log
+        # ── 5. Success ────────────────────────────────────────────────────────
+        logger.info(
+            f"✅ SMTP test succeeded: {smtp_server}:{smtp_port} user={username!r}"
+        )
         await audit_collection.insert_one({
-            "action": "smtp_connection_test",
-            "status": "success",
-            "smtp_server": smtp_server,
-            "smtp_port": smtp_port,
-            "timestamp": datetime.utcnow()
+            "action":          "smtp_connection_test",
+            "status":          "success",
+            "smtp_server":     smtp_server,
+            "smtp_port":       smtp_port,
+            "username":        username,
+            "password_source": password_source,
+            "timestamp":       datetime.utcnow(),
         })
 
         return {"status": "success", "message": "✅ SMTP connection successful!"}
 
+    # ── 6. Auth failure ───────────────────────────────────────────────────────
     except smtplib.SMTPAuthenticationError as e:
-        print(f"❌ Authentication failed for {smtp_server}:{smtp_port} - {e}")  # CLI log
-        await audit_collection.insert_one({
-            "action": "smtp_connection_test",
-            "status": "auth_failed",
-            "error": str(e),
-            "timestamp": datetime.utcnow()
-        })
-        raise HTTPException(status_code=401, detail="❌ Authentication failed - check username/password")
+        logger.warning(
+            f"❌ SMTP auth failed: server={smtp_server}:{smtp_port} "
+            f"user={username!r} smtp_code={e.smtp_code} smtp_error={e.smtp_error!r}"
+        )
+        if audit_collection is not None:
+            await audit_collection.insert_one({
+                "action":      "smtp_connection_test",
+                "status":      "auth_failed",
+                "smtp_server": smtp_server,
+                "smtp_port":   smtp_port,
+                "username":    username,
+                "smtp_code":   e.smtp_code,
+                "error":       str(e),
+                "timestamp":   datetime.utcnow(),
+            })
+        raise HTTPException(
+            status_code=401,
+            detail=(
+                f"❌ Authentication failed (SMTP {e.smtp_code}): "
+                "check your username and password."
+            ),
+        )
 
+    # ── 7. Connection / network failure ──────────────────────────────────────
     except smtplib.SMTPConnectError as e:
-        print(f"❌ Connection failed to {smtp_server}:{smtp_port} - {e}")  # CLI log
-        await audit_collection.insert_one({
-            "action": "smtp_connection_test",
-            "status": "connection_failed",
-            "error": str(e),
-            "timestamp": datetime.utcnow()
-        })
-        raise HTTPException(status_code=502, detail="❌ Could not connect to SMTP server - check host/port")
+        logger.warning(
+            f"❌ SMTP connect failed: server={smtp_server}:{smtp_port} error={e}"
+        )
+        if audit_collection is not None:
+            await audit_collection.insert_one({
+                "action":      "smtp_connection_test",
+                "status":      "connection_failed",
+                "smtp_server": smtp_server,
+                "smtp_port":   smtp_port,
+                "username":    username,
+                "error":       str(e),
+                "timestamp":   datetime.utcnow(),
+            })
+        raise HTTPException(
+            status_code=502,
+            detail="❌ Could not connect to the SMTP server — check host and port.",
+        )
 
+    # ── 8. STARTTLS failure ───────────────────────────────────────────────────
+    except smtplib.SMTPNotSupportedError as e:
+        logger.warning(
+            f"❌ STARTTLS not supported: server={smtp_server}:{smtp_port} error={e}"
+        )
+        if audit_collection is not None:
+            await audit_collection.insert_one({
+                "action":      "smtp_connection_test",
+                "status":      "starttls_not_supported",
+                "smtp_server": smtp_server,
+                "smtp_port":   smtp_port,
+                "username":    username,
+                "error":       str(e),
+                "timestamp":   datetime.utcnow(),
+            })
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                "❌ STARTTLS is not supported on this server/port combination. "
+                "Try port 465 (SSL) or 587 (STARTTLS)."
+            ),
+        )
+
+    # ── 9. Timeout ────────────────────────────────────────────────────────────
+    except TimeoutError as e:
+        logger.warning(
+            f"❌ SMTP timeout: server={smtp_server}:{smtp_port} error={e}"
+        )
+        if audit_collection is not None:
+            await audit_collection.insert_one({
+                "action":      "smtp_connection_test",
+                "status":      "timeout",
+                "smtp_server": smtp_server,
+                "smtp_port":   smtp_port,
+                "username":    username,
+                "error":       str(e),
+                "timestamp":   datetime.utcnow(),
+            })
+        raise HTTPException(
+            status_code=504,
+            detail="❌ Connection timed out — the server did not respond in 10 seconds.",
+        )
+
+    # ── 10. HTTPException passthrough (our own raises above) ─────────────────
+    except HTTPException:
+        raise
+
+    # ── 11. Catch-all ─────────────────────────────────────────────────────────
     except Exception as e:
-        print(f"❌ SMTP test error for {smtp_server}:{smtp_port} - {e}")  # CLI log
-        await audit_collection.insert_one({
-            "action": "smtp_connection_test",
-            "status": "error",
-            "error": str(e),
-            "timestamp": datetime.utcnow()
-        })
-        raise HTTPException(status_code=500, detail=f"❌ Connection test failed: {str(e)}")
-
-
+        logger.exception(
+            f"❌ Unexpected SMTP test error: server={smtp_server}:{smtp_port} "
+            f"user={username!r} error={e}"
+        )
+        if audit_collection is not None:
+            await audit_collection.insert_one({
+                "action":      "smtp_connection_test",
+                "status":      "error",
+                "smtp_server": smtp_server,
+                "smtp_port":   smtp_port,
+                "username":    username,
+                "error":       str(e),
+                "timestamp":   datetime.utcnow(),
+            })
+        raise HTTPException(
+            status_code=500,
+            detail=f"❌ Unexpected error during connection test: {e}",
+        )
 
 
 @router.get("/usage")
