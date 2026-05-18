@@ -54,7 +54,7 @@ def str_object_id(obj):
 async def get_smtp_settings():
     """Get SMTP settings from database"""
     settings_collection = get_settings_collection()
-    settings = await settings_collection.find_one({"type": "email"})
+    settings = await settings_collection.find_one({"type": "email_smtp"})
     
     if not settings or not settings.get("config"):
         raise HTTPException(

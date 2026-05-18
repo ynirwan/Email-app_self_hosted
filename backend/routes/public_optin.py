@@ -227,7 +227,7 @@ async def _get_smtp_config() -> Optional[dict]:
     try:
         from database import get_settings_collection
         settings_col = get_settings_collection()
-        doc = await settings_col.find_one({"type": "email"})
+        doc = await settings_col.find_one({"type": "email_smtp"})
         if not doc:
             return None
         config = doc.get("config", {})

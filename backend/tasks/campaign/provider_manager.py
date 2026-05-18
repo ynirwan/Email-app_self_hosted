@@ -30,28 +30,32 @@ from database import get_sync_settings_collection
 from tasks.task_config import task_settings, get_redis_key
 from .rate_limiter import EmailProvider
 from .audit_logger import log_system_event, AuditEventType, AuditSeverity
+from core.security import decrypt_password as _core_decrypt_password
 import redis
-from cryptography.fernet import Fernet
 
 logger = logging.getLogger(__name__)
 
-ENCRYPTION_KEY = task_settings.MASTER_ENCRYPTION_KEY
-
 
 def decrypt_smtp_password(encrypted_password: str) -> str:
-    """Decrypt password using same Fernet key as email_settings.py"""
-    try:
-        if not encrypted_password:
-            return ""
-        if not encrypted_password.startswith("gAAAAA"):
-            return encrypted_password  # plaintext, use as-is
-        fernet = Fernet(ENCRYPTION_KEY.encode())
-        decrypted = fernet.decrypt(encrypted_password.encode())
-        logger.info("✅ Password decrypted successfully")
-        return decrypted.decode()
-    except Exception as e:
-        logger.error(f"❌ Password decryption failed: {e}")
+    """Decrypt SMTP password via core.security (same MASTER_ENCRYPTION_KEY Fernet key).
+
+    Handles both Fernet-encrypted tokens and legacy plaintext values stored
+    before encryption was enforced.  Fernet tokens always begin with 'gAAAAA';
+    anything else is returned as-is so old plaintext credentials still work.
+    """
+    if not encrypted_password:
+        return ""
+    # Plaintext fall-through: not a Fernet token, use as-is
+    if not encrypted_password.startswith("gAAAAA"):
         return encrypted_password
+    result = _core_decrypt_password(encrypted_password)
+    if result:
+        logger.info("✅ Password decrypted successfully")
+        return result
+    # Decryption returned empty — log and surface the raw token rather than
+    # silently failing with an empty password that would reject every send.
+    logger.error("❌ Password decryption failed — check MASTER_ENCRYPTION_KEY")
+    return encrypted_password
 
 
 class ProviderStatus(Enum):
@@ -489,11 +493,6 @@ class EmailProviderManager:
                         f"smtp_server='{email_config['smtp_server']}'"
                     )
 
-            if task_settings.MOCK_EMAIL_SENDING:
-                self._setup_mock_provider()
-                logger.info("MOCK_EMAIL_SENDING=True — using mock provider")
-                return
-
             if email_config:
                 svc = email_config.get("email_service", "smtp").lower()
                 if svc == "sendgrid":
@@ -566,28 +565,6 @@ class EmailProviderManager:
         }
         self.provider_configs["mailgun"] = pc
         self.providers["mailgun"] = SMTPEmailService(pc)
-
-    def _setup_mock_provider(self):
-        class _Mock(EmailServiceInterface):
-            def send_email(self, *a, **kw):
-                import random as _r
-
-                time.sleep(_r.uniform(0.01, 0.05))
-                return {
-                    "success": True,
-                    "message_id": f"mock_{int(time.time() * 1000)}",
-                    "provider": "mock",
-                    "cost": 0.0,
-                }
-
-            def get_provider_status(self):
-                return ProviderStatus.HEALTHY, {"mock": True}
-
-            def get_provider_limits(self):
-                return {"emails_per_second": 1000}
-
-        self.provider_configs["mock"] = {"type": "mock"}
-        self.providers["mock"] = _Mock()
 
     def get_best_provider(
         self, campaign_id: str = None

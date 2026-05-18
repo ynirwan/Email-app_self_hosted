@@ -365,6 +365,24 @@ async def update_campaign(campaign_id: str, campaign_data: CampaignUpdate):
             )
         )
 
+        # Surface a soft warning to the UI when the user edited a non-draft
+        # (paused) campaign. Draft edits return no warning. Previously this
+        # variable was referenced in the response without ever being defined,
+        # causing every successful update to 500 *after* the DB write landed.
+        non_draft_warning = None
+        if current_status in _PAUSED:
+            if pause_reason == "provider_error_auto_pause":
+                non_draft_warning = (
+                    "Campaign was auto-paused due to a provider error. "
+                    "Audience, template, title and subject are locked — "
+                    "you may only fix sender details."
+                )
+            else:
+                non_draft_warning = (
+                    "Campaign is paused. Audience and template are locked "
+                    "to keep in-flight sends consistent."
+                )
+
         # ✅ Tiered mapping validation
         validated_mapping = await validate_tiered_field_mapping(
             campaign_data.field_map, campaign_data.target_lists

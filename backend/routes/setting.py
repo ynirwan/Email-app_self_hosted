@@ -53,7 +53,7 @@ class EmailTestSettings(BaseModel):
 async def get_smtp_mode():
     """Get SMTP mode from database settings"""
     settings_collection = get_settings_collection()
-    settings = await settings_collection.find_one({"type": "email"})
+    settings = await settings_collection.find_one({"type": "email_smtp"})
     if settings and settings.get("smtp_mode"):
         return settings["smtp_mode"].lower()
     if settings and settings.get("config", {}).get("smtp_choice"):
@@ -64,7 +64,7 @@ async def get_smtp_mode():
 async def get_managed_smtp_limits():
     """Get managed SMTP limits from database settings"""
     settings_collection = get_settings_collection()
-    settings = await settings_collection.find_one({"type": "email"})
+    settings = await settings_collection.find_one({"type": "email_smtp"})
     if settings:
         config = settings.get("config", {})
         sending_limits = config.get("sending_limits", {})
@@ -121,7 +121,7 @@ async def get_email_settings():
     """Get current email settings"""
     try:
         settings_collection = get_settings_collection()
-        settings = await settings_collection.find_one({"type": "email"})
+        settings = await settings_collection.find_one({"type": "email_smtp"})
         smtp_mode = await get_smtp_mode()
 
         if not settings:
@@ -184,15 +184,15 @@ async def update_email_settings(settings: EmailSettings):
                 raise HTTPException(status_code=400, detail=str(e))
 
         # Check if this is a new configuration or update
-        existing_settings = await settings_collection.find_one({"type": "email"})
+        existing_settings = await settings_collection.find_one({"type": "email_smtp"})
         is_new_config = existing_settings is None
 
         # Update settings
         result = await settings_collection.update_one(
-            {"type": "email"},
+            {"type": "email_smtp"},
             {
                 "$set": {
-                    "type": "email",
+                    "type": "email_smtp",
                     "config": settings.dict(),
                     "updated_at": datetime.utcnow(),
                     "smtp_mode": smtp_mode,
@@ -339,7 +339,7 @@ async def get_email_system_status():
         audit_collection = get_audit_collection()
         smtp_mode = await get_smtp_mode()
 
-        settings = await settings_collection.find_one({"type": "email"})
+        settings = await settings_collection.find_one({"type": "email_smtp"})
 
         # Get recent audit logs
         recent_tests = await audit_collection.find(
@@ -400,12 +400,12 @@ async def delete_email_settings():
         smtp_mode = await get_smtp_mode()
 
         # Check if settings exist
-        existing_settings = await settings_collection.find_one({"type": "email"})
+        existing_settings = await settings_collection.find_one({"type": "email_smtp"})
         if not existing_settings:
             raise HTTPException(status_code=404, detail="Email settings not found")
 
         # Delete settings
-        result = await settings_collection.delete_one({"type": "email"})
+        result = await settings_collection.delete_one({"type": "email_smtp"})
 
         # Log the deletion
         await audit_collection.insert_one(
@@ -451,7 +451,7 @@ async def get_email_limits():
         settings_collection = get_settings_collection()
         smtp_mode = await get_smtp_mode()
 
-        settings = await settings_collection.find_one({"type": "email"})
+        settings = await settings_collection.find_one({"type": "email_smtp"})
         current_limits = (
             settings.get("config", {}).get("sending_limits", {}) if settings else {}
         )

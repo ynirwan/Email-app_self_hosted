@@ -548,6 +548,10 @@ async def ensure_indexes():
     try:
         logger.info("🔧 Creating database indexes...")
 
+        # Users — email is the unique login identifier.
+        users = get_users_collection()
+        await users.create_index([("email", ASCENDING)], unique=True, name="users_email_unique")
+
         # Subscribers indexes
         subscribers = get_subscribers_collection()
         await subscribers.create_index(
@@ -648,6 +652,9 @@ def ensure_indexes_sync():
         logger.info("🔧 Creating database indexes (sync)...")
 
         db = get_sync_database()
+
+        # Users — email is the unique login identifier.
+        db.users.create_index([("email", ASCENDING)], unique=True, name="users_email_unique")
 
         # Subscribers indexes
         db.subscribers.create_index(

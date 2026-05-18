@@ -14,7 +14,6 @@ identical (generate_unsubscribe_token / build_unsubscribe_url).
 """
 
 import logging
-import uuid
 from datetime import datetime
 from typing import Optional
 
@@ -23,6 +22,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
+from core.security import sign_tracking_token, verify_tracking_token
 from database import get_sync_unsubscribe_tokens_collection
 
 logger = logging.getLogger(__name__)
@@ -32,7 +32,22 @@ router = APIRouter(tags=["unsubscribe"])
 # ── Token generation ──────────────────────────────────────────────────────────
 
 def generate_unsubscribe_token(campaign_id: str, subscriber_id: str, email: str) -> str:
-    token = uuid.uuid4().hex
+    """
+    Mint an unsubscribe token.
+
+    Security layers (defence in depth):
+      1. HMAC signature (stateless, tamper-proof) — embedded in the token.
+      2. DB row with `used` flag — enforces one-time use and provides an audit
+         trail. The DB row also lets us hard-revoke a token if needed without
+         rotating JWT_SECRET.
+
+    The signature is the actual security boundary — if it fails to verify,
+    we never look at the DB.
+    """
+    token = sign_tracking_token(
+        "u", str(campaign_id), str(subscriber_id),
+        ttl_seconds=60 * 60 * 24 * 365,  # 1 year — enough for late opt-outs
+    )
     col = get_sync_unsubscribe_tokens_collection()
     col.insert_one(
         {

@@ -543,12 +543,18 @@ def upsert_delivery_state(
 def send_single_campaign_email(self, campaign_id: str, subscriber_id: str):
     start_time = time.time()
 
+    # Pre-declare lock state so the outer `finally` can reference these without
+    # a NameError in any early-exit path that runs before the lock is acquired.
+    _send_lock_key = f"campaign_send_lock:{campaign_id}:{subscriber_id}"
+    _send_redis = None
+
     try:
         # ── ABORT FLAG CHECK ──────────────────────────────────────────────────
-        # If another task already triggered a campaign-level pause, exit cheaply
-        # without touching DB, counters, or locks.
-
+        # If another task already triggered a campaign-level pause, exit cheaply.
+        # We MUST still decrement queued_count, otherwise the counter is stuck
+        # forever and the dashboard shows phantom in-flight work.
         if _check_campaign_abort(campaign_id):
+            _decrement_queued(campaign_id)
             return {
                 "skipped": True,
                 "reason": "campaign_aborted",
@@ -618,15 +624,17 @@ def send_single_campaign_email(self, campaign_id: str, subscriber_id: str):
         # Two concurrent tasks for same (campaign, subscriber) race here;
         # only one wins nx=True. The loser returns "skipped" cleanly without
         # touching counters or delivery state — the winner will do all that.
-        # TTL=900s covers max send timeout + all retries.
-        _send_lock_key = f"campaign_send_lock:{campaign_id}:{subscriber_id}"
-        _send_redis = None
+        #
+        # TTL = TASK_TIMEOUT + a small safety margin; the outer `finally` block
+        # releases the lock as soon as this task returns (success or failure),
+        # so the TTL is only a backstop for crashed workers.
+        _send_lock_ttl = int(task_settings.TASK_TIMEOUT_SECONDS) + 60
         try:
             from core.redis_client import get_redis as _get_redis
 
             _send_redis = _get_redis()
             lock_acquired = _send_redis.set(
-                _send_lock_key, self.request.id, nx=True, ex=900
+                _send_lock_key, self.request.id, nx=True, ex=_send_lock_ttl
             )
             if not lock_acquired:
                 _decrement_queued(campaign_id)
@@ -913,16 +921,22 @@ def send_single_campaign_email(self, campaign_id: str, subscriber_id: str):
                     else:
                         _html_to_send += _pixel
 
+                # Always close the loop, even if create_tracking_record raises,
+                # otherwise we leak a file descriptor per send.
+                _loop = _asyncio.new_event_loop()
                 try:
-                    _loop = _asyncio.new_event_loop()
                     _loop.run_until_complete(
                         create_tracking_record(
                             campaign_id, subscriber_id, recipient_email, _open_token
                         )
                     )
-                    _loop.close()
                 except Exception as _te:
                     logger.warning(f"create_tracking_record failed: {_te}")
+                finally:
+                    try:
+                        _loop.close()
+                    except Exception:
+                        pass
 
             except Exception as _lre:
                 logger.warning(f"Tracking inject/rewrite failed: {_lre}")
@@ -940,6 +954,67 @@ def send_single_campaign_email(self, campaign_id: str, subscriber_id: str):
                 "is_requeue": is_requeue,
             },
         )
+
+        # ── STEP 7b: PAUSE/CANCEL CAS — final check before SMTP ───────────────
+        # A user can hit Pause/Stop after we cleared all the earlier checks but
+        # before the network round-trip starts. This is the very last safe spot
+        # to bail without sending. We also re-check the abort flag (provider-
+        # level auto-pause may have fired in another worker since we started).
+        if (
+            _check_campaign_abort(campaign_id)
+            or campaign_controller.is_campaign_paused(campaign_id)
+            or campaign_controller.is_campaign_stopped(campaign_id)
+        ):
+            _decrement_queued(campaign_id)
+            return {
+                "status": "skipped",
+                "reason": "pause_or_stop_detected_pre_smtp",
+                "campaign_id": campaign_id,
+            }
+
+        # Claim the delivery-state row as 'sending' atomically. The unique
+        # (campaign_id, subscriber_id) index on email_delivery_state means
+        # the upsert is the canonical CAS — if another worker already wrote
+        # 'sent' / 'delivered' / 'failed' / 'suppressed' between the duplicate
+        # check above and here, our upsert is a no-op for the state field
+        # (terminal states are protected in upsert_delivery_state) and we skip.
+        try:
+            _cas_col = get_sync_email_delivery_state_collection()
+            _cas_res = _cas_col.update_one(
+                {
+                    "campaign_id": ObjectId(campaign_id),
+                    "subscriber_id": subscriber_id,
+                    # Only claim if not already terminal.
+                    "$or": [
+                        {"state": {"$exists": False}},
+                        {"state": {"$nin": list(_TERMINAL_STATES)}},
+                    ],
+                },
+                {
+                    "$set": {
+                        "state": "sending",
+                        "email": recipient_email,
+                        "task_id": self.request.id,
+                        "updated_at": datetime.utcnow(),
+                    },
+                    "$setOnInsert": {"created_at": datetime.utcnow()},
+                },
+                upsert=True,
+            )
+            # If no doc matched AND no upsert happened, another worker already
+            # claimed (or terminally completed) this recipient — bail safely.
+            if _cas_res.matched_count == 0 and _cas_res.upserted_id is None:
+                _decrement_queued(campaign_id)
+                return {
+                    "status": "skipped",
+                    "reason": "delivery_state_cas_lost",
+                }
+        except Exception as _cas_err:
+            # CAS is best-effort: a Mongo blip here must not prevent sending.
+            # The per-recipient send lock + duplicate check still guard us.
+            logger.warning(
+                f"Pre-SMTP CAS failed for {campaign_id}/{subscriber_id}: {_cas_err}"
+            )
 
         try:
             send_result = email_provider_manager.send_email_with_failover(
@@ -981,46 +1056,12 @@ def send_single_campaign_email(self, campaign_id: str, subscriber_id: str):
                     },
                 )
 
-                if not is_permanent:
-                    _cls = classify_submission_error(error_reason)
-                    if _cls["error_class"] in (
-                        ProviderErrorClass.CONFIG_ERROR,
-                        ProviderErrorClass.LIMIT_ERROR,
-                    ):
-                        _handle_campaign_level_failure(campaign_id, _cls)
-                        log_email_status(
-                            campaign_id,
-                            subscriber_id,
-                            recipient_email,
-                            "failed",
-                            None,
-                            _cls["human_message"],
-                            attempted_providers[0]
-                            if attempted_providers
-                            else "unknown",
-                        )
-                        upsert_delivery_state(
-                            campaign_id,
-                            subscriber_id,
-                            recipient_email,
-                            "failed",
-                            failure_reason=_cls["human_message"],
-                            attempts_inc=1,
-                        )
-                        if not is_requeue:
-                            campaigns_collection.update_one(
-                                {"_id": ObjectId(campaign_id)},
-                                {
-                                    "$inc": {"failed_count": 1, "processed_count": 1},
-                                    "$set": {"last_batch_at": datetime.utcnow()},
-                                },
-                            )
-                        _decrement_queued(campaign_id)
-                        return {
-                            "status": "aborted",
-                            "reason": f"campaign_auto_paused:{_cls['error_type']}",
-                            "error": _cls["human_message"],
-                        }
+                # NOTE: previously this block contained dead failure-branch logic
+                # (referenced is_permanent / error_reason / attempted_providers,
+                # none of which are defined on the success path → guaranteed
+                # NameError on every successful send → duplicate sends from retries).
+                # CONFIG/LIMIT auto-pause now lives in the failure branch below,
+                # where the relevant locals actually exist.
 
                 log_email_status(
                     campaign_id,
@@ -1101,6 +1142,20 @@ def send_single_campaign_email(self, campaign_id: str, subscriber_id: str):
                         "permanent_failure": is_permanent,
                     },
                 )
+
+                # Classify the failure — if it's a campaign-level CONFIG/LIMIT
+                # error (bad sender, unverified domain, account suspended,
+                # provider quota exceeded), don't keep burning retries on every
+                # recipient. Trip the abort flag, pause the campaign, and treat
+                # this attempt as terminal so cleanup runs below.
+                _cls = classify_submission_error(error_reason)
+                if _cls["error_class"] in (
+                    ProviderErrorClass.CONFIG_ERROR,
+                    ProviderErrorClass.LIMIT_ERROR,
+                ):
+                    _handle_campaign_level_failure(campaign_id, _cls)
+                    error_reason = _cls["human_message"]
+                    is_permanent = True  # Forces the terminal cleanup path below
 
                 if is_permanent or self.request.retries >= self.max_retries:
                     if task_settings.ENABLE_DLQ and not is_permanent:
@@ -1189,7 +1244,7 @@ def send_single_campaign_email(self, campaign_id: str, subscriber_id: str):
             )
 
             if self.request.retries >= self.max_retries:
-                error_msg = str(send_exc)
+                error_msg = str(e)
 
                 # Classify exception-form errors — auto-pause if CONFIG/LIMIT
                 _cls_exc = classify_submission_error(error_msg)

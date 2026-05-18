@@ -7,29 +7,10 @@ from core.deployment_manager import DeploymentMode
 from core.security import encrypt_password, decrypt_password 
 from database import get_settings_collection, get_usage_collection, get_audit_collection
 from datetime import datetime
-from cryptography.fernet import Fernet
 import smtplib
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
-
-
-ENCRYPTION_KEY = settings.MASTER_ENCRYPTION_KEY
-try:
-    fernet = Fernet(ENCRYPTION_KEY.encode() if isinstance(ENCRYPTION_KEY, str) else ENCRYPTION_KEY)
-except Exception as e:
-    logger.error(f"Failed to initialize Fernet in email_settings: {e}")
-    fernet = None
-
-def encrypt_password(password: str) -> str:
-    if not fernet:
-        return password
-    return fernet.encrypt(password.encode()).decode()
-
-def decrypt_password(token: str) -> str:
-    if not fernet:
-        return token
-    return fernet.decrypt(token.encode()).decode()
 
 
 class QuotaManager:
@@ -202,7 +183,6 @@ async def test_smtp_connection(request: Request):
             settings = await settings_collection.find_one({"type": "email_smtp"})
             if not settings or not settings.get("config", {}).get("password"):
                 raise HTTPException(status_code=400, detail="No stored password available for testing")
-            from core.security import decrypt_password
             password = decrypt_password(settings["config"]["password"])
 
         # Attempt SMTP connection

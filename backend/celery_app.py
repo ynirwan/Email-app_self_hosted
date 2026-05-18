@@ -625,7 +625,7 @@ def task_failure_handler(
 
         if task_settings.ENABLE_AUDIT_LOGGING:
             try:
-                from tasks.audit_logger import (
+                from tasks.campaign.audit_logger import (
                     log_system_event,
                     AuditEventType,
                     AuditSeverity,
@@ -680,7 +680,7 @@ def worker_ready_handler(sender=None, **kwargs):
 
         if task_settings.ENABLE_AUDIT_LOGGING:
             try:
-                from tasks.audit_logger import log_system_event, AuditEventType
+                from tasks.campaign.audit_logger import log_system_event, AuditEventType
 
                 log_system_event(
                     AuditEventType.SYSTEM_STARTUP,
@@ -704,7 +704,7 @@ if task_settings.ENABLE_GRACEFUL_SHUTDOWN:
 
             if task_settings.ENABLE_AUDIT_LOGGING:
                 try:
-                    from tasks.audit_logger import log_system_event, AuditEventType
+                    from tasks.campaign.audit_logger import log_system_event, AuditEventType
 
                     log_system_event(
                         AuditEventType.SYSTEM_SHUTDOWN,

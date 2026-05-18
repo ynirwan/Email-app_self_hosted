@@ -2,7 +2,7 @@ from backend.database import get_settings_collection
 from fastapi import HTTPException
 
 async def get_email_config():
-    settings = await get_settings_collection().find_one({"type": "email"})
+    settings = await get_settings_collection().find_one({"type": "email_smtp"})
     if not settings or not settings.get("config"):
         raise HTTPException(status_code=404, detail="Email sending config not found")
     return settings["config"]

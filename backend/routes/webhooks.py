@@ -96,30 +96,148 @@ async def update_webhook_stats(update_dict: Dict[str, Any]):
     except Exception as e:
         logger.error(f"Error updating webhook stats: {e}")
 
+# ─────────────────────────────────────────────────────────────────────────────
+# SNS signature verification
+# ─────────────────────────────────────────────────────────────────────────────
+# Implements the full AWS spec:
+#   1. SigningCertURL must be https://sns.<region>.amazonaws.com/...
+#      (matches /^sns\.[a-z0-9-]+\.amazonaws\.com$/), preventing
+#      attacker-controlled cert URLs from being honored.
+#   2. Build the canonical "string to sign" per AWS docs for the message type.
+#   3. Download the signing cert, extract the public key.
+#   4. RSA-verify the base64-decoded Signature against the canonical string.
+#
+# Signature cert downloads are cached per-URL with a 1h TTL so we don't pay
+# the network round-trip on every webhook delivery.
+
+import re as _re
+from cryptography import x509
+from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import padding as _rsa_padding
+from cryptography.exceptions import InvalidSignature
+
+_SNS_CERT_HOST = _re.compile(r"^sns\.[a-z0-9-]+\.amazonaws\.com$")
+_CERT_CACHE: Dict[str, tuple] = {}  # {url: (public_key, fetched_at_unix)}
+_CERT_CACHE_TTL = 3600
+
+# Field order AWS uses when building the string-to-sign.
+_NOTIFICATION_KEYS = (
+    "Message", "MessageId", "Subject", "Timestamp", "TopicArn", "Type",
+)
+_SUBSCRIPTION_KEYS = (
+    "Message", "MessageId", "SubscribeURL", "Timestamp", "Token", "TopicArn", "Type",
+)
+
+
+def _canonical_string_to_sign(payload: SNSPayload) -> Optional[bytes]:
+    """Build the exact bytes AWS signed for this SNS message."""
+    if payload.Type == "Notification":
+        keys = _NOTIFICATION_KEYS
+    elif payload.Type in ("SubscriptionConfirmation", "UnsubscribeConfirmation"):
+        keys = _SUBSCRIPTION_KEYS
+    else:
+        return None
+
+    parts = []
+    for key in keys:
+        value = getattr(payload, key, None)
+        # AWS spec: skip optional keys (Subject) if absent.
+        if value is None or value == "":
+            if key == "Subject":
+                continue
+        parts.append(f"{key}\n{value if value is not None else ''}\n")
+    return "".join(parts).encode("utf-8")
+
+
+async def _fetch_sns_public_key(cert_url: str):
+    """Download (and cache) the SNS signing certificate's public key."""
+    cached = _CERT_CACHE.get(cert_url)
+    if cached:
+        public_key, fetched_at = cached
+        if (datetime.utcnow().timestamp() - fetched_at) < _CERT_CACHE_TTL:
+            return public_key
+
+    async with aiohttp.ClientSession(
+        timeout=aiohttp.ClientTimeout(total=5)
+    ) as session:
+        async with session.get(cert_url) as resp:
+            if resp.status != 200:
+                logger.warning(
+                    f"Failed to download SNS cert ({resp.status}) from {cert_url}"
+                )
+                return None
+            pem = await resp.read()
+
+    cert = x509.load_pem_x509_certificate(pem, default_backend())
+    public_key = cert.public_key()
+    _CERT_CACHE[cert_url] = (public_key, datetime.utcnow().timestamp())
+    return public_key
+
+
 async def verify_sns_signature(payload: SNSPayload) -> bool:
-    """Verify SNS message signature for security"""
+    """
+    Verify an SNS message signature per the AWS specification.
+
+    Returns False (refuse the webhook) if ANY of these fail:
+      - verify_sns_signature is disabled in WEBHOOK_CONFIG (returns True early)
+      - SigningCertURL missing, not HTTPS, or not on a real sns.*.amazonaws.com host
+      - Signature or SignatureVersion missing
+      - SignatureVersion is not "1" or "2" (we support both)
+      - Certificate download fails
+      - RSA verification fails
+    """
     if not WEBHOOK_CONFIG["verify_sns_signature"]:
         return True
-    
+
     try:
-        # Download and verify the signing certificate
-        if not payload.SigningCertURL:
-            logger.warning("Missing SigningCertURL in SNS message")
+        if not payload.SigningCertURL or not payload.Signature:
+            logger.warning("SNS message missing SigningCertURL or Signature")
             return False
-        
-        # Verify the certificate URL is from AWS
+
         parsed_url = urlparse(payload.SigningCertURL)
-        if not (parsed_url.netloc.endswith('.amazonaws.com') and
-                parsed_url.scheme == 'https'):
-            logger.warning(f"Invalid certificate URL: {payload.SigningCertURL}")
+        if parsed_url.scheme != "https" or not _SNS_CERT_HOST.match(parsed_url.netloc or ""):
+            # Reject any cert URL not served by an SNS endpoint. A non-SNS
+            # amazonaws.com host (e.g. an S3 bucket) is a classic spoofing
+            # vector and must be refused.
+            logger.warning(f"Invalid SNS cert URL: {payload.SigningCertURL}")
             return False
-        
-        # 🔥 TODO: In production, implement full certificate verification
-        # For now, basic URL validation
-        return True
-        
+
+        sig_version = payload.SignatureVersion or "1"
+        if sig_version not in ("1", "2"):
+            logger.warning(f"Unsupported SNS SignatureVersion: {sig_version}")
+            return False
+        digest_alg = hashes.SHA256() if sig_version == "2" else hashes.SHA1()
+
+        canonical = _canonical_string_to_sign(payload)
+        if canonical is None:
+            logger.warning(f"Cannot build canonical string for type {payload.Type}")
+            return False
+
+        try:
+            sig_bytes = base64.b64decode(payload.Signature)
+        except Exception:
+            logger.warning("SNS Signature is not valid base64")
+            return False
+
+        public_key = await _fetch_sns_public_key(payload.SigningCertURL)
+        if public_key is None:
+            return False
+
+        try:
+            public_key.verify(
+                sig_bytes,
+                canonical,
+                _rsa_padding.PKCS1v15(),
+                digest_alg,
+            )
+            return True
+        except InvalidSignature:
+            logger.warning("SNS signature verification FAILED — signature mismatch")
+            return False
+
     except Exception as e:
-        logger.error(f"SNS signature verification failed: {e}")
+        logger.error(f"SNS signature verification error: {e}", exc_info=True)
         return False
 
 async def confirm_sns_subscription(subscribe_url: str) -> bool:

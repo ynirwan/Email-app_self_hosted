@@ -16,11 +16,18 @@ class Settings:
     APP_VERSION: str = "1.0.0"
 
     # ===== JWT AUTHENTICATION =====
+    # JWT_SECRET MUST be overridden via env in any non-dev deployment.
+    # The literal default below is rejected by _validate_critical_settings()
+    # when ENVIRONMENT != "development".
     JWT_SECRET: str = os.getenv("JWT_SECRET", "your-secret-key-change-in-production")
     JWT_ALGORITHM: str = "HS256"
-    JWT_EXP: int = int(os.getenv("JWT_EXP", "28800"))  # 8 hours default
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 480  # kept for reference, auth.py uses JWT_EXP
-    REFRESH_TOKEN_EXPIRE_DAYS: int = 7
+    # Access token lifetime: 24 hours (override with JWT_EXP env, seconds).
+    JWT_EXP: int = int(os.getenv("JWT_EXP", "86400"))
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440  # 24 h, kept for reference
+    # Refresh token lifetime: 7 days. Refresh tokens are HS256-signed with
+    # a different claim ("typ":"refresh") so an access token can never be
+    # used in /auth/refresh and vice versa.
+    REFRESH_TOKEN_EXPIRE_DAYS: int = int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "7"))
 
     # ===== DATABASE CONFIGURATION =====
     MONGODB_URI: str = os.getenv("MONGODB_URI", "")
@@ -115,11 +122,6 @@ class Settings:
     # Template caching
     MAX_TEMPLATE_SIZE_KB: int = int(os.getenv("MAX_TEMPLATE_SIZE_KB", "500"))
 
-    # Email sending mock (for testing)
-    MOCK_EMAIL_SENDING: bool = (
-        os.getenv("MOCK_EMAIL_SENDING", "false").lower() == "true"
-    )
-
     # SMTP circuit breaker
     SMTP_ERROR_THRESHOLD: int = int(os.getenv("SMTP_ERROR_THRESHOLD", "5"))
     SMTP_ERROR_WINDOW_SECONDS: int = int(os.getenv("SMTP_ERROR_WINDOW_SECONDS", "300"))
@@ -144,10 +146,22 @@ class Settings:
     def _validate_critical_settings(self):
         errors = []
 
-        if self.ENVIRONMENT == "production":
+        # JWT secret default is rejected in EVERY non-development environment
+        # (staging, production, anything that isn't explicitly "development").
+        # This prevents the "forgot to set env var on the new server" footgun.
+        if self.ENVIRONMENT.lower() != "development":
             if self.JWT_SECRET == "your-secret-key-change-in-production":
-                errors.append("JWT_SECRET must be changed in production!")
+                errors.append(
+                    "JWT_SECRET must be overridden via env when "
+                    "ENVIRONMENT != 'development' (refusing to boot with "
+                    "a public default secret)."
+                )
+            if len(self.JWT_SECRET) < 32:
+                errors.append(
+                    "JWT_SECRET must be at least 32 characters long."
+                )
 
+        if self.ENVIRONMENT == "production":
             if not self.MONGODB_URI:
                 errors.append("MONGODB_URI is required!")
 

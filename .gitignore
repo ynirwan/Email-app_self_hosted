@@ -158,3 +158,27 @@ cython_debug/
 #  and can be added to the global gitignore or merged into this file.  For a more nuclear
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
+
+# ── Editor / scratch ─────────────────────────────────────────────────────────
+# Hand-rolled backup files (vim, nano, VSCode "Save As …copy" pattern).
+*.backup
+*.bak
+*.orig
+*.tmp
+# Vim swap & undo
+*.swp
+*.swo
+.*.sw[a-p]
+*~
+
+# ── Node / Vite (frontend) ───────────────────────────────────────────────────
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ── App-local logs / uploads ────────────────────────────────────────────────
+backend/var/log/
+/tmp/uploads/

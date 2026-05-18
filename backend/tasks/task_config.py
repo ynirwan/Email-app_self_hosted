@@ -188,11 +188,6 @@ class TaskSettings:
     # ===== ENCRYPTION =====
     MASTER_ENCRYPTION_KEY: str = os.getenv("MASTER_ENCRYPTION_KEY", "")
 
-    # ===== EMAIL MOCK =====
-    MOCK_EMAIL_SENDING: bool = (
-        os.getenv("MOCK_EMAIL_SENDING", "false").lower() == "true"
-    )
-
     # ===== DLQ RETENTION =====
     DLQ_RETENTION_DAYS: int = int(os.getenv("DLQ_RETENTION_DAYS", "30"))
 

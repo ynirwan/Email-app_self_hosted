@@ -28,7 +28,6 @@ import asyncio
 import base64
 import logging
 import os
-import secrets
 import urllib.parse
 from datetime import datetime
 
@@ -36,6 +35,7 @@ from bson import ObjectId
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import RedirectResponse, Response
 
+from core.security import sign_tracking_token, verify_tracking_token
 from database import (
     get_analytics_collection,
     get_campaigns_collection,
@@ -70,7 +70,18 @@ def _pixel_response() -> Response:
 
 
 def generate_tracking_token(campaign_id: str, subscriber_id: str, email: str) -> str:
-    return secrets.token_urlsafe(24)
+    """
+    Mint a stateless HMAC-signed tracking token.
+
+    `email` is ignored — it remains in the signature only for backward
+    compatibility with the prior call sites. Identity is fully carried by
+    (campaign_id, subscriber_id) which the verifier extracts from the token.
+
+    Side note: the same token is used for BOTH open and click endpoints
+    (purpose = "o" — opens; clicks share it). If you need separate signatures
+    for clicks, swap to `sign_tracking_token("c", ...)`.
+    """
+    return sign_tracking_token("o", str(campaign_id), str(subscriber_id))
 
 
 def _get_tracking_domain(key: str, fallback_env: str = "APP_BASE_URL") -> str:
@@ -106,41 +117,19 @@ def create_tracking_record_sync(
     email: str,
     open_token: str,
 ) -> dict:
-    """Sync tracking master record for normal campaign emails."""
-    try:
-        from database import get_sync_email_events_collection
+    """
+    No-op for signed tokens.
 
-        col = get_sync_email_events_collection()
-        now = datetime.utcnow()
+    Normal-campaign tracking tokens are now stateless HMAC-signed payloads —
+    (campaign_id, subscriber_id) is encoded in the token and verified on each
+    open/click. There is nothing to pre-write per send. This function is kept
+    callable so existing call sites (campaign + automation workers) do not
+    need to be touched in lockstep; it returns success without touching the DB.
 
-        cid = ObjectId(campaign_id) if ObjectId.is_valid(campaign_id) else campaign_id
-
-        result = col.update_one(
-            {"open_token": open_token, "type": "tracking_master"},
-            {
-                "$setOnInsert": {
-                    "open_token": open_token,
-                    "campaign_id": cid,
-                    "subscriber_id": subscriber_id,
-                    "email": email.lower().strip(),
-                    "event_type": "sent",
-                    "type": "tracking_master",
-                    "open_count": 0,
-                    "click_count": 0,
-                    "is_unsubscribed": False,
-                    "first_open_at": None,
-                    "first_click_at": None,
-                    "timestamp": now,
-                },
-                "$set": {"last_event_at": now},
-            },
-            upsert=True,
-        )
-        return {"success": True, "token": open_token}
-
-    except Exception as e:
-        logger.exception(f"[tracking] create_tracking_record_sync FAILED token={open_token}: {e}")
-        return {"success": False, "error": str(e), "token": open_token}
+    AB testing still uses the DB-backed master via `create_ab_tracking_record_sync`
+    because AB rows carry extra metadata (ab_test_id, variant, is_winner_send).
+    """
+    return {"success": True, "token": open_token, "noop": True}
 
 
 async def create_tracking_record(
@@ -149,17 +138,8 @@ async def create_tracking_record(
     email: str,
     open_token: str,
 ) -> None:
-    import asyncio
-
-    loop = asyncio.get_event_loop()
-    await loop.run_in_executor(
-        None,
-        create_tracking_record_sync,
-        campaign_id,
-        subscriber_id,
-        email,
-        open_token,
-    )
+    """No-op async wrapper — see create_tracking_record_sync."""
+    return None
 
 
 def create_ab_tracking_record_sync(
@@ -248,20 +228,105 @@ async def _record_open(token: str, ip: str, ua: str):
     """
     Persist an open event.
 
-    FIX: first_open_at was stored as null and never overwritten because
-    MongoDB $min treats null < any date, so $min with a date never overwrites null.
-    Now uses conditional $set: if first_open_at is null, set it; always set last_open_at.
+    Token resolution order:
+      1. Try to verify the token as an HMAC-signed tracking token. If valid,
+         use the embedded (campaign_id, subscriber_id) and upsert/update the
+         master record keyed on those fields. No per-send DB row is required.
+      2. Fall back to the legacy `open_token` lookup so AB-test tokens and
+         pre-migration random tokens still work.
 
-    FIX: AB test results update now handles both sample and winner-send rows,
-    and correctly sets first_open_at (was always null before).
+    FIX: first_open_at was stored as null and never overwritten because
+    MongoDB $min treats null < any date. Now uses $set / $setOnInsert.
     """
     try:
         col = get_email_events_collection()
         now = datetime.utcnow()
         track_unique_only = await _get_track_unique_only()
 
-        logger.info(f"[tracking] _record_open START token={token}")
+        logger.info(f"[tracking] _record_open START token={token[:16]}...")
 
+        # ── Signed token path (stateless, no per-send write required) ────────
+        verified = verify_tracking_token(token, expected_purpose="o")
+        if verified:
+            _, signed_cid, signed_sid, _ = verified
+            cid_obj = ObjectId(signed_cid) if ObjectId.is_valid(signed_cid) else signed_cid
+            master_filter = {
+                "campaign_id": cid_obj,
+                "subscriber_id": signed_sid,
+                "type": "tracking_master",
+            }
+            # Atomically claim FIRST open: only matches if open_count==0.
+            claimed_first = await col.find_one_and_update(
+                {**master_filter, "open_count": 0},
+                {
+                    "$inc": {"open_count": 1},
+                    "$set": {
+                        "first_open_at": now,
+                        "last_open_at": now,
+                        "last_event_at": now,
+                        "event_type": "opened",
+                    },
+                    "$setOnInsert": {
+                        "open_token": token,
+                        "campaign_id": cid_obj,
+                        "subscriber_id": signed_sid,
+                        "type": "tracking_master",
+                        "click_count": 0,
+                        "is_unsubscribed": False,
+                        "first_click_at": None,
+                        "timestamp": now,
+                    },
+                },
+                upsert=True,
+                return_document=True,
+            )
+            if claimed_first and claimed_first.get("open_count", 0) == 1:
+                doc = claimed_first
+                is_unique = True
+                logger.info(f"[tracking] UNIQUE OPEN (signed) cid={signed_cid} sid={signed_sid}")
+            else:
+                # Already had >=1 open — record a non-unique open
+                if track_unique_only:
+                    doc = await col.find_one(master_filter)
+                    if doc:
+                        await col.update_one(
+                            {"_id": doc["_id"]},
+                            {"$set": {"last_open_at": now, "last_event_at": now}},
+                        )
+                    is_unique = False
+                else:
+                    doc = await col.find_one_and_update(
+                        master_filter,
+                        {
+                            "$inc": {"open_count": 1},
+                            "$set": {"last_open_at": now, "last_event_at": now},
+                        },
+                        return_document=True,
+                    )
+                    if not doc:
+                        return
+                    is_unique = False
+
+            # Event row + analytics (signed-token path has no AB context)
+            if is_unique or not track_unique_only:
+                await col.insert_one(
+                    {
+                        "open_token": token,
+                        "campaign_id": cid_obj,
+                        "subscriber_id": signed_sid,
+                        "event_type": "opened",
+                        "type": "event",
+                        "ip_address": ip,
+                        "user_agent": ua,
+                        "timestamp": now,
+                        "is_unique": is_unique,
+                    }
+                )
+            if is_unique:
+                await _increment_analytics(signed_cid, "total_opened")
+            return
+
+        # ── Legacy random-token path (AB tests + pre-migration emails) ───────
         # Atomically claim FIRST open
         claimed_first = await col.find_one_and_update(
             {
@@ -386,15 +451,101 @@ async def _record_click(token: str, url: str, ip: str, ua: str):
     """
     Persist a click event.
 
-    FIX: same first_click_at null issue as _record_open — use $set not $min.
+    Signed-token path first, with legacy random-token fallback for AB tests
+    and pre-migration emails (same strategy as _record_open).
+
+    FIX: first_click_at null issue — use $set / $setOnInsert, not $min.
     """
     try:
         col = get_email_events_collection()
         now = datetime.utcnow()
         track_unique_only = await _get_track_unique_only()
 
-        logger.info(f"[tracking] _record_click START token={token}")
+        logger.info(f"[tracking] _record_click START token={token[:16]}...")
 
+        # ── Signed token path ────────────────────────────────────────────────
+        # Open tokens (purpose="o") are reused for clicks at the call site, so
+        # we accept both purposes here.
+        verified = (
+            verify_tracking_token(token, expected_purpose="o")
+            or verify_tracking_token(token, expected_purpose="c")
+        )
+        if verified:
+            _, signed_cid, signed_sid, _ = verified
+            cid_obj = ObjectId(signed_cid) if ObjectId.is_valid(signed_cid) else signed_cid
+            master_filter = {
+                "campaign_id": cid_obj,
+                "subscriber_id": signed_sid,
+                "type": "tracking_master",
+            }
+            claimed_first = await col.find_one_and_update(
+                {**master_filter, "click_count": 0},
+                {
+                    "$inc": {"click_count": 1},
+                    "$set": {
+                        "first_click_at": now,
+                        "last_click_at": now,
+                        "last_event_at": now,
+                    },
+                    "$setOnInsert": {
+                        "open_token": token,
+                        "campaign_id": cid_obj,
+                        "subscriber_id": signed_sid,
+                        "type": "tracking_master",
+                        "open_count": 0,
+                        "is_unsubscribed": False,
+                        "first_open_at": None,
+                        "timestamp": now,
+                    },
+                },
+                upsert=True,
+                return_document=True,
+            )
+            if claimed_first and claimed_first.get("click_count", 0) == 1:
+                doc = claimed_first
+                is_unique = True
+            else:
+                if track_unique_only:
+                    doc = await col.find_one(master_filter)
+                    if doc:
+                        await col.update_one(
+                            {"_id": doc["_id"]},
+                            {"$set": {"last_click_at": now, "last_event_at": now}},
+                        )
+                    is_unique = False
+                else:
+                    doc = await col.find_one_and_update(
+                        master_filter,
+                        {
+                            "$inc": {"click_count": 1},
+                            "$set": {"last_click_at": now, "last_event_at": now},
+                        },
+                        return_document=True,
+                    )
+                    if not doc:
+                        return
+                    is_unique = False
+
+            if is_unique or not track_unique_only:
+                await col.insert_one(
+                    {
+                        "open_token": token,
+                        "campaign_id": cid_obj,
+                        "subscriber_id": signed_sid,
+                        "event_type": "clicked",
+                        "type": "event",
+                        "url": url,
+                        "ip_address": ip,
+                        "user_agent": ua,
+                        "timestamp": now,
+                        "is_unique": is_unique,
+                    }
+                )
+            if is_unique:
+                await _increment_analytics(signed_cid, "total_clicked")
+            return
+
+        # ── Legacy random-token path ─────────────────────────────────────────
         claimed_first = await col.find_one_and_update(
             {
                 "open_token": token,
@@ -636,9 +787,28 @@ async def click_redirect(token: str, u: str = "", request: Request = None):
 
 @router.get("/t/verify/{token}")
 async def verify_unsubscribe_token(token: str):
+    """
+    Verify an unsubscribe link is valid and unused.
+
+    Two-layer check:
+      1. HMAC signature must verify (cheap, stateless). If signature is bad
+         OR the token has expired, return 404 — do not differentiate between
+         "doesn't exist", "tampered", and "expired" to avoid information leak.
+      2. DB row must exist and be unused (audit + one-time-use).
+
+    For backward compat with pre-migration random tokens we accept tokens
+    that fail HMAC verification but still exist in the tokens collection;
+    those rows were issued before signing was deployed.
+    """
+    signed_ok = verify_tracking_token(token, expected_purpose="u") is not None
+
     tokens_col = get_unsubscribe_tokens_collection()
     doc = await tokens_col.find_one({"token": token})
     if not doc:
+        raise HTTPException(status_code=404, detail="Invalid unsubscribe link")
+    if not signed_ok and len(token) > 60:
+        # Token has the length of a signed token but signature didn't verify
+        # → tampered or expired. Refuse.
         raise HTTPException(status_code=404, detail="Invalid unsubscribe link")
     if doc.get("used"):
         raise HTTPException(status_code=410, detail="This link has already been used")
@@ -652,6 +822,16 @@ async def verify_unsubscribe_token(token: str):
 
 @router.post("/t/u/{token}")
 async def confirm_unsubscribe(token: str, request: Request):
+    """
+    Process an unsubscribe.
+
+    HMAC is verified first as a cheap gate; the atomic DB-side
+    "mark used, then update subscribers/suppressions" logic runs only after.
+    """
+    signed_ok = verify_tracking_token(token, expected_purpose="u") is not None
+    if not signed_ok and len(token) > 60:
+        raise HTTPException(status_code=400, detail="invalid_token")
+
     result = await _atomic_unsubscribe(token, request)
     if not result["success"]:
         raise HTTPException(status_code=400, detail=result["reason"])
