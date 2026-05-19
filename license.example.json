@@ -1,0 +1,26 @@
+{
+  "_comment": "Copy this to license.json and replace with your actual license from your vendor.",
+  "license_key": "ZENIPOST-XXXX-XXXX-XXXX-XXXXXXXXXXXX",
+  "issued_to": "Your Company Name",
+  "issued_to_email": "admin@yourcompany.com",
+  "domain": "yourcompany.com",
+  "plan": "professional",
+  "issued_at": "2026-01-01",
+  "expires_at": "2027-01-01",
+  "features": {
+    "ab_testing": true,
+    "automation": true,
+    "deliverability_dashboard": true,
+    "segmentation": true,
+    "custom_smtp": true,
+    "api_access": true,
+    "audit_trail": true,
+    "remote_db": true,
+    "remote_redis": true,
+    "multi_user": false,
+    "max_subscribers": -1,
+    "max_campaigns_per_month": -1,
+    "max_users": 1
+  },
+  "signature": "REPLACE_WITH_ACTUAL_SIGNATURE_FROM_VENDOR"
+}

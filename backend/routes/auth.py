@@ -1,4 +1,5 @@
 # backend/routes/auth.py
+import os
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Depends, status
 from pydantic import BaseModel, EmailStr, validator, Field
@@ -101,6 +102,23 @@ def _auth_response(user_doc: dict, token_version: int) -> dict:
 
 @router.post("/register")
 async def register(user: UserRegister):
+    """
+    Public self-registration endpoint.
+
+    Disabled by default in self-hosted deployments (REGISTRATION_ENABLED=false).
+    Admin accounts are created during installation via install.py.
+    Set REGISTRATION_ENABLED=true only if you explicitly want open sign-ups.
+    """
+    registration_enabled = os.getenv("REGISTRATION_ENABLED", "false").lower() == "true"
+    if not registration_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "Self-registration is disabled on this instance. "
+                "Contact your administrator to get an account."
+            ),
+        )
+
     try:
         users_collection = get_users_collection()
         normalized_email = _normalize_email(user.email)
@@ -124,6 +142,7 @@ async def register(user: UserRegister):
         }
         result = await users_collection.insert_one(user_doc)
         user_doc["_id"] = result.inserted_id
+        logger.info("New user registered via self-registration: %s", normalized_email)
         return _auth_response(user_doc, token_version=0)
 
     except HTTPException:

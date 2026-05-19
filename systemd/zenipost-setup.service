@@ -1,0 +1,53 @@
+# /etc/systemd/system/zenipost-setup.service
+#
+# Starts the ZeniPost browser-based setup wizard on EC2 instance boot.
+# Stops itself permanently (exit 0) once setup_server.py detects that
+# .setup_complete exists — Restart=on-failure means a clean exit is NOT
+# restarted, so the wizard never runs again after installation is done.
+#
+# Deploy: sudo cp systemd/zenipost-setup.service /etc/systemd/system/
+#         sudo systemctl daemon-reload
+#         sudo systemctl enable zenipost-setup
+
+[Unit]
+Description=ZeniPost Setup Wizard
+Documentation=https://docs.zenipost.com/self-hosted
+# Start after network and Docker are ready
+After=network-online.target docker.service
+Wants=network-online.target docker.service
+# Do not start if the app itself is already running
+ConditionPathExists=!/opt/zenipost/.setup_complete
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/zenipost
+
+# The wizard runs on port 8080 to avoid conflict with nginx on 80/443
+ExecStart=/usr/bin/python3 /opt/zenipost/setup_server.py --host 0.0.0.0 --port 8080
+
+# Only restart on failure (non-zero exit). A clean exit (code 0) means
+# setup is already complete — don't restart in that case.
+Restart=on-failure
+RestartSec=10
+StartLimitIntervalSec=120
+StartLimitBurst=3
+
+# Logging goes to journald — view with: journalctl -u zenipost-setup -f
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=zenipost-setup
+
+# Environment
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+# Set LICENSE_SIGNING_SECRET here if you use signed licenses:
+# Environment=LICENSE_SIGNING_SECRET=your-secret-here
+
+# Security hardening
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

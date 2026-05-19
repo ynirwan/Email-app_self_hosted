@@ -1,6 +1,5 @@
 // frontend/src/pages/Login.jsx
 import { useState } from 'react'
-import { Link } from 'react-router-dom'
 import API, { setTokens } from '../api'
 
 export default function Login() {
@@ -110,12 +109,9 @@ export default function Login() {
           </button>
         </form>
 
-        {/* Register Redirect */}
+        {/* Account creation is handled by the server administrator via install.py */}
         <div className="text-sm text-gray-500 text-center">
-          Don't have an account?{' '}
-          <Link to="/register" className="text-blue-600 hover:text-blue-700 hover:underline font-medium">
-            Register
-          </Link>
+          Contact your administrator if you need access.
         </div>
       </div>
     </div>

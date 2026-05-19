@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate, useParams } from "react-router-dom";
-import Register from "./pages/Register";
+// Register page removed — accounts are created during installation via install.py.
+// To re-enable self-registration set REGISTRATION_ENABLED=true in the backend .env.
 import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
 import Subscribers from "./pages/Subscribers";
@@ -46,7 +47,8 @@ const App = () => {
     <BrowserRouter>
       <Routes>
         {/* Public Routes */}
-        <Route path="/register" element={<Register />} />
+        {/* /register is intentionally removed — use install.py to create accounts */}
+        <Route path="/register" element={<Navigate to="/login" replace />} />
         <Route path="/login" element={<Login />} />
         <Route path="/subscribe/:listId" element={<OptInForm />} />
 
