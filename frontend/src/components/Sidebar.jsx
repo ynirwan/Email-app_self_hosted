@@ -3,6 +3,7 @@ import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { useState } from "react";
 import { useUser } from "../contexts/UserContext";
 import { useSettings } from "../contexts/SettingsContext";
+import API, { clearTokens } from "../api";
 import ZeniPostLogo from "./ZeniPostLogo";
 
 function getAvatarColor(name) {
@@ -59,9 +60,19 @@ export default function Sidebar() {
     },
   ];
 
-  const handleLogout = () => {
-    localStorage.removeItem("token");
-    navigate("/login");
+  const handleLogout = async () => {
+    // Server-side logout bumps token_version so any leaked copies of the
+    // access/refresh tokens are dead on the next request. Network failure
+    // here MUST NOT trap the user in the app — we still clear locally
+    // and redirect.
+    try {
+      await API.post("/auth/logout");
+    } catch (e) {
+      // Swallow — the token may already be invalid, which is fine.
+    }
+    clearTokens();
+    // Hard reload so App.jsx's module-load `isLoggedIn` check re-runs.
+    window.location.assign("/login");
   };
 
   const avatarLetter = user?.name ? user.name.charAt(0).toUpperCase() : "?";

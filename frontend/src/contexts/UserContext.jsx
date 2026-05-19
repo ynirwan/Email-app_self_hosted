@@ -1,17 +1,14 @@
 import { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import API from '../api';
-import { useNavigate } from 'react-router-dom';
+import API, { getAccessToken } from '../api';
 
 const UserContext = createContext(null);
 
 export function UserProvider({ children }) {
   const [user, setUser] = useState(null);
   const [userLoading, setUserLoading] = useState(true);
-  const navigate = useNavigate();
 
   const fetchUser = useCallback(async () => {
-    const token = localStorage.getItem('token');
-    if (!token) {
+    if (!getAccessToken()) {
       setUserLoading(false);
       return;
     }
@@ -19,14 +16,14 @@ export function UserProvider({ children }) {
       const res = await API.get('/auth/me');
       setUser(res.data);
     } catch (err) {
-      if (err.response?.status === 401) {
-        localStorage.removeItem('token');
-        navigate('/login', { replace: true });
-      }
+      // api.js interceptor handles 401 (refresh-then-retry, hard logout on
+      // refresh failure). Anything bubbling up here is a non-auth failure
+      // (network, server) — leave user state null and let downstream code
+      // recover. We never want this hook to forcibly navigate the user.
     } finally {
       setUserLoading(false);
     }
-  }, [navigate]);
+  }, []);
 
   useEffect(() => {
     fetchUser();

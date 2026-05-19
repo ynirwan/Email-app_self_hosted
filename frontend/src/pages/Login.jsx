@@ -1,52 +1,45 @@
 // frontend/src/pages/Login.jsx
 import { useState } from 'react'
-import { useNavigate, Link } from 'react-router-dom'
-import API from '../api'
+import { Link } from 'react-router-dom'
+import API, { setTokens } from '../api'
 
 export default function Login() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
-  const navigate = useNavigate()
 
   const handleLogin = async (e) => {
     e.preventDefault()
-    
-    // Prevent multiple submissions
     if (loading) return
-    
+
     setError(null)
     setLoading(true)
-    
+
     try {
-      console.log('🔐 Attempting login for:', email)
       const res = await API.post('/auth/login', { email, password })
-      console.log('✅ Login successful, received token')
-      
-      // ✅ Store token
-      localStorage.setItem('token', res.data.token)
-      
-      // ✅ CRITICAL: Wait for localStorage to sync (especially in slower browsers)
-      await new Promise(resolve => setTimeout(resolve, 150))
-      
-      // ✅ Verify token is actually stored
-      const storedToken = localStorage.getItem('token')
-      if (!storedToken) {
-        throw new Error('Failed to store authentication token')
-      }
-      
-      console.log('✅ Token verified, navigating to dashboard...')
-      
-      // ✅ Force a hard refresh to ensure all context and state is clean
-      window.location.assign('/');
-      
+      // Store BOTH access + refresh under canonical keys. localStorage writes
+      // are synchronous — the previous "wait 150ms for it to sync" hack was
+      // working around a different bug (App.jsx capturing isLoggedIn at
+      // module load), not a real storage race.
+      setTokens({
+        access: res.data.access_token || res.data.token,
+        refresh: res.data.refresh_token,
+      })
+
+      // App.jsx evaluates `isLoggedIn` at module load, so React Router's
+      // in-memory navigation alone won't update the route gate. A full-page
+      // assign is the simplest correct fix until App.jsx is restructured to
+      // read the token reactively.
+      window.location.assign('/')
     } catch (err) {
-      console.error('❌ Login failed:', err)
-      setError(err.response?.data?.detail || err.response?.data?.message || 'Login failed')
+      setError(
+        err.response?.data?.detail ||
+          err.response?.data?.message ||
+          'Login failed',
+      )
       setLoading(false)
     }
-    // Don't set loading false on success - let navigation unmount component
   }
 
   return (

@@ -168,8 +168,10 @@ export default function Dashboard() {
         setLastUpdated(new Date().toISOString());
       } catch (err) {
         if (err.response?.status === 401) {
-          localStorage.removeItem("token");
-          navigate("/login", { replace: true });
+          // api.js interceptor already handles 401 (refresh-then-retry, or
+          // hard logout if refresh itself fails). Treat anything that still
+          // bubbles up here as a true auth failure and show the load error.
+          setError(t("dashboard.loadError"));
           return;
         }
         setError(t("dashboard.loadError"));
