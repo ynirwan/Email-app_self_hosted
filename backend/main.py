@@ -46,6 +46,7 @@ PRODUCTION_FEATURES = {
 }
 
 from core.config import settings, is_production_ready
+from core.license import get_license, reload_license
 
 PRODUCTION_FEATURES["config"] = True
 logger = logging.getLogger(__name__)
@@ -114,6 +115,7 @@ except ImportError:
 
 # Import your existing routes
 from core.auth import get_current_user
+from core.license import license_feature
 from fastapi import Depends
 from routes import (
     auth,
@@ -131,6 +133,7 @@ from routes import (
     ab_testing,
     ab_winner_analytics,
     automation,
+    automation_advanced,
     events,
     automation_analytics,
     audit,
@@ -224,6 +227,25 @@ async def lifespan(app: FastAPI):
     # ===== STARTUP =====
     logger.info(f"🚀 Starting {settings.APP_NAME} v{settings.APP_VERSION}")
     logger.info(f"Environment: {settings.ENVIRONMENT}")
+
+    # ── License check ─────────────────────────────────────────────────────
+    lic = get_license()
+    if lic.valid:
+        days = lic.days_until_expiry()
+        expiry_note = f" ({days}d until expiry)" if days is not None else ""
+        logger.info(
+            "✅ License valid — plan=%s domain=%s expires=%s%s",
+            lic.plan, lic.domain, lic.expires_at, expiry_note,
+        )
+        if lic.has_managed_delivery:
+            plan_name = (lic.delivery or {}).get("plan_name", "managed")
+            logger.info("   Managed delivery: %s", plan_name)
+    else:
+        logger.error("❌ License invalid: %s", lic.error)
+        if settings.ENVIRONMENT == "production":
+            raise RuntimeError(
+                f"Cannot start in production with an invalid license: {lic.error}"
+            )
 
     # Initialize database
     if initialize_async_client:
@@ -467,6 +489,41 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     )
 
 
+@app.exception_handler(RuntimeError)
+async def runtime_error_handler(request: Request, exc: RuntimeError):
+    """
+    Convert license-related RuntimeErrors from require_feature() / service-layer
+    guards into proper HTTP 403 responses so the frontend receives actionable JSON
+    instead of a generic 500.
+
+    Any RuntimeError whose message starts with "Feature '" or "License invalid"
+    is treated as a plan-enforcement failure.  All others fall through to the
+    general exception handler as a 500.
+    """
+    msg = str(exc)
+    if msg.startswith(("Feature '", "License invalid")):
+        return JSONResponse(
+            status_code=status.HTTP_403_FORBIDDEN,
+            content={
+                "error": "Plan restriction",
+                "message": msg,
+                "request_id": getattr(request.state, "request_id", None),
+                "timestamp": datetime.utcnow().isoformat(),
+            },
+        )
+    # Not a license error — log and return 500 as before.
+    logger.error(f"Unhandled RuntimeError: {msg}", exc_info=True)
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content={
+            "error": "Internal server error",
+            "message": msg if settings.DEBUG_MODE else "An unexpected error occurred",
+            "request_id": getattr(request.state, "request_id", None),
+            "timestamp": datetime.utcnow().isoformat(),
+        },
+    )
+
+
 @app.exception_handler(Exception)
 async def general_exception_handler(request: Request, exc: Exception):
     """Handle all other exceptions"""
@@ -500,6 +557,35 @@ async def not_found_handler(request: Request, exc):
 
 
 logger.info("✅ Exception handlers configured")
+
+# ============================================
+# LICENSE STATUS ENDPOINT
+# ============================================
+
+
+@app.get("/api/license/status", tags=["License"])
+async def license_status(current_user: dict = Depends(get_current_user)):
+    """Return the current license summary (authenticated users only)."""
+    lic = get_license()
+    return {
+        "valid":    lic.valid,
+        "error":    lic.error or None,
+        **lic.to_public_dict(),
+        "timestamp": datetime.utcnow().isoformat(),
+    }
+
+
+@app.post("/api/license/reload", tags=["License"])
+async def license_reload(current_user: dict = Depends(get_current_user)):
+    """Force a license reload from disk (admin only — use after placing a new license.json)."""
+    lic = reload_license()
+    return {
+        "message": "License reloaded",
+        "valid":   lic.valid,
+        "error":   lic.error or None,
+        **lic.to_public_dict(),
+    }
+
 
 # ============================================
 # HEALTH CHECK ENDPOINTS
@@ -796,18 +882,36 @@ app.include_router(
     campaigns.router, prefix="/api", tags=["Campaigns"], dependencies=_auth_dep
 )
 
+# ── Plan-gated routes ────────────────────────────────────────────────────────
+# These routers are only reachable when the license includes the matching feature.
+# HTTP 403 is returned for any plan that does not include the feature.
+
 app.include_router(
-    ab_testing.router, prefix="/api", tags=["A/B Testing"], dependencies=_auth_dep
+    ab_testing.router,
+    prefix="/api",
+    tags=["A/B Testing"],
+    dependencies=_auth_dep + [Depends(license_feature("ab_testing"))],
 )
 
 app.include_router(
     ab_winner_analytics.router,
     prefix="/api",
     tags=["A/B Testing"],
-    dependencies=_auth_dep,
+    dependencies=_auth_dep + [Depends(license_feature("ab_testing"))],
 )
+
 app.include_router(
-    automation.router, prefix="/api", tags=["Automation"], dependencies=_auth_dep
+    automation.router,
+    prefix="/api",
+    tags=["Automation"],
+    dependencies=_auth_dep + [Depends(license_feature("automation"))],
+)
+
+app.include_router(
+    automation_advanced.router,
+    prefix="/api",
+    tags=["Automation Advanced"],
+    dependencies=_auth_dep + [Depends(license_feature("automation"))],
 )
 
 app.include_router(
@@ -818,18 +922,21 @@ app.include_router(
     automation_analytics.router,
     prefix="/api",
     tags=["Automation Analytics"],
-    dependencies=_auth_dep,
+    dependencies=_auth_dep + [Depends(license_feature("automation"))],
 )
 
 app.include_router(
-    audit.router, prefix="/api/audit", tags=["audit"], dependencies=_auth_dep
+    audit.router,
+    prefix="/api/audit",
+    tags=["audit"],
+    dependencies=_auth_dep + [Depends(license_feature("audit_trail"))],
 )
 
 app.include_router(
     deliverability.router,
     prefix="/api",
     tags=["Deliverability"],
-    dependencies=_auth_dep,
+    dependencies=_auth_dep + [Depends(license_feature("deliverability_dashboard"))],
 )
 
 logger.info(f"✅ {len(app.routes)} routes registered")

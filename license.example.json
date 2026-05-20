@@ -1,26 +1,45 @@
 {
-  "_comment": "Copy this to license.json and replace with your actual license from your vendor.",
-  "license_key": "ZENIPOST-XXXX-XXXX-XXXX-XXXXXXXXXXXX",
-  "issued_to": "Your Company Name",
-  "issued_to_email": "admin@yourcompany.com",
-  "domain": "yourcompany.com",
-  "plan": "professional",
-  "issued_at": "2026-01-01",
-  "expires_at": "2027-01-01",
-  "features": {
-    "ab_testing": true,
-    "automation": true,
-    "deliverability_dashboard": true,
-    "segmentation": true,
-    "custom_smtp": true,
-    "api_access": true,
-    "audit_trail": true,
-    "remote_db": true,
-    "remote_redis": true,
-    "multi_user": false,
-    "max_subscribers": -1,
-    "max_campaigns_per_month": -1,
-    "max_users": 1
-  },
-  "signature": "REPLACE_WITH_ACTUAL_SIGNATURE_FROM_VENDOR"
+  "_comment": "ZeniPost license file — v2 format. Download your real license from the ZeniPost Dashboard → Licenses → Download. Save it as license.json at the repo root.",
+
+  "license_id": "lic_123",
+  "format": "zenipost-license-v2",
+  "version": "2.0",
+  "product": "ZeniPost Email Platform",
+
+  "domain": "app.yourcustomerdomain.com",
+  "root_domain": "yourcustomerdomain.com",
+
+  "customer_id": 1,
+  "customer_name": "Your Company Name",
+  "customer_email": "admin@yourcustomerdomain.com",
+
+  "plan": "pro",
+  "emails_per_month": 500000,
+  "subscribers_limit": 100000,
+
+  "features": [
+    "campaign_management",
+    "template_editors",
+    "subscriber_management",
+    "analytics_basic",
+    "suppression_list",
+    "custom_domains",
+    "webhooks",
+    "automation",
+    "ab_testing",
+    "segmentation_advanced",
+    "api_access",
+    "analytics_advanced",
+    "gdpr_tools"
+  ],
+
+  "issued_at": "2026-01-01T00:00:00.000Z",
+  "expires_at": "2027-01-01T00:00:00.000Z",
+
+  "ping_url": "https://app.zenipost.com/api/licenses/ping",
+  "admin_access_allowed": false,
+
+  "delivery": null,
+
+  "signature": "REPLACE_WITH_JWT_FROM_DASHBOARD"
 }

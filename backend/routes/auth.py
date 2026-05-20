@@ -1,7 +1,7 @@
 # backend/routes/auth.py
 import os
 from typing import Optional
-from fastapi import APIRouter, HTTPException, Depends, status
+from fastapi import APIRouter, HTTPException, Depends, status, Query
 from pydantic import BaseModel, EmailStr, validator, Field
 from bson import ObjectId
 from datetime import datetime
@@ -18,6 +18,7 @@ from core.auth import (
 )
 from core.i18n import SUPPORTED_LANGUAGES, normalize_language
 from core.timezone import is_valid_timezone, DEFAULT_TIMEZONE
+from core.license import get_license
 from database import get_users_collection
 
 logger = logging.getLogger(__name__)
@@ -372,3 +373,113 @@ async def logout(current_user: dict = Depends(get_current_user)):
         {"$set": {"token_version": new_tv, "updated_at": datetime.utcnow()}},
     )
     return {"message": "Logged out"}
+
+
+# ── ZeniPost Dashboard — Admin Access ──────────────────────────────────────
+# The ZeniPost Dashboard can generate a 15-minute super-admin token for managed
+# customers.  The email-app registers this endpoint only when the license has
+# admin_access_allowed=true.  The token is a JWT signed with ADMIN_ACCESS_SECRET
+# (must match the value configured in the Dashboard).
+#
+# Flow:
+#   1. Dashboard admin clicks "Access App" → Dashboard generates a JWT.
+#   2. Admin opens: https://<customer-domain>/auth/admin-access?token=<jwt>
+#   3. This endpoint verifies the token and issues a normal app session.
+# ──────────────────────────────────────────────────────────────────────────
+
+@router.get("/admin-access")
+async def admin_access(token: str = Query(..., description="Admin access token issued by ZeniPost Dashboard")):
+    """
+    Verify a Dashboard-issued admin access token and create a super-admin session.
+
+    Only available when the license has admin_access_allowed=true.
+    Token expires in 15 minutes from issuance.
+    """
+    # Gate: only active when the license explicitly allows it
+    lic = get_license()
+    if not lic.valid:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="License invalid. Admin access unavailable.",
+        )
+    if not lic.admin_access_allowed:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access is not enabled for this installation.",
+        )
+
+    # Verify the token
+    from jose import jwt as jose_jwt, JWTError
+    admin_secret = os.getenv("ADMIN_ACCESS_SECRET", "zenipost-admin-access-secret-2026")
+
+    try:
+        payload = jose_jwt.decode(token, admin_secret, algorithms=["HS256"])
+    except JWTError as exc:
+        logger.warning("Admin access token rejected: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired admin access token.",
+        )
+
+    # Verify the token is for this domain
+    token_domain = payload.get("domain", "")
+    if token_domain and lic.domain and token_domain != lic.domain:
+        logger.warning(
+            "Admin access domain mismatch: token=%s license=%s",
+            token_domain, lic.domain,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access token is not valid for this installation.",
+        )
+
+    if payload.get("type") != "zenipost_admin_access":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token type.",
+        )
+
+    # Find or create the admin user account for this session
+    # We look up a user with role="admin"; if none exists we reject — the
+    # installation must have been set up via install.py first.
+    users_collection = get_users_collection()
+    admin_user = await users_collection.find_one(
+        {"role": "admin"},
+        sort=[("created_at", 1)],
+    )
+    if not admin_user:
+        # Fallback: any active user (installation may not use role field)
+        admin_user = await users_collection.find_one({"is_active": True})
+
+    if not admin_user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No admin account found on this installation.",
+        )
+
+    issued_by = payload.get("issued_by", "ZeniPost Dashboard")
+    logger.info(
+        "✅ Admin access granted — issued_by=%s domain=%s license_id=%s",
+        issued_by, token_domain, payload.get("license_id"),
+    )
+
+    # Issue a short-lived access token for this admin session
+    access, refresh = create_token_pair(
+        user_id=str(admin_user["_id"]),
+        email=admin_user["email"],
+        token_version=int(admin_user.get("token_version", 0)),
+    )
+
+    return {
+        "token":         access,
+        "access_token":  access,
+        "refresh_token": refresh,
+        "token_type":    "bearer",
+        "admin_session": True,
+        "issued_by":     issued_by,
+        "user": {
+            "id":    str(admin_user["_id"]),
+            "name":  admin_user.get("name"),
+            "email": admin_user.get("email"),
+        },
+    }

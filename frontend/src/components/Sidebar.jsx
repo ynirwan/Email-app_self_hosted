@@ -3,6 +3,7 @@ import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { useState } from "react";
 import { useUser } from "../contexts/UserContext";
 import { useSettings } from "../contexts/SettingsContext";
+import { useLicense, isFeatureEnabled } from "../contexts/LicenseContext";
 import API, { clearTokens } from "../api";
 import ZeniPostLogo from "./ZeniPostLogo";
 
@@ -20,11 +21,14 @@ export default function Sidebar() {
   const navigate    = useNavigate();
   const { user }    = useUser();
   const { t }       = useSettings();   // ← must be inside the component
+  const { license } = useLicense();
 
   const [mobileOpen, setMobileOpen] = useState(false);
   const [collapsed,  setCollapsed]  = useState(false);
 
-  // Built inside the component so t() is available
+  // Built inside the component so t() is available.
+  // `requires` is the license feature key — items are hidden (not just greyed)
+  // when the plan doesn't include that feature.
   const NAV_GROUPS = [
     {
       label: t("nav.group.overview"),
@@ -44,21 +48,30 @@ export default function Sidebar() {
     {
       label: t("nav.group.sending"),
       items: [
-        { to: "/campaigns",  label: t("nav.campaigns"),  icon: "📢", description: t("nav.campaigns.sub") },
-        { to: "/templates",  label: t("nav.templates"),  icon: "📄", description: t("nav.templates.sub") },
-        { to: "/ab-testing", label: t("nav.abTesting"),  icon: "⚖️ ", description: t("nav.abTesting.sub") },
-        { to: "/automation",     label: t("nav.automation"),     icon: "🤖", description: t("nav.automation.sub") },
-        { to: "/deliverability", label: t("nav.deliverability"), icon: "📬", description: t("nav.deliverability.sub") },
+        { to: "/campaigns",      label: t("nav.campaigns"),      icon: "📢", description: t("nav.campaigns.sub") },
+        { to: "/templates",      label: t("nav.templates"),      icon: "📄", description: t("nav.templates.sub") },
+        { to: "/ab-testing",     label: t("nav.abTesting"),      icon: "⚖️ ", description: t("nav.abTesting.sub"),      requires: "ab_testing" },
+        { to: "/automation",     label: t("nav.automation"),     icon: "🤖", description: t("nav.automation.sub"),     requires: "automation" },
+        { to: "/deliverability", label: t("nav.deliverability"), icon: "📬", description: t("nav.deliverability.sub"), requires: "deliverability_dashboard" },
       ],
     },
     {
       label: t("nav.group.system"),
       items: [
-        { to: "/audit",          label: t("nav.audit"),    icon: "📋", description: t("nav.audit.sub") },
+        { to: "/audit",          label: t("nav.audit"),    icon: "📋", description: t("nav.audit.sub"),    requires: "audit_trail" },
         { to: "/settings/email", label: t("nav.settings"), icon: "⚙️", description: t("nav.settings.sub") },
       ],
     },
   ];
+
+  // Filter out items whose required feature isn't enabled on the current plan.
+  // While the license is still loading we keep all items (optimistic).
+  const visibleGroups = NAV_GROUPS.map((group) => ({
+    ...group,
+    items: group.items.filter(
+      (item) => !item.requires || isFeatureEnabled(item.requires, license)
+    ),
+  })).filter((group) => group.items.length > 0);
 
   const handleLogout = async () => {
     // Server-side logout bumps token_version so any leaked copies of the
@@ -151,7 +164,7 @@ export default function Sidebar() {
 
       {/* Nav groups */}
       <nav className="flex-1 overflow-y-auto overflow-x-hidden py-3" aria-label="Main navigation">
-        {NAV_GROUPS.map((group) => (
+        {visibleGroups.map((group) => (
           <div key={group.label} className={`relative ${collapsed ? "px-2" : "px-3"} mb-1`}>
             {!collapsed && (
               <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider px-3 pt-3 pb-1">

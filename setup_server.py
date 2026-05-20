@@ -75,14 +75,14 @@ PLAN_FEATURES: Dict[str, Dict[str, Any]] = {
         "deliverability_dashboard": False, "segmentation": True,
         "custom_smtp": True, "api_access": False, "audit_trail": True,
         "remote_db": False, "remote_redis": False,
-        "max_users": 1, "max_subscribers": 10_000, "max_campaigns_per_month": 10,
+        "max_users": 1, "max_subscribers": 25_000, "max_campaigns_per_month": -1,
     },
     "professional": {
         "ab_testing": True, "automation": True,
         "deliverability_dashboard": True, "segmentation": True,
         "custom_smtp": True, "api_access": True, "audit_trail": True,
         "remote_db": True, "remote_redis": True,
-        "max_users": 1, "max_subscribers": -1, "max_campaigns_per_month": -1,
+        "max_users": 1, "max_subscribers": 100_000, "max_campaigns_per_month": -1,
     },
     "enterprise": {
         "ab_testing": True, "automation": True,
@@ -93,15 +93,90 @@ PLAN_FEATURES: Dict[str, Dict[str, Any]] = {
     },
 }
 
+# Dashboard uses "pro" / "agency" as plan names; normalise to internal names.
+_PLAN_ALIASES: Dict[str, str] = {
+    "starter":      "starter",
+    "pro":          "professional",
+    "professional": "professional",
+    "agency":       "enterprise",
+    "enterprise":   "enterprise",
+}
 
-def _merge_features(plan: str, override: dict) -> dict:
+# v2 feature-flag string → PLAN_FEATURES key mapping (mirrors license.py)
+_V2_FLAG_MAP: Dict[str, str] = {
+    "ab_testing":            "ab_testing",
+    "automation":            "automation",
+    "api_access":            "api_access",
+    "audit_logs":            "audit_trail",
+    "segmentation_advanced": "segmentation",
+    "analytics_advanced":    "deliverability_dashboard",
+    "team_roles":            "multi_user",
+}
+
+
+def _normalize_plan(plan: str) -> str:
+    return _PLAN_ALIASES.get(plan.strip().lower(), "starter")
+
+
+def _merge_features(plan: str, override: Any) -> dict:
+    """
+    Build the feature dict for the given plan.
+
+    *override* can be:
+      - a list of strings  (v2 format from the dashboard)
+      - a dict             (legacy format)
+      - None / empty
+    """
     base = dict(PLAN_FEATURES.get(plan, PLAN_FEATURES["starter"]))
-    for k, v in override.items():
-        if k in base and isinstance(base[k], bool):
-            base[k] = base[k] and bool(v)
-        else:
-            base[k] = v
+
+    if isinstance(override, list):
+        # v2: list of feature-flag strings — set the matching keys to True
+        for flag in override:
+            internal = _V2_FLAG_MAP.get(flag)
+            if internal and internal in base and isinstance(base[internal], bool):
+                base[internal] = True
+    elif isinstance(override, dict):
+        # legacy: dict of key → value overrides
+        for k, v in override.items():
+            if k in base and isinstance(base[k], bool):
+                base[k] = base[k] and bool(v)
+            else:
+                base[k] = v
+
     return base
+
+
+# ---------------------------------------------------------------------------
+# Minimal stdlib-only JWT HS256 decoder (no external packages required)
+# ---------------------------------------------------------------------------
+
+def _decode_jwt_hs256(token: str, secret: str) -> Optional[dict]:
+    """
+    Verify a HS256 JWT and return its payload dict, or None if invalid.
+    Uses only Python stdlib (base64, hmac, hashlib, json).
+    """
+    try:
+        parts = token.split(".")
+        if len(parts) != 3:
+            return None
+        header_b64, payload_b64, sig_b64 = parts
+
+        # Pad base64url segments to a multiple of 4
+        def _b64_decode(s: str) -> bytes:
+            s += "=" * (-len(s) % 4)
+            return base64.urlsafe_b64decode(s)
+
+        # Verify signature: HMAC-SHA256(header + "." + payload)
+        signing_input = f"{header_b64}.{payload_b64}".encode()
+        expected_sig  = hmac.new(secret.encode(), signing_input, hashlib.sha256).digest()
+        actual_sig    = _b64_decode(sig_b64)
+        if not hmac.compare_digest(expected_sig, actual_sig):
+            return None
+
+        payload = json.loads(_b64_decode(payload_b64).decode())
+        return payload
+    except Exception:
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -155,13 +230,35 @@ def _push(msg: str, level: str = "info") -> None:
 # ---------------------------------------------------------------------------
 
 def validate_license(data: dict) -> Tuple[bool, str, dict]:
-    """Returns (ok, error_msg, features)."""
-    sig = data.get("signature", "")
-    if sig in ("", "REPLACE_WITH_ACTUAL_SIGNATURE_FROM_VENDOR"):
-        pass  # dev/trial — allowed
-    else:
-        secret = os.getenv("LICENSE_SIGNING_SECRET", "")
-        if secret:
+    """
+    Returns (ok, error_msg, features).
+
+    Supports two formats:
+      v2  (format == "zenipost-license-v2") — signature is a JWT HS256 token
+      legacy                                — signature is an HMAC-SHA256 hex digest
+    """
+    sig    = data.get("signature", "")
+    fmt    = data.get("format", "")
+    is_v2  = (fmt == "zenipost-license-v2")
+    secret = os.getenv("LICENSE_SIGNING_SECRET", "zenipost-license-secret-2026")
+
+    dev_placeholder = sig in ("", "REPLACE_WITH_JWT_FROM_DASHBOARD",
+                               "REPLACE_WITH_ACTUAL_SIGNATURE_FROM_VENDOR")
+
+    if not dev_placeholder:
+        if is_v2:
+            # v2: signature is a JWT — decode and verify with HS256
+            payload = _decode_jwt_hs256(sig, secret)
+            if payload is None:
+                return False, "License signature verification failed. The file may have been tampered with or the LICENSE_SIGNING_SECRET is wrong.", {}
+            # Cross-check tamper-sensitive fields between plain JSON and JWT payload
+            for check_key in ("license_id", "domain", "plan", "expires_at"):
+                plain_val = data.get(check_key)
+                jwt_val   = payload.get(check_key)
+                if plain_val is not None and jwt_val is not None and plain_val != jwt_val:
+                    return False, f"License tamper detected: '{check_key}' mismatch between file and signature.", {}
+        else:
+            # legacy: signature is an HMAC-SHA256 hex digest of canonical JSON
             canonical = json.dumps(
                 {k: v for k, v in data.items() if k not in ("signature", "_comment")},
                 sort_keys=True, separators=(",", ":"),
@@ -172,20 +269,22 @@ def validate_license(data: dict) -> Tuple[bool, str, dict]:
 
     expires_raw = data.get("expires_at", "9999-12-31")
     try:
-        expires = date.fromisoformat(expires_raw)
-    except ValueError:
+        # Accepts both "2027-01-01" and "2027-01-01T00:00:00.000Z"
+        expires = date.fromisoformat(expires_raw[:10])
+    except (ValueError, TypeError):
         return False, f"Invalid expires_at date: {expires_raw}", {}
     if date.today() > expires:
         return False, f"License expired on {expires}. Please renew.", {}
 
-    plan = data.get("plan", "starter").lower()
+    raw_plan = data.get("plan", "starter")
+    plan = _normalize_plan(raw_plan)   # handles "pro" → "professional", "agency" → "enterprise"
     if plan not in PLAN_FEATURES:
-        return False, f"Unknown plan '{plan}'.", {}
+        return False, f"Unknown plan '{raw_plan}'.", {}
 
     if not data.get("domain", "").strip():
         return False, "License has no 'domain' field.", {}
 
-    features = _merge_features(plan, data.get("features", {}))
+    features = _merge_features(plan, data.get("features", []))
     return True, "", features
 
 
@@ -453,6 +552,16 @@ def write_env(config: dict) -> None:
     _no_ssl = config.get("skip_ssl", False) or _is_ip_address(domain)
     _scheme  = "http" if _no_ssl else "https"
 
+    # Preserve operator-supplied license secrets if already set in the environment.
+    # On a production AMI the operator should set these before baking the image;
+    # the defaults match the ZeniPost Dashboard defaults for development installs.
+    license_signing_secret = os.getenv(
+        "LICENSE_SIGNING_SECRET", "zenipost-license-secret-2026"
+    )
+    admin_access_secret = os.getenv(
+        "ADMIN_ACCESS_SECRET", "zenipost-admin-access-secret-2026"
+    )
+
     content = f"""\
 # ZeniPost Backend Configuration
 # Generated by setup_server.py on {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC
@@ -495,6 +604,13 @@ DB_MAX_POOL_SIZE=50
 DB_MIN_POOL_SIZE=5
 BASE_RATE_LIMIT_PER_MINUTE=100
 MAX_RATE_LIMIT_PER_MINUTE=500
+
+# ── ZeniPost License ──────────────────────────────────────────────────────────
+# Must match LICENSE_SECRET / ADMIN_ACCESS_SECRET on the ZeniPost Dashboard server.
+# Change these to strong random values in production and update them on the
+# dashboard too — both sides must share the same secrets.
+LICENSE_SIGNING_SECRET={license_signing_secret}
+ADMIN_ACCESS_SECRET={admin_access_secret}
 """
     env_path = INSTALL_DIR / "backend" / ".env"
     env_path.write_text(content, encoding="utf-8")
@@ -861,7 +977,12 @@ def run_install(config: dict) -> None:
         _create_admin(admin_name, admin_email, admin_password)
         _push(f"Admin account created ✔", "ok")
 
-        # 10. Write setup lock
+        # 10. Register installation with ZeniPost Dashboard
+        #     This records the server's public IP so the dashboard can detect
+        #     license reuse (same license.json copied to multiple servers).
+        _register_install(config)
+
+        # 11. Write setup lock
         scheme = "https" if ssl_ok else "http"
         app_url = f"{scheme}://{domain}"
         SETUP_LOCK.write_text(
@@ -888,6 +1009,67 @@ def run_install(config: dict) -> None:
     except Exception as exc:
         _push(f"INSTALL FAILED: {exc}", "error")
         _push(traceback.format_exc(), "error")
+
+
+def _register_install(config: dict) -> None:
+    """
+    POST the server's public IP to the ZeniPost Dashboard so the license is
+    marked as installed and bound to this specific server.
+
+    Non-fatal: if the dashboard is unreachable (self-managed installs, air-gapped
+    environments) we log a warning and continue — the installation is not blocked.
+    """
+    import json as _json
+    from pathlib import Path as _Path
+
+    license_path = INSTALL_DIR / "license.json"
+    if not license_path.exists():
+        log.warning("register-install: license.json not found, skipping registration")
+        return
+
+    try:
+        raw = _json.loads(license_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        log.warning("register-install: could not read license.json: %s", exc)
+        return
+
+    ping_url = raw.get("ping_url", "")
+    if not ping_url:
+        log.info("register-install: no ping_url in license (dev/legacy mode), skipping")
+        return
+
+    # Derive the register-install URL from ping_url
+    # ping_url is e.g. https://app.zenipost.com/api/licenses/ping
+    register_url = ping_url.rsplit("/ping", 1)[0] + "/register-install"
+
+    signature  = raw.get("signature", "")
+    domain     = config.get("domain", raw.get("domain", ""))
+    server_ip  = _get_public_ip() or ""
+
+    payload = _json.dumps({
+        "domain":    domain,
+        "signature": signature,
+        "server_ip": server_ip,
+    }).encode()
+
+    _push(f"Registering installation with ZeniPost Dashboard (IP: {server_ip or 'unknown'}) …")
+    try:
+        req = urllib.request.Request(
+            register_url,
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=10) as r:
+            resp = _json.loads(r.read().decode())
+        if resp.get("ip_changed"):
+            _push("⚠ Dashboard flagged this as a re-install on a different IP.", "warn")
+        else:
+            _push("Installation registered with ZeniPost Dashboard ✔", "ok")
+    except Exception as exc:
+        # Non-fatal — dashboard may be unreachable in self-managed/air-gapped setups
+        log.warning("register-install request failed (non-fatal): %s", exc)
+        _push("Could not reach ZeniPost Dashboard for install registration (non-fatal).", "warn")
 
 
 def _wait_for_backend(max_wait: int = 120) -> None:
@@ -1890,6 +2072,34 @@ class SetupHandler(BaseHTTPRequestHandler):
         if SETUP_LOCK.exists():
             self._json({"ok": False, "error": "Setup already complete."})
             return
+
+        # ── Domain vs. license enforcement ───────────────────────────────────
+        # Verify the chosen install domain is valid for the uploaded license.
+        # Prevents a license issued for domain-A being used to set up domain-B.
+        install_domain = body.get("domain", "").strip().lower()
+        lic_data = body.get("license") or {}
+        lic_domain    = lic_data.get("domain", "").strip().lower()
+        lic_root      = lic_data.get("root_domain", "").strip().lower()
+
+        if install_domain and lic_domain and not _is_ip_address(install_domain):
+            # Exact match OR subdomain of root_domain
+            domain_ok = (
+                install_domain == lic_domain
+                or (lic_root and (
+                    install_domain == lic_root
+                    or install_domain.endswith("." + lic_root)
+                ))
+            )
+            if not domain_ok:
+                self._json({
+                    "ok":    False,
+                    "error": (
+                        f"The chosen domain '{install_domain}' does not match the "
+                        f"licensed domain '{lic_domain}'. "
+                        "Download a license issued for this domain from the ZeniPost Dashboard."
+                    ),
+                })
+                return
 
         mongo_password = _gen_mongo_password()
         config = {

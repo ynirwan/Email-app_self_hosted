@@ -429,7 +429,32 @@ beat_schedule.update(
     }
 )
 
-# Analytics tasks
+# ── License-aware beat task registration ─────────────────────────────────────
+# Read the license once here (module load time) so we can skip beat tasks that
+# belong to features the current plan does not include.  This avoids spinning
+# up Celery workers for queues that will never receive work.
+#
+# Workers that *execute* tasks (not Beat) are always started the same way;
+# the queue routing means unused queues stay idle at essentially zero cost.
+# The real gain from gating Beat is eliminating the recurring "no handler"
+# noise in logs when a starter-plan install has automation tasks queued.
+try:
+    from core.license import get_license as _get_lic
+    _beat_lic = _get_lic()
+    _feat_automation = _beat_lic.is_feature_enabled("automation")
+    _feat_ab_testing  = _beat_lic.is_feature_enabled("ab_testing")
+    logger.info(
+        "Beat schedule: automation=%s ab_testing=%s (plan=%s)",
+        _feat_automation, _feat_ab_testing, _beat_lic.plan,
+    )
+except Exception as _lic_err:
+    # If we can't load the license at beat-setup time, assume all features
+    # enabled so we never accidentally leave tasks unscheduled in dev.
+    logger.warning("Could not read license for beat schedule gating: %s — enabling all tasks", _lic_err)
+    _feat_automation = True
+    _feat_ab_testing  = True
+
+# Analytics tasks (always run — core to all plans)
 beat_schedule.update(
     {
         # ===== ANALYTICS & REPORTING =====
@@ -443,79 +468,90 @@ beat_schedule.update(
             "schedule": timedelta(hours=4),
             "options": {"queue": "analytics", "priority": 2},
         },
-        # ===== A/B TEST AUTO-COMPLETE =====
-        "check-ab-test-expiry": {
-            "task": "tasks.check_ab_test_expiry",
-            "schedule": timedelta(minutes=15),  # check every 15 min
-            "options": {"queue": "ab_tests", "priority": 6},
-        },
     }
 )
 
-# ✅ UPDATED: Automation processing with trigger checkers
-beat_schedule.update(
-    {
-        # ===== AUTOMATION PROCESSING =====
-        "process-scheduled-automations": {
-            "task": "tasks.process_scheduled_automations",
-            "schedule": timedelta(minutes=5),
-            "options": {"queue": "automation", "priority": 5},
-        },
-        "cleanup-automation-executions": {
-            "task": "tasks.cleanup_automation_executions",
-            "schedule": timedelta(days=7),
-            "options": {"queue": "automation", "priority": 1},
-        },
-        # ✅ NEW: Welcome automation trigger checker
-        "check-welcome-automations": {
-            "task": "tasks.check_welcome_automations",
-            "schedule": crontab(minute="*/5"),  # Every 5 minutes
-            "options": {"queue": "automation", "priority": 7},
-        },
-        # ✅ NEW: Birthday automation checker (multiple times for timezone coverage)
-        "check-birthdays-midnight-utc": {
-            "task": "tasks.check_daily_birthdays",
-            "schedule": crontab(hour=0, minute=0),  # Midnight UTC
-            "options": {"queue": "automation", "priority": 8},
-        },
-        "check-birthdays-morning-utc": {
-            "task": "tasks.check_daily_birthdays",
-            "schedule": crontab(hour=6, minute=0),  # 6 AM UTC
-            "options": {"queue": "automation", "priority": 8},
-        },
-        "check-birthdays-noon-utc": {
-            "task": "tasks.check_daily_birthdays",
-            "schedule": crontab(hour=12, minute=0),  # Noon UTC
-            "options": {"queue": "automation", "priority": 8},
-        },
-        # ✅ NEW: Abandoned cart checker
-        "check-abandoned-cart-automations": {
-            "task": "tasks.check_abandoned_cart_automations",
-            "schedule": crontab(minute="*/15"),  # Every 15 minutes
-            "options": {"queue": "automation", "priority": 6},
-        },
-        # ✅ NEW: Inactive subscriber checker
-        "check-inactive-subscribers": {
-            "task": "tasks.check_inactive_subscriber_automations",
-            "schedule": crontab(hour=3, minute=0),  # Daily at 3 AM
-            "options": {"queue": "automation", "priority": 7},
-        },
-        # ✅ NEW: At-risk subscriber detector
-        "detect-at-risk-subscribers": {
-            "task": "tasks.detect_at_risk_subscribers",
-            "schedule": crontab(hour=4, minute=0),  # Daily at 4 AM
-            "options": {"queue": "automation", "priority": 6},
-        },
-        # ✅ NEW: Event cleanup
-        "cleanup-old-events": {
-            "task": "tasks.cleanup_old_events",
-            "schedule": crontab(
-                day_of_month=1, hour=2, minute=0
-            ),  # 1st of month at 2 AM
-            "options": {"queue": "automation", "priority": 3},
-        },
-    }
-)
+# A/B testing beat tasks — only when plan includes ab_testing
+if _feat_ab_testing:
+    beat_schedule.update(
+        {
+            "check-ab-test-expiry": {
+                "task": "tasks.check_ab_test_expiry",
+                "schedule": timedelta(minutes=15),
+                "options": {"queue": "ab_tests", "priority": 6},
+            },
+        }
+    )
+    logger.info("✅ A/B testing beat tasks registered")
+else:
+    logger.info("ℹ️  A/B testing beat tasks skipped (not in plan)")
+
+# Automation beat tasks — only when plan includes automation
+if _feat_automation:
+    beat_schedule.update(
+        {
+            # ===== AUTOMATION PROCESSING =====
+            "process-scheduled-automations": {
+                "task": "tasks.process_scheduled_automations",
+                "schedule": timedelta(minutes=5),
+                "options": {"queue": "automation", "priority": 5},
+            },
+            "cleanup-automation-executions": {
+                "task": "tasks.cleanup_automation_executions",
+                "schedule": timedelta(days=7),
+                "options": {"queue": "automation", "priority": 1},
+            },
+            # Welcome automation trigger checker
+            "check-welcome-automations": {
+                "task": "tasks.check_welcome_automations",
+                "schedule": crontab(minute="*/5"),
+                "options": {"queue": "automation", "priority": 7},
+            },
+            # Birthday automation checker (3× daily for timezone coverage)
+            "check-birthdays-midnight-utc": {
+                "task": "tasks.check_daily_birthdays",
+                "schedule": crontab(hour=0, minute=0),
+                "options": {"queue": "automation", "priority": 8},
+            },
+            "check-birthdays-morning-utc": {
+                "task": "tasks.check_daily_birthdays",
+                "schedule": crontab(hour=6, minute=0),
+                "options": {"queue": "automation", "priority": 8},
+            },
+            "check-birthdays-noon-utc": {
+                "task": "tasks.check_daily_birthdays",
+                "schedule": crontab(hour=12, minute=0),
+                "options": {"queue": "automation", "priority": 8},
+            },
+            # Abandoned cart checker
+            "check-abandoned-cart-automations": {
+                "task": "tasks.check_abandoned_cart_automations",
+                "schedule": crontab(minute="*/15"),
+                "options": {"queue": "automation", "priority": 6},
+            },
+            # Inactive subscriber checker
+            "check-inactive-subscribers": {
+                "task": "tasks.check_inactive_subscriber_automations",
+                "schedule": crontab(hour=3, minute=0),
+                "options": {"queue": "automation", "priority": 7},
+            },
+            # At-risk subscriber detector
+            "detect-at-risk-subscribers": {
+                "task": "tasks.detect_at_risk_subscribers",
+                "schedule": crontab(hour=4, minute=0),
+                "options": {"queue": "automation", "priority": 6},
+            },
+            # Event cleanup
+            "cleanup-old-events": {
+                "task": "tasks.cleanup_old_events",
+                "schedule": crontab(day_of_month=1, hour=2, minute=0),
+                "options": {"queue": "automation", "priority": 3},
+            },
+        }
+    )
+    logger.info("✅ Automation beat tasks registered")
+else:
+    logger.info("ℹ️  Automation beat tasks skipped (not in plan)")
 
 beat_schedule.update(
     {
@@ -552,6 +588,19 @@ if task_settings.ENABLE_AUDIT_LOGGING:
         "schedule": timedelta(days=7),
         "options": {"queue": "cleanup", "priority": 1},
     }
+
+# ── License ping (daily) ───────────────────────────────────────────────────
+try:
+    from tasks.license_ping_task import register_ping_task
+    register_ping_task(celery_app)
+    beat_schedule["license-ping-daily"] = {
+        "task":     "tasks.license_ping",
+        "schedule": timedelta(hours=24),
+        "options":  {"queue": "default", "priority": 5},
+    }
+    logger.info("✅ License ping task registered")
+except Exception as _lp_err:
+    logger.warning("Could not register license ping task: %s", _lp_err)
 
 # Apply beat schedule
 celery_app.conf.beat_schedule = beat_schedule
