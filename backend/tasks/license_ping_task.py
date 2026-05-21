@@ -7,7 +7,7 @@ adjustments, expiry warnings).
 
 Runs once per day via Celery Beat.
 
-Ping request:  POST <ping_url>   { "domain": "...", "signature": "..." }
+Ping request:  POST <ping_url>   { "domain": "...", "signature": "...", "installation_id": "..." }
 Ping response: { valid, status, plan, emails_per_month, subscribers_limit,
                  features, expires_at, admin_access_allowed, delivery, message }
 
@@ -69,6 +69,11 @@ def _do_ping() -> dict:
     if not signature:
         return {"success": False, "message": "No signature in license file", "changes": []}
 
+    # Persistent installation identity — uniquely identifies this instance so
+    # the dashboard can enforce per-plan seat limits across multiple servers.
+    from core.installation import get_installation_id
+    installation_id = get_installation_id()
+
     # Best-effort: include the server's outbound IP so the dashboard can record
     # lastPingIp and detect if this installation has moved to a different server.
     server_ip: str = ""
@@ -84,7 +89,12 @@ def _do_ping() -> dict:
     try:
         response = httpx.post(
             ping_url,
-            json={"domain": domain, "signature": signature, "server_ip": server_ip},
+            json={
+                "domain":          domain,
+                "signature":       signature,
+                "server_ip":       server_ip,
+                "installation_id": installation_id,
+            },
             timeout=15.0,
         )
         response.raise_for_status()
@@ -107,10 +117,16 @@ def _do_ping() -> dict:
         msg         = data.get("message", "License invalid per Dashboard")
         logger.error("❌ License ping: INVALID — status=%s message=%s", ping_status, msg)
 
-        if ping_status in ("revoked", "expired"):
+        if ping_status in ("revoked", "expired", "installation_limit_exceeded"):
             # Force a reload so the app immediately reflects the new state.
             reload_license()
             changes.append(f"License marked {ping_status} — reloaded")
+            if ping_status == "installation_limit_exceeded":
+                logger.critical(
+                    "🚫 Installation limit exceeded for this license. "
+                    "This installation is not authorised. "
+                    "Upgrade your license or remove another installation via the ZeniPost Dashboard."
+                )
 
         return {"success": False, "message": msg, "status": ping_status, "changes": changes}
 

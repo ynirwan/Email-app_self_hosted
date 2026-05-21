@@ -181,6 +181,32 @@ export default function Sidebar() {
         ))}
       </nav>
 
+      {/* Managed-service indicator — shown when ZeniPost support has admin access */}
+      {license.adminAccessAllowed && (
+        <div className={`flex-shrink-0 border-t border-blue-200 bg-blue-50 ${collapsed ? "px-2 py-2" : "px-3 py-2.5"}`}>
+          {collapsed ? (
+            <div
+              className="flex justify-center"
+              title="Managed by ZeniPost — support may access this installation"
+            >
+              <span className="text-base" aria-label="Managed service">🛡️</span>
+            </div>
+          ) : (
+            <div className="flex items-start gap-2">
+              <span className="text-sm flex-shrink-0 mt-0.5">🛡️</span>
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-semibold text-blue-700 leading-none">
+                  Managed by ZeniPost
+                </p>
+                <p className="text-[10px] text-blue-500 mt-0.5 leading-snug">
+                  Support team has admin access to this installation.
+                </p>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* User section */}
       <div className="flex-shrink-0 border-t border-gray-200 p-3">
         {collapsed ? (
@@ -207,7 +233,7 @@ export default function Sidebar() {
                 <p className="text-xs text-gray-400 truncate">{user?.email || ""}</p>
               </div>
             </div>
-            
+
             <button
               onClick={handleLogout}
               className="flex items-center gap-2 w-full px-2 py-1.5 rounded-lg text-xs text-gray-500 hover:bg-red-50 hover:text-red-600 transition-colors"

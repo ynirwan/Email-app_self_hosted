@@ -28,6 +28,7 @@ const _DEFAULT = {
   expiresAt: null,
   daysUntilExpiry: null,
   isExpired: false,
+  adminAccessAllowed: false,   // true = ZeniPost support can log in to this install
   error: null,
 };
 
@@ -50,6 +51,7 @@ export function LicenseProvider({ children }) {
         expiresAt: d.expires_at ?? null,
         daysUntilExpiry: d.days_until_expiry ?? null,
         isExpired: d.is_expired ?? false,
+        adminAccessAllowed: d.admin_access_allowed ?? false,
         error: d.error ?? null,
       });
     } catch {

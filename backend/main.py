@@ -221,6 +221,103 @@ logger.info(f"Log files: {LOG_DIR}/app.log, error.log, access.log")
 # ============================================
 
 
+async def _register_install_startup(lic) -> None:
+    """
+    Register this instance with the ZeniPost Dashboard on startup.
+
+    Posts to the dashboard's /api/licenses/register-install endpoint so the
+    dashboard can track unique running instances per license and enforce
+    per-plan seat limits.  Failures are logged at WARNING level and never
+    propagate — the app must start regardless of dashboard reachability.
+    """
+    import json
+    import httpx
+    import socket as _socket
+
+    from core.installation import get_installation_id
+    from core.license import _find_license_file
+
+    ping_url: str = getattr(lic, "ping_url", "") or ""
+    if not ping_url:
+        logger.debug("Skipping startup install registration — no ping_url in license.")
+        return
+
+    # Derive register-install URL from ping URL
+    # e.g. https://dashboard.zenipost.com/api/licenses/ping
+    #   →  https://dashboard.zenipost.com/api/licenses/register-install
+    register_url = ping_url.rstrip("/").rsplit("/ping", 1)[0] + "/register-install"
+
+    # Read the raw signature from license.json
+    license_path = _find_license_file()
+    if license_path is None:
+        logger.warning("Startup install registration: license.json not found.")
+        return
+
+    try:
+        raw = json.loads(license_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        logger.warning("Startup install registration: could not read license.json: %s", exc)
+        return
+
+    signature = raw.get("signature", "")
+    if not signature:
+        logger.warning("Startup install registration: no signature in license.json.")
+        return
+
+    installation_id = get_installation_id()
+
+    # Best-effort server IP detection
+    server_ip = ""
+    try:
+        with _socket.socket(_socket.AF_INET, _socket.SOCK_DGRAM) as _s:
+            _s.connect(("8.8.8.8", 80))
+            server_ip = _s.getsockname()[0]
+    except Exception:
+        pass
+
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        resp = await client.post(
+            register_url,
+            json={
+                "domain":          lic.domain,
+                "signature":       signature,
+                "server_ip":       server_ip,
+                "installation_id": installation_id,
+            },
+        )
+
+    if resp.status_code == 200:
+        data = resp.json()
+        logger.info(
+            "✅ Installation registered with dashboard — %s (seats %s/%s)",
+            data.get("message", "ok"),
+            data.get("seats_used", "?"),
+            data.get("seats_limit", "?"),
+        )
+    elif resp.status_code == 403:
+        data = resp.json()
+        code = data.get("code", "")
+        if code == "INSTALL_LIMIT_REACHED":
+            logger.critical(
+                "🚫 Installation seat limit reached for this license. "
+                "This instance is not authorised. "
+                "Upgrade your license or remove another installation via the ZeniPost Dashboard. "
+                "Details: %s", data.get("message", "")
+            )
+        elif code == "LICENSE_REVOKED":
+            logger.critical(
+                "🚫 License has been revoked — this installation is not authorised. "
+                "Contact support@zenipost.com."
+            )
+        else:
+            logger.warning("Startup install registration returned 403: %s", data)
+    else:
+        logger.warning(
+            "Startup install registration returned HTTP %s: %s",
+            resp.status_code, resp.text[:200],
+        )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan manager - handles startup and shutdown"""
@@ -240,6 +337,13 @@ async def lifespan(app: FastAPI):
         if lic.has_managed_delivery:
             plan_name = (lic.delivery or {}).get("plan_name", "managed")
             logger.info("   Managed delivery: %s", plan_name)
+
+        # ── Register this installation with the dashboard ──────────────────
+        # Best-effort: never block startup on network failures.
+        try:
+            await _register_install_startup(lic)
+        except Exception as _exc:
+            logger.warning("Startup install registration failed (non-fatal): %s", _exc)
     else:
         logger.error("❌ License invalid: %s", lic.error)
         if settings.ENVIRONMENT == "production":
