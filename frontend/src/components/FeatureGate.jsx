@@ -20,6 +20,7 @@ const FEATURE_LABELS = {
   audit_trail:             "Audit Trail",
   api_access:              "API Access",
   multi_user:              "Multi-User / Team Roles",
+  segmentation:            "Audience Segmentation",
 };
 
 const PLAN_NEXT = {

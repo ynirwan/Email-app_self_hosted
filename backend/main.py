@@ -875,7 +875,10 @@ app.include_router(
 )
 
 app.include_router(
-    segments.router, prefix="/api/segments", tags=["Segments"], dependencies=_auth_dep
+    segments.router,
+    prefix="/api/segments",
+    tags=["Segments"],
+    dependencies=_auth_dep + [Depends(license_feature("segmentation"))],
 )
 
 app.include_router(

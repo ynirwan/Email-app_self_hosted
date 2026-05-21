@@ -68,7 +68,7 @@ const App = () => {
             <Route path="analytics" element={<Analytics />} />
             <Route path="analytics/campaign/:campaignId" element={<CampaignAnalytics />} />
             <Route path="suppressions" element={<SuppressionManagement />} />
-            <Route path="/segmentation" element={<Segmentation />} />
+            <Route path="/segmentation" element={<FeatureGate feature="segmentation"><Segmentation /></FeatureGate>} />
 
             {/* ── A/B Testing (pro + enterprise) ── */}
             <Route

@@ -63,7 +63,7 @@ _PLAN_DEFAULTS: Dict[str, Dict[str, Any]] = {
         "ab_testing":              False,
         "automation":              False,
         "deliverability_dashboard": False,
-        "segmentation":            True,
+        "segmentation":            False,   # Pro+ only
         "custom_smtp":             True,
         "api_access":              False,
         "audit_trail":             True,
