@@ -67,11 +67,10 @@ _PLAN_DEFAULTS: Dict[str, Dict[str, Any]] = {
         "custom_smtp":             True,
         "api_access":              False,
         "audit_trail":             True,
+        "max_domains":             0,       # uses license domain only; no custom domains
         "remote_db":               False,   # local Docker only
         "remote_redis":            False,   # local Docker only
         "multi_user":              False,
-        "max_subscribers":         25_000,
-        "max_campaigns_per_month": -1,      # unlimited campaigns; quota is email volume
         "max_users":               1,
     },
     "professional": {
@@ -82,11 +81,10 @@ _PLAN_DEFAULTS: Dict[str, Dict[str, Any]] = {
         "custom_smtp":             True,
         "api_access":              True,
         "audit_trail":             True,
+        "max_domains":             5,       # up to 5 domains, each with 1 tracking subdomain
         "remote_db":               True,
         "remote_redis":            True,
         "multi_user":              False,
-        "max_subscribers":         100_000,
-        "max_campaigns_per_month": -1,
         "max_users":               1,
     },
     "enterprise": {
@@ -97,11 +95,10 @@ _PLAN_DEFAULTS: Dict[str, Dict[str, Any]] = {
         "custom_smtp":             True,
         "api_access":              True,
         "audit_trail":             True,
+        "max_domains":             -1,      # unlimited
         "remote_db":               True,
         "remote_redis":            True,
         "multi_user":              True,
-        "max_subscribers":         -1,      # unlimited
-        "max_campaigns_per_month": -1,
         "max_users":               -1,      # unlimited
     },
 }
@@ -125,19 +122,18 @@ _V2_FLAG_MAP: Dict[str, str] = {
     "ip_warmup":             "ip_warmup",
     # These dashboard flags have no matching email-app gate; ignored gracefully
     # "campaign_management", "template_editors", "subscriber_management",
-    # "analytics_basic", "suppression_list", "custom_domains", "webhooks",
+    # "analytics_basic", "suppression_list", "webhooks",
     # "gdpr_tools", "white_label", "client_usage"
 }
 
 
 def _features_from_v2(raw: dict) -> Dict[str, Any]:
     """
-    Convert a v2 string-array features list + quota fields into the email-app
-    feature dict format expected by is_feature_enabled() and the rest of the app.
+    Convert a v2 string-array features list into the email-app feature dict
+    format expected by is_feature_enabled() and the rest of the app.
 
-    Quotas come from the top-level license fields, not the features array:
-      subscribers_limit  → max_subscribers
-      emails_per_month   → kept for reference; campaign count is always unlimited
+    No subscriber or email volume quotas are enforced — access is feature-gated
+    only (ab_testing, automation, api_access, etc.).
     """
     plan_internal = _normalize_plan(raw.get("plan", "starter"))
     base = dict(_PLAN_DEFAULTS.get(plan_internal, _PLAN_DEFAULTS["starter"]))
@@ -149,18 +145,6 @@ def _features_from_v2(raw: dict) -> Dict[str, Any]:
         internal_key = _V2_FLAG_MAP.get(flag)
         if internal_key:
             base[internal_key] = True
-
-    # Subscriber quota from the license (overrides plan default)
-    subscribers_limit = raw.get("subscribers_limit")
-    if isinstance(subscribers_limit, int) and subscribers_limit > 0:
-        base["max_subscribers"] = subscribers_limit
-
-    # emails_per_month is stored for informational use; the app doesn't enforce
-    # a per-campaign email cap — quota enforcement happens at the campaign level
-    # via the dashboard's usage tracking. Store it anyway for /api/license/status.
-    emails_per_month = raw.get("emails_per_month")
-    if isinstance(emails_per_month, int):
-        base["emails_per_month"] = emails_per_month
 
     return base
 

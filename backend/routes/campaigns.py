@@ -713,43 +713,6 @@ async def send_campaign(campaign_id: str):
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(ve)
             )
 
-        # ── 3b. License quota check ─────────────────────────────────────────
-        # Count active recipients across the campaign's target lists and reject
-        # before dispatching if they exceed the plan's max_subscribers quota.
-        # This is a best-effort pre-flight: the Celery task enforces suppression
-        # at send time, but catching the limit here gives the user a clear error
-        # message instead of a failed task log they'd have to go hunting for.
-        try:
-            import os as _os
-            from core.license import get_license as _get_lic
-            from database import get_subscribers_collection as _get_subs
-
-            _env = _os.getenv("ENVIRONMENT", "development").lower()
-            if _env != "development":
-                _lic = _get_lic()
-                _max = _lic.features.get("max_subscribers", -1) if _lic.valid else -1
-                if _max and _max > 0:
-                    _target_lists = campaign.get("target_lists", [])
-                    if _target_lists:
-                        _subs_col = _get_subs()
-                        _recipient_count = await _subs_col.count_documents(
-                            {"list": {"$in": _target_lists}, "status": "active"}
-                        )
-                        if _recipient_count > _max:
-                            raise HTTPException(
-                                status_code=status.HTTP_403_FORBIDDEN,
-                                detail=(
-                                    f"This campaign targets {_recipient_count:,} active subscribers "
-                                    f"but your '{_lic.plan}' plan allows a maximum of {_max:,}. "
-                                    "Please upgrade your license or reduce the audience size."
-                                ),
-                            )
-        except HTTPException:
-            raise
-        except Exception as _quota_err:
-            # Non-fatal — log and continue so a transient DB error doesn't block sends.
-            logger.warning("Subscriber quota pre-flight failed (non-fatal): %s", _quota_err)
-
         # ── 4. Persist snapshot + status atomically, THEN trigger task ──────
         update_fields = {
             "status": "sending",

@@ -54,43 +54,6 @@ router = APIRouter()
 # License helpers
 # ---------------------------------------------------------------------------
 
-async def _check_subscriber_limit(adding: int = 1) -> None:
-    """
-    Raise HTTPException 403 if inserting *adding* more subscribers would
-    exceed the max_subscribers quota in the current license.
-
-    -1 means unlimited (enterprise plan). 0 means "no quota set" (treated
-    as unlimited for backwards compat). Skipped entirely in dev mode.
-    """
-    from core.license import get_license
-    import os
-
-    if os.getenv("ENVIRONMENT", "development").lower() == "development":
-        return
-
-    lic = get_license()
-    if not lic.valid:
-        raise HTTPException(
-            status_code=403,
-            detail=f"License invalid: {lic.error}",
-        )
-
-    max_subs = lic.features.get("max_subscribers", -1)
-    if max_subs is None or max_subs <= 0:
-        return  # unlimited
-
-    subscribers_collection = get_subscribers_collection()
-    current = await subscribers_collection.count_documents({})
-    if current + adding > max_subs:
-        raise HTTPException(
-            status_code=403,
-            detail=(
-                f"Subscriber limit reached: your '{lic.plan}' plan allows "
-                f"{max_subs:,} subscribers. You currently have {current:,}. "
-                "Please upgrade your license via the ZeniPost Dashboard."
-            ),
-        )
-
 # ===== LOGGING SETUP =====
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -1056,11 +1019,6 @@ async def start_upload_job(
                     actual_total += json.load(fh).get("chunk_records", 0)
             except Exception:
                 pass
-
-    # License quota check — fail fast before kicking off a potentially large job.
-    # We check against the declared import count; actual inserts may be lower due to
-    # duplicates, but this gives the user an early signal before they wait.
-    await _check_subscriber_limit(adding=actual_total)
 
     # Fix the job total_records now that we know the real number
     await col.update_one(
@@ -2177,10 +2135,6 @@ async def add_single_subscriber(subscriber: SubscriberIn, request: Request):
                 status_code=400,
                 detail="Subscriber already exists in this list",
             )
-
-        # License quota check — only counts net-new subscribers (not duplicates,
-        # which were already rejected above).
-        await _check_subscriber_limit(adding=1)
 
         now = datetime.utcnow()
         status_value = (

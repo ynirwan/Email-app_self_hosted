@@ -105,6 +105,58 @@ def _check_dns(domain: str, vr: dict) -> dict:
     return results
 
 
+# ─── license helpers ─────────────────────────────────────────────────────────
+
+async def _check_domain_limit(col) -> None:
+    """
+    Enforce the max_domains quota from the current license plan.
+
+      max_domains = 0   → starter plan; no custom domains allowed.
+                          The licensed domain from license.json is used automatically.
+      max_domains = N>0 → count existing domains; block if already at limit.
+      max_domains = -1  → unlimited (enterprise/agency).
+
+    Skipped entirely in development mode.
+    """
+    import os
+    from core.license import get_license
+
+    if os.getenv("ENVIRONMENT", "development").lower() == "development":
+        return
+
+    lic = get_license()
+    if not lic.valid:
+        raise HTTPException(
+            status_code=403,
+            detail=f"License invalid: {lic.error}",
+        )
+
+    max_domains = lic.features.get("max_domains", -1)
+
+    if max_domains == 0:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "Custom domains are not available on the Starter plan. "
+                "Your license domain is used automatically as the sending domain. "
+                "Upgrade to Pro to add up to 5 custom domains."
+            ),
+        )
+
+    if max_domains > 0:
+        current = await col.count_documents({})
+        if current >= max_domains:
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    f"Domain limit reached: your plan allows {max_domains} "
+                    f"domain{'s' if max_domains != 1 else ''}. "
+                    "Please remove an existing domain or upgrade your license."
+                ),
+            )
+    # max_domains == -1: unlimited — fall through
+
+
 # ─── routes ──────────────────────────────────────────────────────────────────
 
 @router.post("")
@@ -114,6 +166,8 @@ async def add_domain(body: DomainCreate):
 
     if not _DOMAIN_RE.match(domain):
         raise HTTPException(400, "Invalid domain format")
+
+    await _check_domain_limit(col)
 
     if await col.find_one({"domain": domain}):
         raise HTTPException(400, "Domain already exists")

@@ -119,10 +119,6 @@ def _do_ping() -> dict:
     if resp_plan and resp_plan != lic.plan:
         changes.append(f"Plan changed: {lic.plan} → {resp_plan}")
 
-    resp_subs = data.get("subscribers_limit")
-    if isinstance(resp_subs, int) and resp_subs != lic.features.get("max_subscribers"):
-        changes.append(f"Subscriber limit updated: {resp_subs}")
-
     delivery_changed = bool(data.get("delivery")) != bool(lic.delivery)
     if delivery_changed:
         changes.append("Delivery plan changed")
