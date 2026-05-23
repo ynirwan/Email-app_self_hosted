@@ -526,6 +526,25 @@ def _gen_mongo_password() -> str:
     return "".join(secrets.choice(alphabet) for _ in range(24))
 
 
+def _extract_mongo_password(env_path: Path) -> Optional[str]:
+    """
+    Read the MongoDB password that was previously written to backend/.env.
+    Returns None if the file doesn't exist or the key isn't present.
+
+    This lets retried installs reuse the same password that the already-
+    initialised mongo-data volume was created with, avoiding auth failures.
+    """
+    if not env_path.exists():
+        return None
+    for line in env_path.read_text(encoding="utf-8").splitlines():
+        # MONGODB_URI=mongodb://admin:<PASSWORD>@mongodb:27017/...
+        m = re.search(r"mongodb://admin:([^@]+)@", line)
+        if m:
+            pwd = m.group(1)
+            if pwd and len(pwd) >= 8:
+                return pwd
+    return None
+
 def write_env(config: dict) -> None:
     domain = config["domain"]
     mongo_local = config["mongo_local"]
@@ -902,7 +921,21 @@ def run_install(config: dict) -> None:
                 )
             skip_ssl = True
             config["skip_ssl"] = True
-
+        
+        # 0. Wipe any previous partial-install containers + volumes.
+        #    This guarantees MongoDB re-initialises with the password in the
+        #    new .env — Docker ignores MONGO_INITDB_* on an existing volume.
+        _push("Removing any previous partial install (containers + volumes)…")
+        wipe = subprocess.run(
+            ["docker", "compose", "down", "--volumes", "--remove-orphans"],
+            cwd=str(INSTALL_DIR),
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+        )
+        for line in wipe.stdout.splitlines():
+            if line.strip():
+                _push(f"  {line.strip()}")
+        _push("Previous state cleared ✔", "ok")
+        
         # 1. Write .env
         _push("Writing backend/.env …")
         write_env(config)
@@ -2073,16 +2106,34 @@ class SetupHandler(BaseHTTPRequestHandler):
             self._json({"ok": False, "error": "Setup already complete."})
             return
 
-        # ── Domain vs. license enforcement ───────────────────────────────────
-        # Verify the chosen install domain is valid for the uploaded license.
-        # Prevents a license issued for domain-A being used to set up domain-B.
-        install_domain = body.get("domain", "").strip().lower()
+        # ── 1. Require a valid license in the POST body ───────────────────────
         lic_data = body.get("license") or {}
-        lic_domain    = lic_data.get("domain", "").strip().lower()
-        lic_root      = lic_data.get("root_domain", "").strip().lower()
+        if not lic_data:
+            self._json({
+                "ok":    False,
+                "error": "No license provided. Please complete the License step before installing.",
+            })
+            return
+
+        lic_ok, lic_err, _ = validate_license(lic_data)
+        if not lic_ok:
+            self._json({
+                "ok":    False,
+                "error": f"License validation failed: {lic_err}",
+            })
+            return
+
+        # Ensure license.json is on disk (may have been skipped if browser state lost)
+        license_path = INSTALL_DIR / "license.json"
+        if not license_path.exists():
+            license_path.write_text(json.dumps(lic_data, indent=2), encoding="utf-8")
+
+        # ── 2. Domain vs. license enforcement ────────────────────────────────
+        install_domain = body.get("domain", "").strip().lower()
+        lic_domain     = lic_data.get("domain", "").strip().lower()
+        lic_root       = lic_data.get("root_domain", "").strip().lower()
 
         if install_domain and lic_domain and not _is_ip_address(install_domain):
-            # Exact match OR subdomain of root_domain
             domain_ok = (
                 install_domain == lic_domain
                 or (lic_root and (
@@ -2101,7 +2152,9 @@ class SetupHandler(BaseHTTPRequestHandler):
                 })
                 return
 
-        mongo_password = _gen_mongo_password()
+        env_path = INSTALL_DIR / "backend" / ".env"
+        mongo_password = _extract_mongo_password(env_path) or _gen_mongo_password()
+
         config = {
             "domain":         body.get("domain", ""),
             "mongo_local":    body.get("mongo_local", True),
@@ -2116,6 +2169,7 @@ class SetupHandler(BaseHTTPRequestHandler):
         }
         session_set(**{k: v for k, v in config.items() if k != "admin_password"})
 
+        # Drain any stale progress events from a previous run
         while not _progress_queue.empty():
             try:
                 _progress_queue.get_nowait()
@@ -2125,7 +2179,6 @@ class SetupHandler(BaseHTTPRequestHandler):
         t = threading.Thread(target=run_install, args=(config,), daemon=True)
         t.start()
         self._json({"ok": True, "msg": "Installation started"})
-
 
 # ---------------------------------------------------------------------------
 # Entry point
