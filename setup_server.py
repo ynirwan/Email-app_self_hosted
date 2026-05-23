@@ -51,8 +51,8 @@ from urllib.parse import parse_qs, urlparse
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("setup")
 
-INSTALL_DIR = Path(__file__).resolve().parent
-SETUP_LOCK  = INSTALL_DIR / ".setup_complete"
+INSTALL_DIR  = Path(__file__).resolve().parent
+SETUP_LOCK   = INSTALL_DIR / ".setup_complete"
 SESSION_FILE = INSTALL_DIR / ".setup_session.json"
 
 # Global session state (in-memory, persisted to SESSION_FILE)
@@ -93,7 +93,6 @@ PLAN_FEATURES: Dict[str, Dict[str, Any]] = {
     },
 }
 
-# Dashboard uses "pro" / "agency" as plan names; normalise to internal names.
 _PLAN_ALIASES: Dict[str, str] = {
     "starter":      "starter",
     "pro":          "professional",
@@ -102,7 +101,6 @@ _PLAN_ALIASES: Dict[str, str] = {
     "enterprise":   "enterprise",
 }
 
-# v2 feature-flag string → PLAN_FEATURES key mapping (mirrors license.py)
 _V2_FLAG_MAP: Dict[str, str] = {
     "ab_testing":            "ab_testing",
     "automation":            "automation",
@@ -119,54 +117,36 @@ def _normalize_plan(plan: str) -> str:
 
 
 def _merge_features(plan: str, override: Any) -> dict:
-    """
-    Build the feature dict for the given plan.
-
-    *override* can be:
-      - a list of strings  (v2 format from the dashboard)
-      - a dict             (legacy format)
-      - None / empty
-    """
     base = dict(PLAN_FEATURES.get(plan, PLAN_FEATURES["starter"]))
-
     if isinstance(override, list):
-        # v2: list of feature-flag strings — set the matching keys to True
         for flag in override:
             internal = _V2_FLAG_MAP.get(flag)
             if internal and internal in base and isinstance(base[internal], bool):
                 base[internal] = True
     elif isinstance(override, dict):
-        # legacy: dict of key → value overrides
         for k, v in override.items():
             if k in base and isinstance(base[k], bool):
                 base[k] = base[k] and bool(v)
             else:
                 base[k] = v
-
     return base
 
 
 # ---------------------------------------------------------------------------
-# Minimal stdlib-only JWT HS256 decoder (no external packages required)
+# Minimal stdlib-only JWT HS256 decoder
 # ---------------------------------------------------------------------------
 
 def _decode_jwt_hs256(token: str, secret: str) -> Optional[dict]:
-    """
-    Verify a HS256 JWT and return its payload dict, or None if invalid.
-    Uses only Python stdlib (base64, hmac, hashlib, json).
-    """
     try:
         parts = token.split(".")
         if len(parts) != 3:
             return None
         header_b64, payload_b64, sig_b64 = parts
 
-        # Pad base64url segments to a multiple of 4
         def _b64_decode(s: str) -> bytes:
             s += "=" * (-len(s) % 4)
             return base64.urlsafe_b64decode(s)
 
-        # Verify signature: HMAC-SHA256(header + "." + payload)
         signing_input = f"{header_b64}.{payload_b64}".encode()
         expected_sig  = hmac.new(secret.encode(), signing_input, hashlib.sha256).digest()
         actual_sig    = _b64_decode(sig_b64)
@@ -230,13 +210,6 @@ def _push(msg: str, level: str = "info") -> None:
 # ---------------------------------------------------------------------------
 
 def validate_license(data: dict) -> Tuple[bool, str, dict]:
-    """
-    Returns (ok, error_msg, features).
-
-    Supports two formats:
-      v2  (format == "zenipost-license-v2") — signature is a JWT HS256 token
-      legacy                                — signature is an HMAC-SHA256 hex digest
-    """
     sig    = data.get("signature", "")
     fmt    = data.get("format", "")
     is_v2  = (fmt == "zenipost-license-v2")
@@ -247,18 +220,15 @@ def validate_license(data: dict) -> Tuple[bool, str, dict]:
 
     if not dev_placeholder:
         if is_v2:
-            # v2: signature is a JWT — decode and verify with HS256
             payload = _decode_jwt_hs256(sig, secret)
             if payload is None:
                 return False, "License signature verification failed. The file may have been tampered with or the LICENSE_SIGNING_SECRET is wrong.", {}
-            # Cross-check tamper-sensitive fields between plain JSON and JWT payload
             for check_key in ("license_id", "domain", "plan", "expires_at"):
                 plain_val = data.get(check_key)
                 jwt_val   = payload.get(check_key)
                 if plain_val is not None and jwt_val is not None and plain_val != jwt_val:
                     return False, f"License tamper detected: '{check_key}' mismatch between file and signature.", {}
         else:
-            # legacy: signature is an HMAC-SHA256 hex digest of canonical JSON
             canonical = json.dumps(
                 {k: v for k, v in data.items() if k not in ("signature", "_comment")},
                 sort_keys=True, separators=(",", ":"),
@@ -269,7 +239,6 @@ def validate_license(data: dict) -> Tuple[bool, str, dict]:
 
     expires_raw = data.get("expires_at", "9999-12-31")
     try:
-        # Accepts both "2027-01-01" and "2027-01-01T00:00:00.000Z"
         expires = date.fromisoformat(expires_raw[:10])
     except (ValueError, TypeError):
         return False, f"Invalid expires_at date: {expires_raw}", {}
@@ -277,7 +246,7 @@ def validate_license(data: dict) -> Tuple[bool, str, dict]:
         return False, f"License expired on {expires}. Please renew.", {}
 
     raw_plan = data.get("plan", "starter")
-    plan = _normalize_plan(raw_plan)   # handles "pro" → "professional", "agency" → "enterprise"
+    plan = _normalize_plan(raw_plan)
     if plan not in PLAN_FEATURES:
         return False, f"Unknown plan '{raw_plan}'.", {}
 
@@ -289,11 +258,32 @@ def validate_license(data: dict) -> Tuple[bool, str, dict]:
 
 
 # ---------------------------------------------------------------------------
+# License file writer — keeps root + backend/ in sync
+# ---------------------------------------------------------------------------
+
+def _write_license(data: dict) -> None:
+    """
+    Write license.json to both required locations:
+
+      • INSTALL_DIR/license.json         — used by _register_install() and wizard
+      • INSTALL_DIR/backend/license.json — mounted into the container as
+                                           /app/license.json  (volume: ./backend:/app)
+
+    main.py looks for the file at /app/license.json on startup. If the backend
+    copy is absent the app refuses to start with RuntimeError.
+    """
+    payload = json.dumps(data, indent=2)
+    (INSTALL_DIR / "license.json").write_text(payload, encoding="utf-8")
+    backend_dir = INSTALL_DIR / "backend"
+    backend_dir.mkdir(exist_ok=True)
+    (backend_dir / "license.json").write_text(payload, encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
 # DNS check
 # ---------------------------------------------------------------------------
 
 def check_dns_record(domain: str) -> Tuple[bool, str, str]:
-    """Returns (matches, server_ip, resolved_ip)."""
     server_ip = _get_public_ip() or ""
     try:
         resolved_ip = socket.gethostbyname(domain)
@@ -303,11 +293,6 @@ def check_dns_record(domain: str) -> Tuple[bool, str, str]:
 
 
 def _get_ec2_public_ip() -> Optional[str]:
-    """
-    Query the EC2 Instance Metadata Service (IMDSv1 + IMDSv2).
-    Returns the public IPv4 if running on EC2, else None.
-    """
-    # IMDSv2: get token first, then use it
     try:
         token_req = urllib.request.Request(
             "http://169.254.169.254/latest/api/token",
@@ -326,7 +311,6 @@ def _get_ec2_public_ip() -> Optional[str]:
                 return ip
     except Exception:
         pass
-    # IMDSv1 fallback
     try:
         with urllib.request.urlopen(
             "http://169.254.169.254/latest/meta-data/public-ipv4", timeout=2
@@ -340,7 +324,6 @@ def _get_ec2_public_ip() -> Optional[str]:
 
 
 def _get_ec2_instance_id() -> Optional[str]:
-    """Return EC2 instance ID (i-xxxx) if running on EC2."""
     try:
         token_req = urllib.request.Request(
             "http://169.254.169.254/latest/api/token",
@@ -360,7 +343,6 @@ def _get_ec2_instance_id() -> Optional[str]:
 
 
 def _get_ec2_region() -> Optional[str]:
-    """Return AWS region (e.g. us-east-1) from metadata."""
     try:
         token_req = urllib.request.Request(
             "http://169.254.169.254/latest/api/token",
@@ -380,7 +362,6 @@ def _get_ec2_region() -> Optional[str]:
 
 
 def _get_public_ip() -> Optional[str]:
-    """EC2 metadata first, then external services as fallback."""
     ec2_ip = _get_ec2_public_ip()
     if ec2_ip:
         return ec2_ip
@@ -396,22 +377,13 @@ def _get_public_ip() -> Optional[str]:
 
 
 def _is_ip_address(s: str) -> bool:
-    """Return True if s looks like an IPv4 address (not a hostname).
-
-    Used to detect IP-only deployments where SSL is impossible and the
-    nginx/env config must use http:// instead of https://.
-    """
     return bool(re.match(r"^\d{1,3}(\.\d{1,3}){3}$", s.strip()))
 
 
 def run_preflight() -> Dict[str, Any]:
-    """
-    Run pre-flight checks and return a structured result dict.
-    Called by /api/preflight endpoint.
-    """
     checks = []
 
-    # ── Docker ───────────────────────────────────────────────────────────
+    # ── Docker ────────────────────────────────────────────────────────────────
     r = _run(["docker", "--version"], capture=True)
     docker_ok = r.returncode == 0
     checks.append({
@@ -420,7 +392,7 @@ def run_preflight() -> Dict[str, Any]:
         "detail": r.stdout.strip().split("\n")[0] if docker_ok else "Docker not found — install from https://docs.docker.com/get-docker/",
     })
 
-    # ── Docker running ────────────────────────────────────────────────────
+    # ── Docker daemon ─────────────────────────────────────────────────────────
     if docker_ok:
         r2 = _run(["docker", "info"], capture=True)
         daemon_ok = r2.returncode == 0
@@ -432,7 +404,7 @@ def run_preflight() -> Dict[str, Any]:
     else:
         daemon_ok = False
 
-    # ── Docker Compose v2 ─────────────────────────────────────────────────
+    # ── Docker Compose v2 ─────────────────────────────────────────────────────
     r3 = _run(["docker", "compose", "version"], capture=True)
     compose_ok = r3.returncode == 0
     checks.append({
@@ -441,7 +413,7 @@ def run_preflight() -> Dict[str, Any]:
         "detail": r3.stdout.strip() if compose_ok else "Not found — install docker-compose-plugin",
     })
 
-    # ── Disk space (need at least 5 GB free) ──────────────────────────────
+    # ── Disk space ────────────────────────────────────────────────────────────
     try:
         stat = shutil.disk_usage(str(INSTALL_DIR))
         free_gb = stat.free / (1024 ** 3)
@@ -454,7 +426,7 @@ def run_preflight() -> Dict[str, Any]:
     except Exception as exc:
         checks.append({"name": "Disk space", "ok": False, "detail": str(exc)})
 
-    # ── Python version ────────────────────────────────────────────────────
+    # ── Python version ────────────────────────────────────────────────────────
     py_ok = sys.version_info >= (3, 8)
     checks.append({
         "name": "Python 3.8+",
@@ -462,10 +434,22 @@ def run_preflight() -> Dict[str, Any]:
         "detail": sys.version.split()[0],
     })
 
-    # ── EC2 public IP ─────────────────────────────────────────────────────
-    public_ip = _get_public_ip()
+    # ── Dockerfiles present ───────────────────────────────────────────────────
+    for svc, rel in [("backend", "backend/Dockerfile"), ("frontend", "frontend/Dockerfile")]:
+        df_path = INSTALL_DIR / rel
+        df_ok = df_path.exists() and df_path.stat().st_size > 10
+        checks.append({
+            "name": f"Dockerfile present ({svc})",
+            "ok":   df_ok,
+            "detail": str(df_path) if df_ok else (
+                f"Missing or empty: {df_path} — re-deploy application files or re-bake AMI"
+            ),
+        })
+
+    # ── EC2 public IP ─────────────────────────────────────────────────────────
+    public_ip   = _get_public_ip()
     instance_id = _get_ec2_instance_id()
-    region = _get_ec2_region()
+    region      = _get_ec2_region()
 
     checks.append({
         "name": "Public IP detected",
@@ -515,7 +499,7 @@ def test_redis(url: str) -> Tuple[bool, str]:
 
 
 # ---------------------------------------------------------------------------
-# Config generation helpers (same logic as install.py)
+# Config generation helpers
 # ---------------------------------------------------------------------------
 
 def _gen_secret(n: int = 48) -> str:
@@ -528,16 +512,16 @@ def _gen_mongo_password() -> str:
 
 def _extract_mongo_password(env_path: Path) -> Optional[str]:
     """
-    Read the MongoDB password that was previously written to backend/.env.
-    Returns None if the file doesn't exist or the key isn't present.
+    Read the MongoDB password previously written to backend/.env.
 
-    This lets retried installs reuse the same password that the already-
-    initialised mongo-data volume was created with, avoiding auth failures.
+    On a retry after a partial install, the mongo-data volume already exists
+    and Docker ignores MONGO_INITDB_* env vars — it uses whatever password the
+    volume was initialised with. Reusing the existing password prevents auth
+    failures. Returns None if the file doesn't exist or the key isn't present.
     """
     if not env_path.exists():
         return None
     for line in env_path.read_text(encoding="utf-8").splitlines():
-        # MONGODB_URI=mongodb://admin:<PASSWORD>@mongodb:27017/...
         m = re.search(r"mongodb://admin:([^@]+)@", line)
         if m:
             pwd = m.group(1)
@@ -545,10 +529,11 @@ def _extract_mongo_password(env_path: Path) -> Optional[str]:
                 return pwd
     return None
 
+
 def write_env(config: dict) -> None:
-    domain = config["domain"]
-    mongo_local = config["mongo_local"]
-    redis_local = config["redis_local"]
+    domain         = config["domain"]
+    mongo_local    = config["mongo_local"]
+    redis_local    = config["redis_local"]
     mongo_password = config["mongo_password"]
 
     if mongo_local:
@@ -561,25 +546,15 @@ def write_env(config: dict) -> None:
 
     redis_url = "redis://redis:6379/0" if redis_local else config.get("redis_url", "")
 
-    jwt_secret   = _gen_secret(48)
-    enc_key_raw  = secrets.token_bytes(32)
-    enc_key      = base64.urlsafe_b64encode(enc_key_raw).decode()
+    jwt_secret  = _gen_secret(48)
+    enc_key_raw = secrets.token_bytes(32)
+    enc_key     = base64.urlsafe_b64encode(enc_key_raw).decode()
 
-    # Use http:// for IP-only deployments or when SSL is explicitly skipped.
-    # Let's Encrypt cannot issue certs for bare IP addresses, so https would
-    # be misconfigured and CORS would reject all requests.
     _no_ssl = config.get("skip_ssl", False) or _is_ip_address(domain)
-    _scheme  = "http" if _no_ssl else "https"
+    _scheme = "http" if _no_ssl else "https"
 
-    # Preserve operator-supplied license secrets if already set in the environment.
-    # On a production AMI the operator should set these before baking the image;
-    # the defaults match the ZeniPost Dashboard defaults for development installs.
-    license_signing_secret = os.getenv(
-        "LICENSE_SIGNING_SECRET", "zenipost-license-secret-2026"
-    )
-    admin_access_secret = os.getenv(
-        "ADMIN_ACCESS_SECRET", "zenipost-admin-access-secret-2026"
-    )
+    license_signing_secret = os.getenv("LICENSE_SIGNING_SECRET", "zenipost-license-secret-2026")
+    admin_access_secret    = os.getenv("ADMIN_ACCESS_SECRET",    "zenipost-admin-access-secret-2026")
 
     content = f"""\
 # ZeniPost Backend Configuration
@@ -625,15 +600,12 @@ BASE_RATE_LIMIT_PER_MINUTE=100
 MAX_RATE_LIMIT_PER_MINUTE=500
 
 # ── ZeniPost License ──────────────────────────────────────────────────────────
-# Must match LICENSE_SECRET / ADMIN_ACCESS_SECRET on the ZeniPost Dashboard server.
-# Change these to strong random values in production and update them on the
-# dashboard too — both sides must share the same secrets.
 LICENSE_SIGNING_SECRET={license_signing_secret}
 ADMIN_ACCESS_SECRET={admin_access_secret}
 """
     env_path = INSTALL_DIR / "backend" / ".env"
     env_path.write_text(content, encoding="utf-8")
-    config["_redis_url"] = redis_url
+    config["_redis_url"]        = redis_url
     config["_mongo_uri_docker"] = mongo_uri_docker
 
 
@@ -685,8 +657,8 @@ def write_docker_compose(config: dict) -> None:
     extra_vols  = "  mongo-data:\n" if mongo_local else ""
     extra_vols += "  redis-data:\n" if redis_local else ""
 
-    compose = f"""version: "3.9"
-services:
+    # NOTE: no `version:` key — obsolete in Compose v2, causes warnings
+    compose = f"""services:
 {mongo_svc}
 {redis_svc}
   backend:
@@ -776,9 +748,6 @@ def write_nginx(domain: str, ssl: bool = False) -> None:
     nginx_dir.mkdir(exist_ok=True)
     (nginx_dir / "ssl").mkdir(exist_ok=True)
 
-    # For bare IP addresses nginx uses the IP as server_name.
-    # We also add a catch-all ("_") so requests without a matching Host header
-    # (common when accessing via raw IP from some clients) are still served.
     domain_is_ip = _is_ip_address(domain)
     server_name_directive = (
         f"server_name {domain} _;"
@@ -827,8 +796,6 @@ server {{
     }}
 }}"""
     else:
-        # HTTP-only — used for IP deployments and pre-SSL domain installs.
-        # No redirect to HTTPS so the app is fully functional over plain HTTP.
         conf = f"""server {{
     listen 80; listen [::]:80;
     {server_name_directive}
@@ -858,7 +825,7 @@ server {{
         error_page 404 = @frontend_fallback;
     }}
     location @frontend_fallback {{
-        proxy_pass http://frontend:80;
+        proxy_pass http://frontend:80/;
     }}
 }}"""
 
@@ -897,7 +864,7 @@ def update_cors_in_main(domain: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Install runner (executed in a background thread, streams to SSE queue)
+# Install runner
 # ---------------------------------------------------------------------------
 
 def run_install(config: dict) -> None:
@@ -910,8 +877,6 @@ def run_install(config: dict) -> None:
         admin_password = config["admin_password"]
         skip_ssl       = config.get("skip_ssl", False)
 
-        # Let's Encrypt cannot issue certificates for bare IP addresses.
-        # Detect this early so every downstream step uses http:// correctly.
         if _is_ip_address(domain):
             if not skip_ssl:
                 _push(
@@ -921,10 +886,11 @@ def run_install(config: dict) -> None:
                 )
             skip_ssl = True
             config["skip_ssl"] = True
-        
-        # 0. Wipe any previous partial-install containers + volumes.
-        #    This guarantees MongoDB re-initialises with the password in the
-        #    new .env — Docker ignores MONGO_INITDB_* on an existing volume.
+
+        # ── Step 0: wipe any previous partial install ─────────────────────────
+        # Guarantees MongoDB re-initialises with the password in the new .env.
+        # Docker ignores MONGO_INITDB_* on an existing volume, so old containers
+        # + volumes must be removed before each install attempt.
         _push("Removing any previous partial install (containers + volumes)…")
         wipe = subprocess.run(
             ["docker", "compose", "down", "--volumes", "--remove-orphans"],
@@ -936,27 +902,45 @@ def run_install(config: dict) -> None:
                 _push(f"  {line.strip()}")
         _push("Previous state cleared ✔", "ok")
 
-        # 1. Write .env
+        # ── Step 1: Write .env ────────────────────────────────────────────────
         _push("Writing backend/.env …")
         write_env(config)
         _push("backend/.env written ✔", "ok")
 
-        # 2. docker-compose.yml
+        # ── Step 1b: Deploy license.json to backend/ ──────────────────────────
+        # The backend container mounts ./backend as /app, so it looks for the
+        # license at /app/license.json = backend/license.json on the host.
+        # main.py raises RuntimeError on startup if this file is missing.
+        _push("Deploying license.json to backend/ …")
+        lic_data = config.get("license") or {}
+        if lic_data:
+            _write_license(lic_data)
+            _push("license.json deployed ✔", "ok")
+        elif (INSTALL_DIR / "license.json").exists():
+            raw = (INSTALL_DIR / "license.json").read_text(encoding="utf-8")
+            (INSTALL_DIR / "backend" / "license.json").write_text(raw, encoding="utf-8")
+            _push("license.json copied to backend/ ✔", "ok")
+        else:
+            raise RuntimeError(
+                "license.json not found. Please complete the License step before installing."
+            )
+
+        # ── Step 2: docker-compose.yml ────────────────────────────────────────
         _push("Writing docker-compose.yml …")
         write_docker_compose(config)
         _push("docker-compose.yml written ✔", "ok")
 
-        # 3. nginx HTTP-only config
+        # ── Step 3: nginx HTTP-only config ────────────────────────────────────
         _push("Writing nginx config (HTTP) …")
         write_nginx(domain, ssl=False)
         _push("nginx config written ✔", "ok")
 
-        # 4. CORS patch
+        # ── Step 4: CORS patch ────────────────────────────────────────────────
         _push("Patching CORS in backend/main.py …")
         update_cors_in_main(domain)
         _push("CORS patched ✔", "ok")
 
-        # 5. docker compose build
+        # ── Step 5: docker compose build ──────────────────────────────────────
         _push("Building Docker images — this may take 3–6 minutes …", "warn")
         r = subprocess.run(
             ["docker", "compose", "build", "--no-cache"],
@@ -970,7 +954,7 @@ def run_install(config: dict) -> None:
             raise RuntimeError("docker compose build failed. Check logs above.")
         _push("Docker build complete ✔", "ok")
 
-        # 6. Start services
+        # ── Step 6: Start services ────────────────────────────────────────────
         _push("Starting services …")
         r2 = subprocess.run(
             ["docker", "compose", "up", "-d"],
@@ -984,12 +968,12 @@ def run_install(config: dict) -> None:
             raise RuntimeError("docker compose up failed.")
         _push("All services started ✔", "ok")
 
-        # 7. Wait for backend health
+        # ── Step 7: Wait for backend health ───────────────────────────────────
         _push("Waiting for backend to become healthy …")
         _wait_for_backend()
         _push("Backend healthy ✔", "ok")
 
-        # 8. Let's Encrypt
+        # ── Step 8: Let's Encrypt ─────────────────────────────────────────────
         ssl_ok = False
         if not skip_ssl:
             _push(f"Requesting Let's Encrypt certificate for {domain} …")
@@ -1005,18 +989,15 @@ def run_install(config: dict) -> None:
         else:
             _push("SSL skipped (running on HTTP).", "warn")
 
-        # 9. Create admin user
+        # ── Step 9: Create admin user ─────────────────────────────────────────
         _push(f"Creating admin account for {admin_email} …")
         _create_admin(admin_name, admin_email, admin_password)
-        _push(f"Admin account created ✔", "ok")
 
-        # 10. Register installation with ZeniPost Dashboard
-        #     This records the server's public IP so the dashboard can detect
-        #     license reuse (same license.json copied to multiple servers).
+        # ── Step 10: Register with ZeniPost Dashboard ─────────────────────────
         _register_install(config)
 
-        # 11. Write setup lock
-        scheme = "https" if ssl_ok else "http"
+        # ── Step 11: Write setup lock ─────────────────────────────────────────
+        scheme  = "https" if ssl_ok else "http"
         app_url = f"{scheme}://{domain}"
         SETUP_LOCK.write_text(
             json.dumps({"completed_at": datetime.utcnow().isoformat(), "url": app_url}),
@@ -1024,14 +1005,9 @@ def run_install(config: dict) -> None:
         )
         session_set(install_complete=True, app_url=app_url, ssl=ssl_ok)
 
-        # Include app_url in the done event so the browser can show the correct
-        # "Open Dashboard" link without relying on window.location manipulation.
         _progress_queue.put({"msg": "DONE", "level": "done", "app_url": app_url})
         log.info("[progress] DONE — app_url=%s", app_url)
 
-        # Schedule wizard self-shutdown after a short grace period so the
-        # browser has time to receive the "DONE" SSE event and show the
-        # completion screen before we stop serving.
         def _delayed_shutdown():
             time.sleep(8)
             _shutdown_event.set()
@@ -1045,23 +1021,13 @@ def run_install(config: dict) -> None:
 
 
 def _register_install(config: dict) -> None:
-    """
-    POST the server's public IP to the ZeniPost Dashboard so the license is
-    marked as installed and bound to this specific server.
-
-    Non-fatal: if the dashboard is unreachable (self-managed installs, air-gapped
-    environments) we log a warning and continue — the installation is not blocked.
-    """
-    import json as _json
-    from pathlib import Path as _Path
-
     license_path = INSTALL_DIR / "license.json"
     if not license_path.exists():
         log.warning("register-install: license.json not found, skipping registration")
         return
 
     try:
-        raw = _json.loads(license_path.read_text(encoding="utf-8"))
+        raw = json.loads(license_path.read_text(encoding="utf-8"))
     except Exception as exc:
         log.warning("register-install: could not read license.json: %s", exc)
         return
@@ -1071,15 +1037,12 @@ def _register_install(config: dict) -> None:
         log.info("register-install: no ping_url in license (dev/legacy mode), skipping")
         return
 
-    # Derive the register-install URL from ping_url
-    # ping_url is e.g. https://app.zenipost.com/api/licenses/ping
     register_url = ping_url.rsplit("/ping", 1)[0] + "/register-install"
+    signature    = raw.get("signature", "")
+    domain       = config.get("domain", raw.get("domain", ""))
+    server_ip    = _get_public_ip() or ""
 
-    signature  = raw.get("signature", "")
-    domain     = config.get("domain", raw.get("domain", ""))
-    server_ip  = _get_public_ip() or ""
-
-    payload = _json.dumps({
+    payload = json.dumps({
         "domain":    domain,
         "signature": signature,
         "server_ip": server_ip,
@@ -1094,28 +1057,40 @@ def _register_install(config: dict) -> None:
             method="POST",
         )
         with urllib.request.urlopen(req, timeout=10) as r:
-            resp = _json.loads(r.read().decode())
+            resp = json.loads(r.read().decode())
         if resp.get("ip_changed"):
             _push("⚠ Dashboard flagged this as a re-install on a different IP.", "warn")
         else:
             _push("Installation registered with ZeniPost Dashboard ✔", "ok")
     except Exception as exc:
-        # Non-fatal — dashboard may be unreachable in self-managed/air-gapped setups
         log.warning("register-install request failed (non-fatal): %s", exc)
         _push("Could not reach ZeniPost Dashboard for install registration (non-fatal).", "warn")
 
 
 def _wait_for_backend(max_wait: int = 120) -> None:
+    """
+    Wait until the backend container responds healthy.
+
+    Uses `docker compose exec` so the health check runs inside the Docker
+    network — the backend has no host-side port mapping, so localhost:8000
+    is NOT reachable from the host process that runs setup_server.py.
+    """
     deadline = time.time() + max_wait
     while time.time() < deadline:
-        try:
-            with urllib.request.urlopen("http://localhost:8000/health", timeout=3) as r:
-                if r.status == 200:
-                    return
-        except Exception:
-            pass
+        r = subprocess.run(
+            ["docker", "compose", "exec", "-T", "backend",
+             "curl", "-sf", "--max-time", "3", "http://localhost:8000/health"],
+            cwd=str(INSTALL_DIR),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        if r.returncode == 0:
+            return
         time.sleep(3)
-    raise RuntimeError("Backend did not become healthy within the timeout.")
+    raise RuntimeError(
+        "Backend did not become healthy within the timeout. "
+        "Check logs: docker compose logs backend"
+    )
 
 
 def _letsencrypt(domain: str, email: str) -> bool:
@@ -1140,33 +1115,73 @@ def _letsencrypt(domain: str, email: str) -> bool:
 
 
 def _create_admin(name: str, email: str, password: str) -> None:
+    """
+    Create the initial admin account by calling the register endpoint from
+    INSIDE the backend container via `docker compose exec`.
+
+    The backend service has no host-side port mapping, so calling
+    http://localhost:8000 from the host process always fails. Running the
+    request inside the container avoids the network boundary entirely.
+    """
     env_path = INSTALL_DIR / "backend" / ".env"
+
+    # Enable registration for exactly this one call
     set_env_var(env_path, "REGISTRATION_ENABLED", "true")
-    subprocess.run(["docker", "compose", "restart", "backend"],
-                   cwd=str(INSTALL_DIR), check=False)
-    _wait_for_backend(60)
-    payload = json.dumps({"name": name, "email": email, "password": password}).encode()
-    req = urllib.request.Request(
-        "http://localhost:8000/api/auth/register",
-        data=payload,
-        headers={"Content-Type": "application/json"},
-        method="POST",
+    subprocess.run(
+        ["docker", "compose", "restart", "backend"],
+        cwd=str(INSTALL_DIR), check=False,
     )
+    _wait_for_backend(60)
+
+    # Self-contained Python snippet — runs inside the container, stdlib only
+    payload_str = json.dumps({"name": name, "email": email, "password": password})
+    script = "\n".join([
+        "import urllib.request, json, sys",
+        f"payload = {repr(payload_str.encode())}",
+        "req = urllib.request.Request(",
+        "    'http://localhost:8000/api/auth/register',",
+        "    data=payload,",
+        "    headers={'Content-Type': 'application/json'},",
+        "    method='POST'",
+        ")",
+        "try:",
+        "    with urllib.request.urlopen(req, timeout=15) as r:",
+        "        print('ok', r.status)",
+        "except urllib.error.HTTPError as e:",
+        "    body = e.read().decode(errors='replace')",
+        "    if 'already exists' in body:",
+        "        print('exists')",
+        "    else:",
+        "        print('error', e.code, body, file=sys.stderr)",
+        "        sys.exit(1)",
+    ])
+
     try:
-        with urllib.request.urlopen(req, timeout=15):
-            pass
-    except urllib.error.HTTPError as exc:
-        body = exc.read().decode(errors="replace")
-        if "already exists" not in body:
-            raise RuntimeError(f"Could not create admin: {exc.code} {body}")
+        r = subprocess.run(
+            ["docker", "compose", "exec", "-T", "backend", "python3", "-c", script],
+            cwd=str(INSTALL_DIR),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        output = r.stdout.strip()
+        if r.returncode != 0:
+            raise RuntimeError(f"Admin creation failed: {r.stderr.strip() or output}")
+        if "exists" in output:
+            _push(f"Admin account {email} already exists — skipping.", "warn")
+        else:
+            _push(f"Admin account {email} created ✔", "ok")
     finally:
+        # Always lock registration back down, even if creation failed
         set_env_var(env_path, "REGISTRATION_ENABLED", "false")
-        subprocess.run(["docker", "compose", "restart", "backend"],
-                       cwd=str(INSTALL_DIR), check=False)
+        subprocess.run(
+            ["docker", "compose", "restart", "backend"],
+            cwd=str(INSTALL_DIR), check=False,
+        )
 
 
 # ---------------------------------------------------------------------------
-# HTML (the browser UI — self-contained, no CDN required except Tailwind)
+# HTML
 # ---------------------------------------------------------------------------
 
 HTML = r"""<!DOCTYPE html>
@@ -1183,8 +1198,7 @@ HTML = r"""<!DOCTYPE html>
   .step-dot.active  { background:#6366f1; border-color:#6366f1; color:#fff; }
   .step-dot.done    { background:#10b981; border-color:#10b981; color:#fff; }
   .step-dot.pending { background:transparent; border-color:#4b5563; color:#6b7280; }
-  .btn-primary { background:linear-gradient(135deg,#6366f1,#8b5cf6);
-    transition:opacity .2s; }
+  .btn-primary { background:linear-gradient(135deg,#6366f1,#8b5cf6); transition:opacity .2s; }
   .btn-primary:hover { opacity:.9; }
   .btn-primary:disabled { opacity:.4; cursor:not-allowed; }
   .log-line { font-family:monospace; font-size:.8rem; padding:2px 0; }
@@ -1224,10 +1238,8 @@ HTML = r"""<!DOCTYPE html>
 </style>
 </head>
 <body class="flex items-center justify-center px-4 py-12">
-
 <div class="w-full max-w-2xl">
 
-  <!-- Logo -->
   <div class="text-center mb-8">
     <div class="text-3xl font-black text-white tracking-tight mb-1">
       <span class="text-indigo-400">Zeni</span>Post
@@ -1235,23 +1247,15 @@ HTML = r"""<!DOCTYPE html>
     <p class="text-slate-400 text-sm">Self-Hosted Setup Wizard</p>
   </div>
 
-  <!-- Step indicators -->
-  <div class="flex items-center justify-center gap-0 mb-8" id="step-indicators">
-    <!-- injected by JS -->
-  </div>
+  <div class="flex items-center justify-center gap-0 mb-8" id="step-indicators"></div>
 
-  <!-- Card -->
   <div class="card rounded-2xl p-8 shadow-2xl">
     <div id="panels">
 
       <!-- STEP 1: Pre-flight -->
       <div class="step-panel active" id="panel-1">
         <h2 class="text-xl font-bold text-white mb-1">Server pre-flight check</h2>
-        <p class="text-slate-400 text-sm mb-5">
-          Verifying your EC2 instance is ready to install ZeniPost.
-        </p>
-
-        <!-- EC2 instance info bar -->
+        <p class="text-slate-400 text-sm mb-5">Verifying your EC2 instance is ready to install ZeniPost.</p>
         <div class="rounded-xl p-4 mb-5 flex flex-wrap gap-4"
           style="background:rgba(99,102,241,.07);border:1px solid rgba(99,102,241,.18)">
           <div>
@@ -1267,8 +1271,6 @@ HTML = r"""<!DOCTYPE html>
             <p id="pf-region" class="text-slate-300 font-mono text-sm">—</p>
           </div>
         </div>
-
-        <!-- Security group reminder -->
         <div class="rounded-xl p-3 mb-5 flex gap-3 items-start"
           style="background:rgba(251,191,36,.06);border:1px solid rgba(251,191,36,.2)">
           <span class="text-yellow-400 text-lg mt-0.5">⚠</span>
@@ -1276,7 +1278,7 @@ HTML = r"""<!DOCTYPE html>
             <p class="text-yellow-300 font-semibold mb-1">EC2 Security Group — required ports</p>
             <p class="text-slate-400 mb-1">Open these inbound rules before continuing:</p>
             <div class="font-mono text-xs space-y-0.5 text-slate-300">
-              <div>TCP <strong class="text-white">8080</strong> — setup wizard (this page) — <em class="text-slate-500">your IP only, or 0.0.0.0/0 temporarily</em></div>
+              <div>TCP <strong class="text-white">8080</strong> — setup wizard (this page)</div>
               <div>TCP <strong class="text-white">80</strong>   — HTTP / Let's Encrypt challenge</div>
               <div>TCP <strong class="text-white">443</strong>  — HTTPS (after SSL setup)</div>
               <div>TCP <strong class="text-white">22</strong>   — SSH (your IP only)</div>
@@ -1286,17 +1288,11 @@ HTML = r"""<!DOCTYPE html>
             </p>
           </div>
         </div>
-
-        <!-- Check list -->
         <div id="preflight-list" class="mb-5 divide-y divide-white/5">
           <div class="text-slate-400 text-sm py-3 animate-pulse">Running checks…</div>
         </div>
-
         <div class="flex justify-between items-center">
-          <button onclick="runPreflight()"
-            class="text-sm text-indigo-400 hover:text-indigo-300">
-            ↺ Re-run checks
-          </button>
+          <button onclick="runPreflight()" class="text-sm text-indigo-400 hover:text-indigo-300">↺ Re-run checks</button>
           <button id="pf-next" onclick="goTo(2)" disabled
             class="btn-primary text-white font-semibold rounded-xl px-6 py-2.5 opacity-40">
             Continue →
@@ -1308,7 +1304,6 @@ HTML = r"""<!DOCTYPE html>
       <div class="step-panel" id="panel-2">
         <h2 class="text-xl font-bold text-white mb-1">Upload your license</h2>
         <p class="text-slate-400 text-sm mb-6">Paste the contents of your <code class="text-indigo-300">license.json</code> file or upload it.</p>
-
         <div class="mb-4">
           <label class="text-slate-300 text-sm mb-2 block">license.json</label>
           <textarea id="license-json" rows="10" placeholder='{"license_key":"...","domain":"...","plan":"professional",...}'
@@ -1316,10 +1311,8 @@ HTML = r"""<!DOCTYPE html>
         </div>
         <p class="text-slate-500 text-xs mb-4">— or —</p>
         <input type="file" id="license-file" accept=".json" class="text-slate-400 text-sm mb-6"/>
-
         <div id="license-error" class="hidden text-red-400 text-sm bg-red-900/20 rounded-lg p-3 mb-4"></div>
         <div id="license-summary" class="hidden rounded-xl p-4 mb-4" style="background:rgba(99,102,241,.08);border:1px solid rgba(99,102,241,.2)"></div>
-
         <div class="flex justify-between mt-4">
           <button onclick="goTo(1)" class="text-slate-400 hover:text-white text-sm px-4 py-2">← Back</button>
           <button onclick="validateLicense()" class="btn-primary text-white font-semibold rounded-xl px-6 py-2.5">
@@ -1332,19 +1325,16 @@ HTML = r"""<!DOCTYPE html>
       <div class="step-panel" id="panel-3">
         <h2 class="text-xl font-bold text-white mb-1">Domain setup</h2>
         <p class="text-slate-400 text-sm mb-6">Configure which domain the platform will be accessible on.</p>
-
         <div class="mb-4">
           <label class="text-slate-300 text-sm mb-1 block">Licensed domain</label>
           <input id="licensed-domain" readonly class="opacity-60"/>
         </div>
-
         <div class="mb-4">
           <label class="flex items-center gap-2 text-slate-300 text-sm cursor-pointer">
             <input type="checkbox" id="use-subdomain" class="w-auto" onchange="toggleSubdomain()"/>
             Run on a subdomain (e.g. <span id="sub-example" class="text-indigo-300">app.yourdomain.com</span>)
           </label>
         </div>
-
         <div id="subdomain-row" class="mb-4 hidden">
           <label class="text-slate-300 text-sm mb-1 block">Subdomain prefix</label>
           <div class="flex gap-2 items-center">
@@ -1353,12 +1343,9 @@ HTML = r"""<!DOCTYPE html>
             <span id="sub-domain-suffix" class="text-slate-300 font-mono"></span>
           </div>
         </div>
-
         <div class="mb-4 p-3 rounded-xl" style="background:rgba(15,23,42,.6);border:1px solid rgba(255,255,255,.07)">
           <p class="text-slate-300 text-sm">Final domain: <strong id="final-domain" class="text-indigo-300"></strong></p>
         </div>
-
-        <!-- IP-only option (shown when no DNS is available) -->
         <div class="mb-5 rounded-xl p-3" style="background:rgba(251,191,36,.06);border:1px solid rgba(251,191,36,.2)">
           <label class="flex items-center gap-2 cursor-pointer">
             <input type="checkbox" id="use-ip-only" class="w-auto" onchange="toggleIPOnly()"/>
@@ -1368,11 +1355,8 @@ HTML = r"""<!DOCTYPE html>
             Skip DNS — app will be accessible at
             <span id="ip-only-preview" class="font-mono text-indigo-300">http://—</span>.
             SSL is not available for bare IP addresses.
-            Best for testing or private EC2 deployments without a domain.
           </p>
         </div>
-
-        <!-- DNS check -->
         <div class="mb-4">
           <button onclick="checkDNS()" id="dns-btn"
             class="btn-primary text-white text-sm font-semibold rounded-xl px-5 py-2">
@@ -1380,7 +1364,6 @@ HTML = r"""<!DOCTYPE html>
           </button>
           <div id="dns-result" class="mt-3 text-sm hidden rounded-lg p-3"></div>
         </div>
-
         <div id="dns-instructions" class="hidden rounded-xl p-4 mb-4 text-sm"
           style="background:rgba(251,191,36,.06);border:1px solid rgba(251,191,36,.2)">
           <p class="text-yellow-300 font-semibold mb-2">⚠ DNS not pointed at this server</p>
@@ -1390,21 +1373,16 @@ HTML = r"""<!DOCTYPE html>
           </div>
           <p class="text-slate-400 text-xs mt-2">DNS can take up to 24 h to propagate. You can continue but SSL setup may fail.</p>
         </div>
-
         <div class="flex justify-between mt-4">
           <button onclick="goTo(2)" class="text-slate-400 hover:text-white text-sm px-4 py-2">← Back</button>
-          <button onclick="goTo(4)" id="domain-next"
-            class="btn-primary text-white font-semibold rounded-xl px-6 py-2.5">
-            Continue →
-          </button>
+          <button onclick="goTo(4)" id="domain-next" class="btn-primary text-white font-semibold rounded-xl px-6 py-2.5">Continue →</button>
         </div>
       </div>
 
-      <!-- STEP 3: Database -->
+      <!-- STEP 4: Database -->
       <div class="step-panel" id="panel-4">
         <h2 class="text-xl font-bold text-white mb-1">Database (MongoDB)</h2>
         <p class="text-slate-400 text-sm mb-6">Choose where MongoDB will run.</p>
-
         <div class="mb-6">
           <label class="text-slate-300 text-sm mb-2 block">MongoDB location</label>
           <select id="mongo-type" onchange="toggleMongoRemote()">
@@ -1415,62 +1393,46 @@ HTML = r"""<!DOCTYPE html>
             Remote MongoDB is not available on your plan. Upgrade to Professional or Enterprise.
           </p>
         </div>
-
         <div id="mongo-remote-row" class="hidden mb-4">
           <label class="text-slate-300 text-sm mb-1 block">MongoDB URI</label>
           <input id="mongo-uri" placeholder="mongodb+srv://user:pass@cluster.mongodb.net/email_marketing"/>
-          <button onclick="testMongo()" class="mt-2 text-sm text-indigo-400 hover:text-indigo-300">
-            Test connection
-          </button>
+          <button onclick="testMongo()" class="mt-2 text-sm text-indigo-400 hover:text-indigo-300">Test connection</button>
           <div id="mongo-test-result" class="mt-2 text-sm hidden"></div>
         </div>
-
         <div class="flex justify-between mt-6">
           <button onclick="goTo(3)" class="text-slate-400 hover:text-white text-sm px-4 py-2">← Back</button>
-          <button onclick="goTo(5)" class="btn-primary text-white font-semibold rounded-xl px-6 py-2.5">
-            Continue →
-          </button>
+          <button onclick="goTo(5)" class="btn-primary text-white font-semibold rounded-xl px-6 py-2.5">Continue →</button>
         </div>
       </div>
 
-      <!-- STEP 4: Redis -->
+      <!-- STEP 5: Redis -->
       <div class="step-panel" id="panel-5">
         <h2 class="text-xl font-bold text-white mb-1">Cache & Queue (Redis)</h2>
         <p class="text-slate-400 text-sm mb-6">Redis is used for job queues, caching, and rate limiting.</p>
-
         <div class="mb-6">
           <label class="text-slate-300 text-sm mb-2 block">Redis location</label>
           <select id="redis-type" onchange="toggleRedisRemote()">
             <option value="local">Local — run Redis in Docker on this server (recommended)</option>
             <option value="remote" id="redis-remote-opt">Remote — use an external Redis URL</option>
           </select>
-          <p id="redis-plan-note" class="text-slate-500 text-xs mt-2 hidden">
-            Remote Redis is not available on your plan.
-          </p>
+          <p id="redis-plan-note" class="text-slate-500 text-xs mt-2 hidden">Remote Redis is not available on your plan.</p>
         </div>
-
         <div id="redis-remote-row" class="hidden mb-4">
           <label class="text-slate-300 text-sm mb-1 block">Redis URL</label>
           <input id="redis-url" placeholder="redis://default:password@hostname:6379/0"/>
-          <button onclick="testRedis()" class="mt-2 text-sm text-indigo-400 hover:text-indigo-300">
-            Test connection
-          </button>
+          <button onclick="testRedis()" class="mt-2 text-sm text-indigo-400 hover:text-indigo-300">Test connection</button>
           <div id="redis-test-result" class="mt-2 text-sm hidden"></div>
         </div>
-
         <div class="flex justify-between mt-6">
           <button onclick="goTo(4)" class="text-slate-400 hover:text-white text-sm px-4 py-2">← Back</button>
-          <button onclick="goTo(6)" class="btn-primary text-white font-semibold rounded-xl px-6 py-2.5">
-            Continue →
-          </button>
+          <button onclick="goTo(6)" class="btn-primary text-white font-semibold rounded-xl px-6 py-2.5">Continue →</button>
         </div>
       </div>
 
-      <!-- STEP 5: Admin User -->
+      <!-- STEP 6: Admin User -->
       <div class="step-panel" id="panel-6">
         <h2 class="text-xl font-bold text-white mb-1">Create admin account</h2>
         <p class="text-slate-400 text-sm mb-6">This is the account you'll use to log in. Self-registration is disabled after setup.</p>
-
         <div class="space-y-4">
           <div>
             <label class="text-slate-300 text-sm mb-1 block">Full name</label>
@@ -1490,29 +1452,23 @@ HTML = r"""<!DOCTYPE html>
           </div>
         </div>
         <div id="admin-error" class="hidden text-red-400 text-sm mt-3 bg-red-900/20 rounded-lg p-3"></div>
-
         <div class="flex justify-between mt-6">
           <button onclick="goTo(5)" class="text-slate-400 hover:text-white text-sm px-4 py-2">← Back</button>
-          <button onclick="goTo(7)" class="btn-primary text-white font-semibold rounded-xl px-6 py-2.5">
-            Continue →
-          </button>
+          <button onclick="goTo(7)" class="btn-primary text-white font-semibold rounded-xl px-6 py-2.5">Continue →</button>
         </div>
       </div>
 
-      <!-- STEP 6: Review -->
+      <!-- STEP 7: Review -->
       <div class="step-panel" id="panel-7">
         <h2 class="text-xl font-bold text-white mb-1">Review &amp; Install</h2>
         <p class="text-slate-400 text-sm mb-6">Check everything below then click <strong class="text-white">Install Now</strong>.</p>
-
         <div id="review-content" class="space-y-2 mb-6 text-sm"></div>
-
         <div class="flex items-center gap-2 mb-4">
           <input type="checkbox" id="skip-ssl" class="w-auto"/>
           <label for="skip-ssl" class="text-slate-400 text-sm">
             Skip SSL / Let's Encrypt (run on HTTP only — not recommended for production)
           </label>
         </div>
-
         <div class="flex justify-between">
           <button onclick="goTo(6)" class="text-slate-400 hover:text-white text-sm px-4 py-2">← Back</button>
           <button onclick="startInstall()" id="install-btn"
@@ -1522,15 +1478,13 @@ HTML = r"""<!DOCTYPE html>
         </div>
       </div>
 
-      <!-- STEP 7: Installing -->
+      <!-- STEP 8: Installing -->
       <div class="step-panel" id="panel-8">
         <h2 class="text-xl font-bold text-white mb-1">Installing…</h2>
         <p class="text-slate-400 text-sm mb-4">Please wait. This typically takes 3–8 minutes.</p>
-
         <div id="progress-log" class="bg-black/40 rounded-xl p-4 h-72 overflow-y-auto font-mono text-xs space-y-0.5 border border-white/5">
           <div class="log-line log-info">Connecting to server…</div>
         </div>
-
         <div id="install-done-section" class="hidden mt-6 text-center">
           <div class="text-5xl mb-3">🎉</div>
           <h3 class="text-xl font-bold text-white mb-2">Installation complete!</h3>
@@ -1546,23 +1500,21 @@ HTML = r"""<!DOCTYPE html>
         </div>
       </div>
 
-    </div><!-- /panels -->
-  </div><!-- /card -->
+    </div>
+  </div>
 
   <p class="text-center text-slate-600 text-xs mt-6">
     ZeniPost Self-Hosted · <a href="https://docs.zenipost.com" target="_blank" class="hover:text-slate-400">Documentation</a>
   </p>
-</div><!-- /container -->
+</div>
 
 <script>
-// ─── State ────────────────────────────────────────────────────────────────────
 const STEPS = ['Pre-flight','License','Domain','Database','Redis','Admin','Review','Installing'];
 let currentStep = 1;
 let licenseData = null;
 let features = {};
 let dnsOk = false;
 
-// ─── Step rendering ───────────────────────────────────────────────────────────
 function renderStepDots() {
   const el = document.getElementById('step-indicators');
   el.innerHTML = STEPS.map((label, i) => {
@@ -1580,7 +1532,7 @@ function renderStepDots() {
 }
 
 function goTo(n) {
-  if (n === 7) { if (!buildReview()) return; }  // review is now step 7
+  if (n === 7) { if (!buildReview()) return; }
   document.querySelectorAll('.step-panel').forEach(p => p.classList.remove('active'));
   document.getElementById(`panel-${n}`).classList.add('active');
   currentStep = n;
@@ -1590,7 +1542,6 @@ function goTo(n) {
 
 renderStepDots();
 
-// ─── Step 1: Pre-flight ───────────────────────────────────────────────────────
 async function runPreflight() {
   const el = document.getElementById('preflight-list');
   const ipEl = document.getElementById('pf-server-ip');
@@ -1623,15 +1574,11 @@ async function runPreflight() {
   nextBtn.className = allOk
     ? 'btn-primary text-white font-semibold rounded-xl px-6 py-2.5'
     : 'bg-yellow-600 hover:bg-yellow-500 text-white font-semibold rounded-xl px-6 py-2.5 transition-opacity';
-
-  // Show/hide security group reminder based on port
   document.getElementById('sg-port').textContent = res.setup_port || '8080';
 }
 
-// Run pre-flight automatically when page loads
 window.addEventListener('load', () => setTimeout(runPreflight, 400));
 
-// ─── Step 2: License ─────────────────────────────────────────────────────────
 document.getElementById('license-file').addEventListener('change', e => {
   const file = e.target.files[0];
   if (!file) return;
@@ -1659,7 +1606,6 @@ async function validateLicense() {
   licenseData = parsed;
   features    = res.features;
 
-  // Render summary
   const planColors = {starter:'text-slate-300',professional:'text-indigo-300',enterprise:'text-yellow-300'};
   const planColor  = planColors[res.plan] || 'text-white';
   const featList   = Object.entries(res.features)
@@ -1681,27 +1627,23 @@ async function validateLicense() {
     <div class="flex flex-wrap gap-1">${featList}</div>`;
   sumEl.classList.remove('hidden');
 
-  // Pre-fill domain step
   const dom = parsed.domain || '';
   document.getElementById('licensed-domain').value = dom;
   document.getElementById('sub-domain-suffix').textContent = dom;
   document.getElementById('sub-example').textContent = 'app.' + dom;
   document.getElementById('final-domain').textContent = dom;
 
-  // Disable remote options if plan doesn't support them
   if (!features.remote_db)    { document.getElementById('mongo-remote-opt').disabled = true; }
   if (!features.remote_redis) { document.getElementById('redis-remote-opt').disabled = true; }
 
   setTimeout(() => goTo(3), 600);
 }
 
-// ─── Step 2: Domain ───────────────────────────────────────────────────────────
 function _isIPAddress(s) {
   return /^\d{1,3}(\.\d{1,3}){3}$/.test(s.trim());
 }
 
 function toggleSubdomain() {
-  // IP-only mode locks subdomain controls
   if (document.getElementById('use-ip-only').checked) return;
   const checked = document.getElementById('use-subdomain').checked;
   document.getElementById('subdomain-row').classList.toggle('hidden', !checked);
@@ -1709,36 +1651,30 @@ function toggleSubdomain() {
 }
 
 function updateSubdomainPreview() {
-  // Do not override when IP-only mode is active
   if (document.getElementById('use-ip-only').checked) return;
-  const base = document.getElementById('licensed-domain').value || '';
+  const base   = document.getElementById('licensed-domain').value || '';
   const prefix = document.getElementById('subdomain-prefix').value.trim();
   const checked = document.getElementById('use-subdomain').checked;
-  const domain = (checked && prefix) ? `${prefix}.${base}` : base;
+  const domain  = (checked && prefix) ? `${prefix}.${base}` : base;
   document.getElementById('final-domain').textContent = domain;
 }
 
 function toggleIPOnly() {
-  const checked = document.getElementById('use-ip-only').checked;
+  const checked  = document.getElementById('use-ip-only').checked;
   const publicIp = document.getElementById('pf-server-ip').textContent.trim();
-  const hasIp = publicIp && publicIp !== 'detecting…' && publicIp !== '—';
-  const ipToUse = hasIp ? publicIp : '';
+  const hasIp    = publicIp && publicIp !== 'detecting…' && publicIp !== '—';
+  const ipToUse  = hasIp ? publicIp : '';
 
   if (checked) {
-    // Lock subdomain controls and override domain with server IP
     document.getElementById('use-subdomain').checked = false;
     document.getElementById('subdomain-row').classList.add('hidden');
     document.getElementById('final-domain').textContent = ipToUse || '(detecting IP…)';
-    document.getElementById('ip-only-preview').textContent =
-      ipToUse ? ('http://' + ipToUse) : '—';
-    // Pre-tick skip-ssl on the review step
+    document.getElementById('ip-only-preview').textContent = ipToUse ? ('http://' + ipToUse) : '—';
     const skipSslEl = document.getElementById('skip-ssl');
     if (skipSslEl) skipSslEl.checked = true;
-    // Hide DNS section — irrelevant for IP mode
     document.getElementById('dns-result').classList.add('hidden');
     document.getElementById('dns-instructions').classList.add('hidden');
   } else {
-    // Restore normal domain flow
     document.getElementById('ip-only-preview').textContent = '—';
     const skipSslEl = document.getElementById('skip-ssl');
     if (skipSslEl) skipSslEl.checked = false;
@@ -1758,7 +1694,7 @@ async function checkDNS() {
   const res = await api('/api/check-dns', { domain });
   btn.textContent = 'Check DNS A record'; btn.disabled = false;
 
-  const resEl = document.getElementById('dns-result');
+  const resEl  = document.getElementById('dns-result');
   const instEl = document.getElementById('dns-instructions');
   resEl.classList.remove('hidden');
   instEl.classList.add('hidden');
@@ -1774,12 +1710,11 @@ async function checkDNS() {
       : `⚠ ${domain} could not be resolved — DNS may not have propagated`;
     dnsOk = false;
     document.getElementById('dns-record-host').textContent = domain;
-    document.getElementById('dns-record-ip').textContent = res.server_ip || '<your-server-ip>';
+    document.getElementById('dns-record-ip').textContent   = res.server_ip || '<your-server-ip>';
     instEl.classList.remove('hidden');
   }
 }
 
-// ─── Step 3: MongoDB ──────────────────────────────────────────────────────────
 function toggleMongoRemote() {
   const isRemote = document.getElementById('mongo-type').value === 'remote';
   document.getElementById('mongo-remote-row').classList.toggle('hidden', !isRemote);
@@ -1788,14 +1723,13 @@ function toggleMongoRemote() {
 
 async function testMongo() {
   const uri = document.getElementById('mongo-uri').value.trim();
-  const el = document.getElementById('mongo-test-result');
+  const el  = document.getElementById('mongo-test-result');
   el.classList.remove('hidden'); el.textContent = 'Testing…'; el.className='mt-2 text-sm text-slate-400';
   const res = await api('/api/test-mongo', { uri });
   el.textContent = res.ok ? '✓ Connection successful' : '✗ ' + res.error;
   el.className = 'mt-2 text-sm ' + (res.ok ? 'text-emerald-400' : 'text-red-400');
 }
 
-// ─── Step 4: Redis ────────────────────────────────────────────────────────────
 function toggleRedisRemote() {
   const isRemote = document.getElementById('redis-type').value === 'remote';
   document.getElementById('redis-remote-row').classList.toggle('hidden', !isRemote);
@@ -1803,17 +1737,13 @@ function toggleRedisRemote() {
 
 async function testRedis() {
   const url = document.getElementById('redis-url').value.trim();
-  const el = document.getElementById('redis-test-result');
+  const el  = document.getElementById('redis-test-result');
   el.classList.remove('hidden'); el.textContent = 'Testing…'; el.className='mt-2 text-sm text-slate-400';
   const res = await api('/api/test-redis', { url });
   el.textContent = res.ok ? '✓ Connection successful' : '✗ ' + res.error;
   el.className = 'mt-2 text-sm ' + (res.ok ? 'text-emerald-400' : 'text-red-400');
 }
 
-// ─── Step 5: Admin ────────────────────────────────────────────────────────────
-// (validation happens in goTo(7))
-
-// ─── Step 6: Review ───────────────────────────────────────────────────────────
 function buildReview() {
   const errEl = document.getElementById('admin-error');
   errEl.classList.add('hidden');
@@ -1833,11 +1763,11 @@ function buildReview() {
   const redisLocal = document.getElementById('redis-type').value === 'local';
 
   const rows = [
-    ['Plan',     (licenseData?.plan || '—').toUpperCase()],
-    ['Domain',   domain],
-    ['MongoDB',  mongoLocal ? 'Local Docker' : (document.getElementById('mongo-uri').value.slice(0,50)+'…')],
-    ['Redis',    redisLocal ? 'Local Docker' : (document.getElementById('redis-url').value.slice(0,50)+'…')],
-    ['Admin',    email],
+    ['Plan',    (licenseData?.plan || '—').toUpperCase()],
+    ['Domain',  domain],
+    ['MongoDB', mongoLocal ? 'Local Docker' : (document.getElementById('mongo-uri').value.slice(0,50)+'…')],
+    ['Redis',   redisLocal ? 'Local Docker' : (document.getElementById('redis-url').value.slice(0,50)+'…')],
+    ['Admin',   email],
   ];
   document.getElementById('review-content').innerHTML = rows.map(([k,v]) =>
     `<div class="flex gap-3 p-2.5 rounded-lg" style="background:rgba(255,255,255,.03)">
@@ -1848,15 +1778,12 @@ function buildReview() {
   return true;
 }
 
-// ─── Step 8: Install ─────────────────────────────────────────────────────────
 async function startInstall() {
   goTo(8);
   const logEl = document.getElementById('progress-log');
   logEl.innerHTML = '';
 
-  const domain = getFinalDomain();
-  // Auto-force skip_ssl when the domain is a bare IP address — Let's Encrypt
-  // cannot issue certificates for IPs, so attempting SSL would fail the install.
+  const domain     = getFinalDomain();
   const domainIsIp = _isIPAddress(domain);
   const payload = {
     domain:         domain,
@@ -1871,9 +1798,17 @@ async function startInstall() {
     license:        licenseData,
   };
 
-  await api('/api/install', payload);
+  const startRes = await api('/api/install', payload);
+  if (!startRes.ok) {
+    const logEl = document.getElementById('progress-log');
+    const div = document.createElement('div');
+    div.className = 'log-line log-error';
+    div.textContent = 'Error: ' + (startRes.error || 'Unknown error');
+    logEl.appendChild(div);
+    document.getElementById('install-error-section').classList.remove('hidden');
+    return;
+  }
 
-  // SSE stream — shows live install log
   const evtSource = new EventSource('/api/progress');
   evtSource.onmessage = e => {
     const data = JSON.parse(e.data);
@@ -1897,28 +1832,13 @@ async function startInstall() {
 }
 
 function showDone(appUrl) {
-  // The wizard shuts itself down 8 s after sending DONE.
-  // appUrl is passed from the DONE SSE event (set by run_install after SSL result).
-  // Fallback: strip the setup port from the current URL.
   document.getElementById('install-done-section').classList.remove('hidden');
   const finalUrl = appUrl
     || session.app_url
     || window.location.origin.replace(':' + (window.location.port || '8080'), '');
   document.getElementById('open-app-btn').href = finalUrl || '/';
-
-  // Countdown before wizard shuts down (8 s grace period)
-  let secs = 8;
-  const cd = document.getElementById('countdown');
-  if (cd) {
-    const t = setInterval(() => {
-      secs--;
-      cd.textContent = secs;
-      if (secs <= 0) { clearInterval(t); }
-    }, 1000);
-  }
 }
 
-// ─── Utilities ────────────────────────────────────────────────────────────────
 let session = {};
 async function api(path, body = {}) {
   try {
@@ -1974,12 +1894,9 @@ class SetupHandler(BaseHTTPRequestHandler):
         except Exception:
             return {}
 
-    # ── GET ──────────────────────────────────────────────────────────────────
-
     def do_GET(self) -> None:
         path = urlparse(self.path).path
 
-        # If setup already complete, redirect to the app
         if SETUP_LOCK.exists() and path not in ("/api/status",):
             try:
                 info = json.loads(SETUP_LOCK.read_text())
@@ -1995,10 +1912,8 @@ class SetupHandler(BaseHTTPRequestHandler):
             app_url = session_get("app_url", "#")
             html = HTML.replace("___APP_URL___", app_url)
             self._send(200, "text/html; charset=utf-8", html.encode())
-
         elif path == "/api/progress":
             self._sse_stream()
-
         elif path == "/api/status":
             complete = SETUP_LOCK.exists()
             url = ""
@@ -2008,7 +1923,6 @@ class SetupHandler(BaseHTTPRequestHandler):
                 except Exception:
                     pass
             self._json({"complete": complete, "url": url})
-
         else:
             self._send(404, "text/plain", b"Not found")
 
@@ -2032,13 +1946,10 @@ class SetupHandler(BaseHTTPRequestHandler):
                     ):
                         break
                 except Exception:
-                    # keepalive ping
                     self.wfile.write(b'data: {"msg":"__keepalive__"}\n\n')
                     self.wfile.flush()
         except (BrokenPipeError, ConnectionResetError):
             pass
-
-    # ── POST ─────────────────────────────────────────────────────────────────
 
     def do_POST(self) -> None:
         path = urlparse(self.path).path
@@ -2062,8 +1973,7 @@ class SetupHandler(BaseHTTPRequestHandler):
             self._send(404, "text/plain", b"Not found")
 
     def _api_preflight(self, body: dict) -> None:
-        result = run_preflight()
-        self._json(result)
+        self._json(run_preflight())
 
     def _api_validate_license(self, body: dict) -> None:
         data = body.get("license", {})
@@ -2071,9 +1981,8 @@ class SetupHandler(BaseHTTPRequestHandler):
         if not ok:
             self._json({"ok": False, "error": err})
             return
-        (INSTALL_DIR / "license.json").write_text(
-            json.dumps(data, indent=2), encoding="utf-8"
-        )
+        # Write to BOTH locations so the backend container finds it at /app/license.json
+        _write_license(data)
         self._json({
             "ok":        True,
             "plan":      data.get("plan", "starter"),
@@ -2106,7 +2015,7 @@ class SetupHandler(BaseHTTPRequestHandler):
             self._json({"ok": False, "error": "Setup already complete."})
             return
 
-        # ── 1. Require a valid license in the POST body ───────────────────────
+        # ── Require a valid license ───────────────────────────────────────────
         lic_data = body.get("license") or {}
         if not lic_data:
             self._json({
@@ -2117,18 +2026,13 @@ class SetupHandler(BaseHTTPRequestHandler):
 
         lic_ok, lic_err, _ = validate_license(lic_data)
         if not lic_ok:
-            self._json({
-                "ok":    False,
-                "error": f"License validation failed: {lic_err}",
-            })
+            self._json({"ok": False, "error": f"License validation failed: {lic_err}"})
             return
 
-        # Ensure license.json is on disk (may have been skipped if browser state lost)
-        license_path = INSTALL_DIR / "license.json"
-        if not license_path.exists():
-            license_path.write_text(json.dumps(lic_data, indent=2), encoding="utf-8")
+        # Ensure both license.json copies exist on disk
+        _write_license(lic_data)
 
-        # ── 2. Domain vs. license enforcement ────────────────────────────────
+        # ── Domain vs. license enforcement ────────────────────────────────────
         install_domain = body.get("domain", "").strip().lower()
         lic_domain     = lic_data.get("domain", "").strip().lower()
         lic_root       = lic_data.get("root_domain", "").strip().lower()
@@ -2152,7 +2056,8 @@ class SetupHandler(BaseHTTPRequestHandler):
                 })
                 return
 
-        env_path = INSTALL_DIR / "backend" / ".env"
+        # ── Mongo password: reuse existing to survive retries ─────────────────
+        env_path       = INSTALL_DIR / "backend" / ".env"
         mongo_password = _extract_mongo_password(env_path) or _gen_mongo_password()
 
         config = {
@@ -2166,10 +2071,10 @@ class SetupHandler(BaseHTTPRequestHandler):
             "admin_password": body.get("admin_password", ""),
             "skip_ssl":       body.get("skip_ssl", False),
             "mongo_password": mongo_password,
+            "license":        lic_data,   # passed to run_install for step 1b
         }
         session_set(**{k: v for k, v in config.items() if k != "admin_password"})
 
-        # Drain any stale progress events from a previous run
         while not _progress_queue.empty():
             try:
                 _progress_queue.get_nowait()
@@ -2179,6 +2084,7 @@ class SetupHandler(BaseHTTPRequestHandler):
         t = threading.Thread(target=run_install, args=(config,), daemon=True)
         t.start()
         self._json({"ok": True, "msg": "Installation started"})
+
 
 # ---------------------------------------------------------------------------
 # Entry point
@@ -2195,8 +2101,6 @@ def main() -> None:
     _SETUP_PORT = args.port
     _load_session()
 
-    # If setup already finished, exit cleanly.
-    # systemd Restart=on-failure won't restart on a clean exit (code 0).
     if SETUP_LOCK.exists():
         try:
             info = json.loads(SETUP_LOCK.read_text())
@@ -2207,7 +2111,6 @@ def main() -> None:
             pass
         sys.exit(0)
 
-    # Detect EC2 public IP for the startup banner
     public_ip = _get_public_ip() or ""
     local_ip  = "localhost"
     try:
