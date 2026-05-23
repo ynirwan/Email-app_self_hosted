@@ -1116,69 +1116,77 @@ def _letsencrypt(domain: str, email: str) -> bool:
 
 def _create_admin(name: str, email: str, password: str) -> None:
     """
-    Create the initial admin account by calling the register endpoint from
-    INSIDE the backend container via `docker compose exec`.
-
-    The backend service has no host-side port mapping, so calling
-    http://localhost:8000 from the host process always fails. Running the
-    request inside the container avoids the network boundary entirely.
+    Create admin user by calling the register API from INSIDE the backend
+    container. No exposed ports required.
     """
-    env_path = INSTALL_DIR / "backend" / ".env"
+    script = r"""
+import json
+import sys
+import urllib.request
+import urllib.error
 
-    # Enable registration for exactly this one call
-    set_env_var(env_path, "REGISTRATION_ENABLED", "true")
-    subprocess.run(
-        ["docker", "compose", "restart", "backend"],
-        cwd=str(INSTALL_DIR), check=False,
+payload = json.dumps({
+    "name":     __import__("os").environ["ADMIN_NAME"],
+    "email":    __import__("os").environ["ADMIN_EMAIL"],
+    "password": __import__("os").environ["ADMIN_PASSWORD"],
+}).encode()
+
+req = urllib.request.Request(
+    "http://localhost:8000/api/auth/register",
+    data=payload,
+    headers={"Content-Type": "application/json"},
+    method="POST",
+)
+
+try:
+    with urllib.request.urlopen(req, timeout=20) as r:
+        body = r.read().decode()
+        print(body or "created")
+
+except urllib.error.HTTPError as exc:
+    body = exc.read().decode(errors="replace")
+
+    if "already exists" in body.lower():
+        print("exists")
+        sys.exit(0)
+
+    print(body)
+    sys.exit(exc.code)
+
+except Exception as exc:
+    print(str(exc))
+    sys.exit(1)
+"""
+
+    r = subprocess.run(
+        [
+            "docker", "compose", "exec", "-T",
+            "-e", f"ADMIN_NAME={name}",
+            "-e", f"ADMIN_EMAIL={email}",
+            "-e", f"ADMIN_PASSWORD={password}",
+            "backend",
+            "python3", "-c", script,
+        ],
+        cwd=str(INSTALL_DIR),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
     )
-    _wait_for_backend(60)
 
-    # Self-contained Python snippet — runs inside the container, stdlib only
-    payload_str = json.dumps({"name": name, "email": email, "password": password})
-    script = "\n".join([
-        "import urllib.request, json, sys",
-        f"payload = {repr(payload_str.encode())}",
-        "req = urllib.request.Request(",
-        "    'http://localhost:8000/api/auth/register',",
-        "    data=payload,",
-        "    headers={'Content-Type': 'application/json'},",
-        "    method='POST'",
-        ")",
-        "try:",
-        "    with urllib.request.urlopen(req, timeout=15) as r:",
-        "        print('ok', r.status)",
-        "except urllib.error.HTTPError as e:",
-        "    body = e.read().decode(errors='replace')",
-        "    if 'already exists' in body:",
-        "        print('exists')",
-        "    else:",
-        "        print('error', e.code, body, file=sys.stderr)",
-        "        sys.exit(1)",
-    ])
+    output = (r.stdout or "").strip()
+    stderr = (r.stderr or "").strip()
 
-    try:
-        r = subprocess.run(
-            ["docker", "compose", "exec", "-T", "backend", "python3", "-c", script],
-            cwd=str(INSTALL_DIR),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
-        output = r.stdout.strip()
-        if r.returncode != 0:
-            raise RuntimeError(f"Admin creation failed: {r.stderr.strip() or output}")
-        if "exists" in output:
-            _push(f"Admin account {email} already exists — skipping.", "warn")
-        else:
-            _push(f"Admin account {email} created ✔", "ok")
-    finally:
-        # Always lock registration back down, even if creation failed
-        set_env_var(env_path, "REGISTRATION_ENABLED", "false")
-        subprocess.run(
-            ["docker", "compose", "restart", "backend"],
-            cwd=str(INSTALL_DIR), check=False,
+    if r.returncode != 0 and output != "exists":
+        raise RuntimeError(
+            f"Admin user creation failed.\n"
+            f"stdout: {output}\n"
+            f"stderr: {stderr}"
         )
 
+    if output == "exists":
+        _push(f"Admin account {email} already exists — skipping.", "warn")
+    else:
+        _push(f"Admin account {email} created ✔", "ok")
 
 # ---------------------------------------------------------------------------
 # HTML
