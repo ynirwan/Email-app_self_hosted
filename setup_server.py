@@ -858,7 +858,7 @@ server {{
         error_page 404 = @frontend_fallback;
     }}
     location @frontend_fallback {{
-        proxy_pass http://frontend:80/;
+        proxy_pass http://frontend:80;
     }}
 }}"""
 
@@ -935,7 +935,7 @@ def run_install(config: dict) -> None:
             if line.strip():
                 _push(f"  {line.strip()}")
         _push("Previous state cleared ✔", "ok")
-        
+
         # 1. Write .env
         _push("Writing backend/.env …")
         write_env(config)
