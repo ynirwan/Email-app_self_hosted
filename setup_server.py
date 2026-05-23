@@ -1116,56 +1116,72 @@ def _letsencrypt(domain: str, email: str) -> bool:
 
 def _create_admin(name: str, email: str, password: str) -> None:
     """
-    Create admin user by calling the register API from INSIDE the backend
-    container. No exposed ports required.
+    Create the initial admin user directly in MongoDB from inside
+    the backend container.
+
+    This bypasses REGISTRATION_ENABLED completely.
     """
+
     script = r"""
-import json
+import os
 import sys
-import urllib.request
-import urllib.error
+from datetime import datetime, timezone
 
-payload = json.dumps({
-    "name":     __import__("os").environ["ADMIN_NAME"],
-    "email":    __import__("os").environ["ADMIN_EMAIL"],
-    "password": __import__("os").environ["ADMIN_PASSWORD"],
-}).encode()
-
-req = urllib.request.Request(
-    "http://localhost:8000/api/auth/register",
-    data=payload,
-    headers={"Content-Type": "application/json"},
-    method="POST",
-)
+from pymongo import MongoClient
 
 try:
-    with urllib.request.urlopen(req, timeout=20) as r:
-        body = r.read().decode()
-        print(body or "created")
+    from passlib.context import CryptContext
+    pwd = CryptContext(schemes=["bcrypt"], deprecated="auto")
+    hash_pw = pwd.hash
+except Exception:
+    import hashlib
+    import secrets
 
-except urllib.error.HTTPError as exc:
-    body = exc.read().decode(errors="replace")
+    def hash_pw(pw):
+        salt = secrets.token_hex(16)
+        h = hashlib.sha256((salt + pw).encode()).hexdigest()
+        return f"sha256${salt}${h}"
 
-    if "already exists" in body.lower():
-        print("exists")
-        sys.exit(0)
+uri   = os.environ["MONGODB_URI"]
+name  = os.environ["ADMIN_NAME"]
+email = os.environ["ADMIN_EMAIL"]
+pw    = os.environ["ADMIN_PASSWORD"]
 
-    print(body)
-    sys.exit(exc.code)
+client = MongoClient(uri, serverSelectionTimeoutMS=10000)
+db = client.get_default_database()
 
-except Exception as exc:
-    print(str(exc))
-    sys.exit(1)
+existing = db.users.find_one({"email": email})
+
+if existing:
+    print("exists")
+    sys.exit(0)
+
+db.users.insert_one({
+    "name": name,
+    "email": email,
+    "password": hash_pw(pw),
+    "role": "admin",
+    "is_active": True,
+    "is_verified": True,
+    "created_at": datetime.now(timezone.utc),
+    "updated_at": datetime.now(timezone.utc),
+})
+
+print("created")
 """
 
     r = subprocess.run(
         [
             "docker", "compose", "exec", "-T",
+
             "-e", f"ADMIN_NAME={name}",
             "-e", f"ADMIN_EMAIL={email}",
             "-e", f"ADMIN_PASSWORD={password}",
+
             "backend",
-            "python3", "-c", script,
+            "python3",
+            "-c",
+            script,
         ],
         cwd=str(INSTALL_DIR),
         stdout=subprocess.PIPE,
@@ -1176,17 +1192,17 @@ except Exception as exc:
     output = (r.stdout or "").strip()
     stderr = (r.stderr or "").strip()
 
-    if r.returncode != 0 and output != "exists":
+    if r.returncode != 0:
         raise RuntimeError(
-            f"Admin user creation failed.\n"
-            f"stdout: {output}\n"
-            f"stderr: {stderr}"
+            f"Admin creation failed: {output or stderr}"
         )
 
     if output == "exists":
         _push(f"Admin account {email} already exists — skipping.", "warn")
-    else:
+    elif output == "created":
         _push(f"Admin account {email} created ✔", "ok")
+    else:
+        _push(f"Admin creation result: {output}", "warn")
 
 # ---------------------------------------------------------------------------
 # HTML
