@@ -825,7 +825,7 @@ server {{
         error_page 404 = @frontend_fallback;
     }}
     location @frontend_fallback {{
-        proxy_pass http://frontend:80/;
+        proxy_pass http://frontend:80;
     }}
 }}"""
 
