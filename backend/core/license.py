@@ -22,6 +22,7 @@ so dev environments work without a real license file.
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import hmac
 import json
@@ -225,9 +226,60 @@ class LicenseInfo:
 # File discovery
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# AES-256-GCM decryption — for .lic files produced by the ZeniPost Dashboard
+# ---------------------------------------------------------------------------
+#
+# .lic file format: base64( iv[12] || authTag[16] || ciphertext )
+# Key:              SHA-256(LICENSE_SIGNING_SECRET)
+# Algorithm:        AES-256-GCM  (authenticated — any tampering raises an error)
+#
+# The cryptography package is already in requirements.txt (via python-jose[cryptography]).
+
+_AES_IV_LEN  = 12
+_AES_TAG_LEN = 16
+
+
+def _derive_aes_key(secret: str) -> bytes:
+    """Derive a 32-byte AES-256 key from the license signing secret via SHA-256."""
+    return hashlib.sha256(secret.encode()).digest()
+
+
+def _decrypt_lic_blob(blob_b64: str, secret: str) -> dict:
+    """
+    Decrypt a base64-encoded .lic blob and return the parsed license dict.
+
+    Raises ValueError (or cryptography.exceptions.InvalidTag) on any
+    decryption or parse failure so the caller can surface a clean error.
+    """
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+    blob = base64.b64decode(blob_b64.strip())
+    if len(blob) < _AES_IV_LEN + _AES_TAG_LEN + 1:
+        raise ValueError("License blob is too short to be valid")
+
+    iv         = blob[:_AES_IV_LEN]
+    auth_tag   = blob[_AES_IV_LEN : _AES_IV_LEN + _AES_TAG_LEN]
+    ciphertext = blob[_AES_IV_LEN + _AES_TAG_LEN :]
+
+    key    = _derive_aes_key(secret)
+    aesgcm = AESGCM(key)
+
+    # cryptography's AESGCM.decrypt expects ciphertext with the tag appended
+    plaintext = aesgcm.decrypt(iv, ciphertext + auth_tag, None)
+    return json.loads(plaintext.decode("utf-8"))
+
+
+# ---------------------------------------------------------------------------
+# File discovery
+# ---------------------------------------------------------------------------
+
 _LICENSE_PATH_CANDIDATES = [
-    Path(__file__).resolve().parent.parent.parent / "license.json",  # <repo_root>/license.json
+    Path(__file__).resolve().parent.parent.parent / "license.lic",   # <repo_root>/license.lic  (new)
+    Path(__file__).resolve().parent.parent.parent / "license.json",  # <repo_root>/license.json (legacy)
+    Path(__file__).resolve().parent.parent / "license.lic",          # <backend>/license.lic
     Path(__file__).resolve().parent.parent / "license.json",         # <backend>/license.json
+    Path(os.getcwd()) / "license.lic",
     Path(os.getcwd()) / "license.json",
 ]
 
@@ -390,7 +442,7 @@ def load_license() -> LicenseInfo:
 
     license_path = _find_license_file()
     if license_path is None:
-        msg = "license.json not found. Download it from the ZeniPost Dashboard."
+        msg = "License file not found. Download it from the ZeniPost Dashboard."
         logger.warning(msg)
         if is_dev:
             logger.info("Development mode: using professional defaults without a license file.")
@@ -402,9 +454,14 @@ def load_license() -> LicenseInfo:
         return LicenseInfo(valid=False, error=msg)
 
     try:
-        raw = json.loads(license_path.read_text(encoding="utf-8"))
+        if license_path.suffix == ".lic":
+            # Encrypted AES-256-GCM license file (new format from Dashboard v3+)
+            raw = _decrypt_lic_blob(license_path.read_text(encoding="utf-8"), _license_secret())
+        else:
+            # Plain JSON (legacy / hand-issued)
+            raw = json.loads(license_path.read_text(encoding="utf-8"))
     except Exception as exc:
-        return LicenseInfo(valid=False, error=f"Could not parse license.json: {exc}")
+        return LicenseInfo(valid=False, error=f"Could not load license file: {exc}")
 
     sig = raw.get("signature", "")
 

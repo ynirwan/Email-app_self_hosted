@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Dict, Any, Optional
 
-from fastapi import FastAPI, Request, HTTPException, status
+from fastapi import FastAPI, Request, HTTPException, status, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
@@ -681,10 +681,109 @@ async def license_status(current_user: dict = Depends(get_current_user)):
 
 @app.post("/api/license/reload", tags=["License"])
 async def license_reload(current_user: dict = Depends(get_current_user)):
-    """Force a license reload from disk (admin only — use after placing a new license.json)."""
+    """Force a license reload from disk (use after placing a new license file)."""
     lic = reload_license()
     return {
         "message": "License reloaded",
+        "valid":   lic.valid,
+        "error":   lic.error or None,
+        **lic.to_public_dict(),
+    }
+
+
+@app.post("/api/license/upload", tags=["License"])
+async def license_upload(
+    file: UploadFile = File(...),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Upload a new license file (.lic or .json) while the app is running.
+
+    The file is validated before being written to disk — if decryption or
+    signature verification fails the existing license is left untouched.
+    After a successful write, the in-memory license cache is refreshed
+    automatically.
+    """
+    from core.license import (
+        _find_license_file,
+        _decrypt_lic_blob,
+        _license_secret,
+        _verify_jwt_signature,
+        _verify_legacy_signature,
+        _LICENSE_PATH_CANDIDATES,
+    )
+    import json as _json
+    from pathlib import Path
+
+    allowed_suffixes = {".lic", ".json"}
+    filename = file.filename or ""
+    suffix = Path(filename).suffix.lower()
+    if suffix not in allowed_suffixes:
+        raise HTTPException(
+            status_code=400,
+            detail="Only .lic or .json license files are accepted.",
+        )
+
+    content_bytes = await file.read()
+    if len(content_bytes) > 512 * 1024:  # 512 KB sanity guard
+        raise HTTPException(status_code=400, detail="License file is unexpectedly large.")
+
+    content_str = content_bytes.decode("utf-8", errors="replace")
+
+    # ── Validate before touching disk ─────────────────────────────────────
+    env = os.getenv("ENVIRONMENT", "development").lower()
+    is_dev = env == "development"
+
+    try:
+        if suffix == ".lic":
+            raw = _decrypt_lic_blob(content_str.strip(), _license_secret())
+        else:
+            raw = _json.loads(content_str)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=f"License file could not be parsed/decrypted: {exc}",
+        )
+
+    if not is_dev:
+        sig = raw.get("signature", "")
+        is_v2 = raw.get("format") == "zenipost-license-v2"
+        if not sig or sig == "REPLACE_WITH_ACTUAL_SIGNATURE_FROM_VENDOR":
+            raise HTTPException(status_code=422, detail="License has a placeholder signature.")
+        ok = _verify_jwt_signature(raw, sig) if is_v2 else _verify_legacy_signature(raw, sig)
+        if not ok:
+            raise HTTPException(
+                status_code=422,
+                detail="License signature is invalid — file may be tampered or for a different secret.",
+            )
+
+    # ── Write to the repo-root canonical path ──────────────────────────────
+    # Prefer the same location as the currently loaded file if one exists;
+    # otherwise write to the first candidate (repo root).
+    existing = _find_license_file()
+    if existing:
+        target = existing.with_suffix(suffix)  # keep path, update extension if needed
+    else:
+        target = _LICENSE_PATH_CANDIDATES[0].parent / f"license{suffix}"
+
+    try:
+        target.write_text(content_str, encoding="utf-8")
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"Could not write license to disk: {exc}")
+
+    # ── Reload in-memory cache ─────────────────────────────────────────────
+    lic = reload_license()
+
+    logger.info(
+        "License uploaded and reloaded: plan=%s valid=%s expires=%s uploaded_by=%s",
+        lic.plan,
+        lic.valid,
+        lic.expires_at,
+        current_user.get("email", current_user.get("sub", "unknown")),
+    )
+
+    return {
+        "message": "License uploaded and reloaded successfully.",
         "valid":   lic.valid,
         "error":   lic.error or None,
         **lic.to_public_dict(),

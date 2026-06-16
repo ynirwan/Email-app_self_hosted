@@ -29,6 +29,7 @@ import AutomationAnalytics from "./pages/AutomationAnalytics";
 import AutomationCampaignAnalytics from "./pages/AutomationCampaignAnalytics";
 import OptInForm from "./pages/OptInForm";
 import TrackingSettings from "./pages/TrackingSettings";
+import LicenseSettings from "./pages/LicenseSettings";
 import DeliverabilityDashboard from "./pages/DeliverabilityDashboard";
 import FeatureGate from "./components/FeatureGate";
 
@@ -129,6 +130,7 @@ const App = () => {
               <Route path="email" element={<EmailSettings />} />
               <Route path="domain" element={<DomainSettings />} />
               <Route path="tracking" element={<TrackingSettings />} />
+              <Route path="license" element={<LicenseSettings />} />
             </Route>
           </Route>
         ) : (
