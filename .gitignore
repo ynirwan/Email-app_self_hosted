@@ -182,3 +182,4 @@ yarn-error.log*
 # ── App-local logs / uploads ────────────────────────────────────────────────
 backend/var/log/
 /tmp/uploads/
+*.reply
