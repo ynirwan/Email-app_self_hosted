@@ -1,5 +1,5 @@
 # backend/routes/webhooks.py
-from fastapi import APIRouter, Request, HTTPException, BackgroundTasks
+from fastapi import APIRouter, Request, HTTPException, BackgroundTasks, Depends
 from pydantic import BaseModel, validator
 from core.redis_client import get_async_redis, get_async_redis_client
 import json
@@ -18,9 +18,61 @@ from database import get_email_logs_collection, get_subscribers_collection, get_
 from models.suppression_filter import create_suppression_from_bounce, create_suppression_from_complaint
 from bson import ObjectId
 from core.config import settings
+from core.auth import get_current_user
 
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
 logger = logging.getLogger(__name__)
+
+_SNS_ARN_CACHE_KEY = "sns:allowed_arns"
+_SNS_ARN_CACHE_TTL = 60  # seconds — short enough to pick up new ARNs quickly
+
+
+async def get_allowed_topic_arns() -> list:
+    """
+    Return the list of allowed SNS TopicArns.
+
+    Priority:
+      1. Redis cache (TTL=60s) — avoids a DB round-trip on every webhook delivery.
+      2. MongoDB settings collection (type=sns_webhooks).
+      3. SNS_ALLOWED_TOPIC_ARNS env var — backward-compat for deployments that
+         haven't migrated to the UI yet.
+
+    Returns an empty list if none of the sources has any ARNs configured,
+    which the caller treats as "fail closed".
+    """
+    # 1. Try Redis cache first
+    try:
+        async with get_async_redis() as r:
+            cached = await r.get(_SNS_ARN_CACHE_KEY)
+            if cached:
+                return json.loads(cached)
+    except Exception as _cache_err:
+        logger.debug(f"SNS ARN cache read failed (non-fatal): {_cache_err}")
+
+    # 2. Read from DB
+    arns: list = []
+    try:
+        from database import get_settings_collection
+        col = get_settings_collection()
+        doc = await col.find_one({"type": "sns_webhooks"})
+        if doc and doc.get("arns"):
+            arns = [entry["arn"] for entry in doc["arns"] if entry.get("arn")]
+    except Exception as _db_err:
+        logger.warning(f"SNS ARN DB read failed: {_db_err}")
+
+    # 3. Fall back to env var (backward compat)
+    if not arns:
+        arns = list(settings.SNS_ALLOWED_TOPIC_ARNS)
+
+    # Populate cache regardless of source so subsequent calls are cheap
+    if arns:
+        try:
+            async with get_async_redis() as r:
+                await r.set(_SNS_ARN_CACHE_KEY, json.dumps(arns), ex=_SNS_ARN_CACHE_TTL)
+        except Exception:
+            pass
+
+    return arns
 
 
 # Webhook configuration
@@ -448,6 +500,31 @@ async def handle_ses_webhook(request: Request, background_tasks: BackgroundTasks
         if not await verify_sns_signature(payload):
             raise HTTPException(status_code=403, detail="Invalid SNS signature")
 
+        # ── TopicArn allowlist check — applies to ALL message types ─────────────
+        # An attacker-controlled SNS topic can deliver crafted bounce/complaint
+        # events to mass-suppress legitimate addresses. Only accept messages from
+        # ARNs we explicitly own. Fail closed: if the allowlist is empty (not
+        # configured via UI or env), we reject to prevent an unsafe default.
+        allowed_arns = await get_allowed_topic_arns()
+        if not allowed_arns:
+            logger.error(
+                "SNS_ALLOWED_TOPIC_ARNS is not configured — "
+                "rejecting all SNS messages until the allowlist is set."
+            )
+            raise HTTPException(
+                status_code=403,
+                detail="SNS topic allowlist not configured on this server",
+            )
+        if payload.TopicArn not in allowed_arns:
+            logger.warning(
+                f"SNS message rejected: TopicArn '{payload.TopicArn}' "
+                f"is not in the allowed list."
+            )
+            raise HTTPException(
+                status_code=403,
+                detail="SNS TopicArn not in allowed list",
+            )
+
         # Handle different SNS message types
         if payload.Type == 'SubscriptionConfirmation':
             if WEBHOOK_CONFIG["auto_confirm_subscription"] and payload.SubscribeURL:
@@ -595,7 +672,7 @@ async def webhook_health():
         }
 
 @router.get("/stats")
-async def webhook_statistics():
+async def webhook_statistics(current_user: dict = Depends(get_current_user)):
     """Detailed webhook statistics"""
     try:
         async with get_async_redis() as redis_client:
@@ -642,7 +719,7 @@ async def webhook_statistics():
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/test")
-async def test_webhook():
+async def test_webhook(current_user: dict = Depends(get_current_user)):
     """Test webhook endpoint with sample SES event"""
     sample_ses_event = {
         "Type": "Notification",
@@ -690,8 +767,13 @@ async def test_webhook():
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.delete("/queues/clear")
-async def clear_webhook_queues():
+async def clear_webhook_queues(current_user: dict = Depends(get_current_user)):
     """Clear all webhook queues (admin operation)"""
+    if current_user.get("role") != "admin":
+        raise HTTPException(
+            status_code=403,
+            detail="Admin role required to clear webhook queues",
+        )
     try:
         async with get_async_redis() as redis_client:
             cleared_counts = {
@@ -716,7 +798,7 @@ async def clear_webhook_queues():
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/queues/inspect/{queue_name}")
-async def inspect_queue(queue_name: str, limit: int = 10):
+async def inspect_queue(queue_name: str, limit: int = 10, current_user: dict = Depends(get_current_user)):
     """Inspect queue contents for debugging"""
     valid_queues = ["ses_events_critical", "ses_events_normal", "ses_events_failed"]
     if queue_name not in valid_queues:

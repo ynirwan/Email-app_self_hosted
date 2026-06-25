@@ -29,7 +29,16 @@ services:
       retries: 5
       start_period: 30s
 
-  redis:
+  # ── Celery broker / result-backend Redis ─────────────────────────────────────
+  # noeviction: when memory is full Redis returns OOM errors instead of silently
+  # evicting unprocessed Celery task messages.  Campaigns fail loudly so
+  # operators get alerted rather than emails disappearing without a trace.
+  # Also holds application-critical keys (send locks, dedupe tokens) that must
+  # not be evicted — losing a dedup key means a duplicate send.
+  #
+  # .env must reference this service:
+  #   REDIS_URL=redis://redis-broker:6379/0
+  redis-broker:
     image: redis:7.2-alpine
     restart: unless-stopped
     command: >
@@ -37,9 +46,32 @@ services:
       --save 60 1
       --loglevel warning
       --maxmemory 512mb
-      --maxmemory-policy allkeys-lru
+      --maxmemory-policy noeviction
     volumes:
-      - redis-data:/data
+      - redis-broker-data:/data
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  # ── Cache / rate-limit Redis ──────────────────────────────────────────────────
+  # allkeys-lru: safe to evict — template previews, slowapi counters, and similar
+  # caches can be regenerated from the DB.  Kept separate so cache pressure can
+  # never reach the broker and destroy in-flight task messages.
+  #
+  # .env (optional, for cache-aware code):
+  #   REDIS_CACHE_URL=redis://redis-cache:6379/0
+  redis-cache:
+    image: redis:7.2-alpine
+    restart: unless-stopped
+    command: >
+      redis-server
+      --loglevel warning
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
     networks:
       - internal
     healthcheck:
@@ -59,7 +91,8 @@ services:
       - uploads:/tmp/uploads
     depends_on:
       - mongodb
-      - redis
+      - redis-broker
+      - redis-cache
     networks:
       - internal
     healthcheck:
@@ -69,6 +102,9 @@ services:
       retries: 3
       start_period: 20s
 
+  # ── General-purpose Celery worker ────────────────────────────────────────────
+  # Consumes all queues except ses_critical (handled by celery-critical below so
+  # hard-bounce/complaint processing is never delayed by batch campaign work).
   celery:
     build:
       context: ./backend
@@ -78,14 +114,37 @@ services:
       celery -A celery_app worker
       --loglevel=info
       --concurrency=4
-      -Q default,campaigns,analytics
+      -Q campaigns,automation,ses_events,webhooks,subscribers,suppressions,dlq,monitoring,analytics,templates,cleanup,ab_tests
     env_file: ./backend/.env
     volumes:
       - ./backend:/app
       - uploads:/tmp/uploads
     depends_on:
       - mongodb
-      - redis
+      - redis-broker
+    networks:
+      - internal
+
+  # ── High-priority SES worker (hard bounces, complaints) ──────────────────────
+  # Dedicated consumer for ses_critical.  Keeps deliverability-critical signals
+  # (bounces → suppression, complaints → suppression) from being queued behind
+  # large campaign batches on the general worker.
+  celery-critical:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    command: >
+      celery -A celery_app worker
+      --loglevel=info
+      --concurrency=2
+      -Q ses_critical
+    env_file: ./backend/.env
+    volumes:
+      - ./backend:/app
+    depends_on:
+      - mongodb
+      - redis-broker
     networks:
       - internal
 
@@ -104,7 +163,7 @@ services:
       - celery-beat-data:/var/run/celery
     depends_on:
       - mongodb
-      - redis
+      - redis-broker
     networks:
       - internal
 
@@ -140,7 +199,7 @@ networks:
 
 volumes:
   mongo-data:
-  redis-data:
+  redis-broker-data:
   uploads:
   celery-beat-data:
   certbot-webroot:

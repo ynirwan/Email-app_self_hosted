@@ -724,8 +724,34 @@ def send_single_campaign_email(self, campaign_id: str, subscriber_id: str):
                 unsub_token
             )
         except Exception as unsub_err:
-            logger.warning(f"Failed to generate unsubscribe token: {unsub_err}")
-            personalization_context["unsubscribe_url"] = "#"
+            logger.error(
+                f"Failed to generate unsubscribe token for campaign {campaign_id} "
+                f"/ subscriber {subscriber_id}: {unsub_err}. Aborting send — "
+                f"email without a valid unsubscribe link violates CAN-SPAM/GDPR."
+            )
+            _decrement_queued(campaign_id)
+            log_email_status(
+                campaign_id,
+                subscriber_id,
+                recipient_email,
+                "failed",
+                None,
+                f"unsubscribe_url_generation_failed: {unsub_err}",
+                "none",
+            )
+            upsert_delivery_state(
+                campaign_id,
+                subscriber_id,
+                recipient_email,
+                "failed",
+                failure_reason=f"unsubscribe_url_generation_failed: {unsub_err}",
+                attempts_inc=1,
+            )
+            return {
+                "status": "failed",
+                "reason": "unsubscribe_url_generation_failed",
+                "email": recipient_email,
+            }
 
         # ── Open & click tracking ─────────────────────────────────────────────
         _open_token = None

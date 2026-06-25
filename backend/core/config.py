@@ -62,6 +62,16 @@ class Settings:
     # ===== CORS CONFIGURATION =====
 
 
+    # ===== AWS / SNS =====
+    # Comma-separated list of SNS TopicArns that this app owns via SES.
+    # Example: "arn:aws:sns:us-east-1:123456789012:ses-events"
+    # If empty, subscription confirmation is DENIED (fail-safe).
+    SNS_ALLOWED_TOPIC_ARNS: List[str] = [
+        arn.strip()
+        for arn in os.getenv("SNS_ALLOWED_TOPIC_ARNS", "").split(",")
+        if arn.strip()
+    ]
+
     # ===== TRACKING DOMAINS =====
     UNSUBSCRIBE_DOMAIN: str = os.getenv("UNSUBSCRIBE_DOMAIN", "gnagainbox.com")
     OPEN_TRACKING_DOMAIN: str = os.getenv("OPEN_TRACKING_DOMAIN", "gnagainbox.com")

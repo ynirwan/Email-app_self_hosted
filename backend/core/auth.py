@@ -21,11 +21,18 @@ import logging
 
 from passlib.context import CryptContext
 from jose import JWTError, jwt
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 from core.config import settings
 from database import get_users_collection
+
+# Cookie names used by login / refresh / logout endpoints.
+COOKIE_ACCESS  = "access_token"
+COOKIE_REFRESH = "refresh_token"
+# Non-httpOnly flag cookie JS can read to detect a live session without a
+# round-trip.  Does NOT contain the JWT — just signals "cookie session exists".
+COOKIE_SESSION_FLAG = "logged_in"
 
 logger = logging.getLogger(__name__)
 
@@ -125,29 +132,39 @@ _bearer = HTTPBearer(auto_error=False)
 
 
 async def get_current_user(
+    request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(_bearer),
 ):
     """
-    Resolve the authenticated user from a Bearer access token.
+    Resolve the authenticated user from an httpOnly cookie (preferred) or a
+    Bearer Authorization header (API-client fallback).
+
+    Cookie path:   set by POST /auth/login and POST /auth/refresh
+    Bearer path:   still accepted for programmatic API access (e.g. scripts)
 
     Failure modes (all 401):
-      - Missing / malformed bearer header
+      - No cookie and no bearer header
       - Token signature invalid / expired
       - Wrong token type (refresh tokens cannot be used here)
       - User record deleted
       - User deactivated (is_active == False)
       - Token version stale (password/email changed since issue)
     """
-    if not credentials or not credentials.credentials:
+    # 1. Try httpOnly cookie first (browser sessions)
+    raw_token = request.cookies.get(COOKIE_ACCESS)
+
+    # 2. Fall back to Bearer for API / non-browser clients
+    if not raw_token and credentials and credentials.credentials:
+        raw_token = credentials.credentials
+
+    if not raw_token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Not authenticated — please log in",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    payload = decode_jwt_token(
-        credentials.credentials, expected_type=TOKEN_TYPE_ACCESS
-    )
+    payload = decode_jwt_token(raw_token, expected_type=TOKEN_TYPE_ACCESS)
     if not payload:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

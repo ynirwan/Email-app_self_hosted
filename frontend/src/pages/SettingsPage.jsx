@@ -10,6 +10,7 @@ export default function SettingsPage() {
     { name: "SMTP Settings", path: "/settings/email" },
     { name: "Domain Settings", path: "/settings/domain" },
     { name: "Tracking", path: "/settings/tracking" },
+    { name: "SNS Webhooks", path: "/settings/sns-webhooks" },
     { name: "License", path: "/settings/license" },
   ];
 

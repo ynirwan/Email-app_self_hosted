@@ -14,6 +14,9 @@ from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.base import BaseHTTPMiddleware
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from core.rate_limit import limiter
 
 # ============================================
 # GLOBAL UTC DATETIME FIX
@@ -435,6 +438,10 @@ app = FastAPI(
 
 logger.info(f"FastAPI application created: {settings.APP_NAME}")
 
+# Attach the shared slowapi limiter so @limiter.limit() decorators in route
+# files can find it at request time.
+app.state.limiter = limiter
+
 # ============================================
 # MIDDLEWARE CONFIGURATION
 # ============================================
@@ -487,6 +494,23 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             "max-age=31536000; includeSubDomains"
         )
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        # Content-Security-Policy — restricts what the browser executes/loads.
+        # 'unsafe-inline' in style-src is required by Tailwind's inline class approach.
+        # 'unsafe-inline' is intentionally absent from script-src; Vite production
+        # builds emit no inline scripts. If you add third-party analytics that requires
+        # a nonce/hash, extend script-src rather than adding 'unsafe-inline'.
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; "
+            "script-src 'self'; "
+            "style-src 'self' 'unsafe-inline'; "
+            "img-src 'self' data: https:; "
+            "connect-src 'self'; "
+            "font-src 'self' data:; "
+            "frame-ancestors 'none'; "
+            "form-action 'self'; "
+            "base-uri 'self'; "
+            "object-src 'none'"
+        )
 
         return response
 
@@ -563,6 +587,9 @@ logger.info("✅ Error handling middleware configured")
 # ============================================
 # EXCEPTION HANDLERS
 # ============================================
+
+# Rate-limit exceeded → 429 Too Many Requests
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 
 @app.exception_handler(StarletteHTTPException)

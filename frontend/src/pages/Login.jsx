@@ -1,6 +1,6 @@
 // frontend/src/pages/Login.jsx
 import { useState } from 'react'
-import API, { setTokens } from '../api'
+import API from '../api'
 
 export default function Login() {
   const [email, setEmail] = useState('')
@@ -16,20 +16,10 @@ export default function Login() {
     setLoading(true)
 
     try {
-      const res = await API.post('/auth/login', { email, password })
-      // Store BOTH access + refresh under canonical keys. localStorage writes
-      // are synchronous — the previous "wait 150ms for it to sync" hack was
-      // working around a different bug (App.jsx capturing isLoggedIn at
-      // module load), not a real storage race.
-      setTokens({
-        access: res.data.access_token || res.data.token,
-        refresh: res.data.refresh_token,
-      })
-
-      // App.jsx evaluates `isLoggedIn` at module load, so React Router's
-      // in-memory navigation alone won't update the route gate. A full-page
-      // assign is the simplest correct fix until App.jsx is restructured to
-      // read the token reactively.
+      // The server sets httpOnly auth cookies in the response — no token storage
+      // in JS. A full-page assign forces App.jsx to re-evaluate isLoggedIn()
+      // against the newly-set `logged_in` flag cookie.
+      await API.post('/auth/login', { email, password })
       window.location.assign('/')
     } catch (err) {
       setError(

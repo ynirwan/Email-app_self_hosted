@@ -1,7 +1,7 @@
 # backend/routes/auth.py
 import os
 from typing import Optional
-from fastapi import APIRouter, HTTPException, Depends, status, Query
+from fastapi import APIRouter, HTTPException, Depends, Request, Response, status, Query
 from pydantic import BaseModel, EmailStr, validator, Field
 from bson import ObjectId
 from datetime import datetime
@@ -15,14 +15,74 @@ from core.auth import (
     decode_jwt_token,
     get_current_user,
     TOKEN_TYPE_REFRESH,
+    COOKIE_ACCESS,
+    COOKIE_REFRESH,
+    COOKIE_SESSION_FLAG,
+    ACCESS_TOKEN_EXPIRE_SECONDS,
+    REFRESH_TOKEN_EXPIRE_SECONDS,
 )
 from core.i18n import SUPPORTED_LANGUAGES, normalize_language
 from core.timezone import is_valid_timezone, DEFAULT_TIMEZONE
 from core.license import get_license
+from core.rate_limit import limiter
 from database import get_users_collection
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+# ── Cookie helpers ─────────────────────────────────────────────────────────
+
+def _is_secure(request: Request) -> bool:
+    """True when the request arrived over HTTPS (or behind a trusted proxy)."""
+    return (
+        request.url.scheme == "https"
+        or request.headers.get("X-Forwarded-Proto", "") == "https"
+    )
+
+
+def _set_auth_cookies(response: Response, request: Request, access: str, refresh: str) -> None:
+    """Write the httpOnly JWT cookies and the JS-readable session flag."""
+    secure = _is_secure(request)
+    response.set_cookie(
+        key=COOKIE_ACCESS,
+        value=access,
+        httponly=True,
+        samesite="strict",
+        secure=secure,
+        max_age=ACCESS_TOKEN_EXPIRE_SECONDS,
+        path="/",
+    )
+    response.set_cookie(
+        key=COOKIE_REFRESH,
+        value=refresh,
+        httponly=True,
+        samesite="strict",
+        secure=secure,
+        max_age=REFRESH_TOKEN_EXPIRE_SECONDS,
+        path="/api/auth/refresh",   # only sent to the refresh endpoint
+    )
+    # Non-httpOnly flag cookie — JS reads this to know a session is active without
+    # being able to extract the actual JWT.
+    response.set_cookie(
+        key=COOKIE_SESSION_FLAG,
+        value="1",
+        httponly=False,
+        samesite="strict",
+        secure=secure,
+        max_age=REFRESH_TOKEN_EXPIRE_SECONDS,
+        path="/",
+    )
+
+
+def _clear_auth_cookies(response: Response) -> None:
+    """Expire all three auth cookies."""
+    for name, path in [
+        (COOKIE_ACCESS,        "/"),
+        (COOKIE_REFRESH,       "/api/auth/refresh"),
+        (COOKIE_SESSION_FLAG,  "/"),
+    ]:
+        response.delete_cookie(key=name, path=path)
 
 
 # ── Request / response models ──────────────────────────────────────────────
@@ -79,17 +139,19 @@ def _normalize_email(email: str) -> str:
     return email.strip().lower()
 
 
-def _auth_response(user_doc: dict, token_version: int) -> dict:
-    """Mint a fresh access/refresh pair and shape the standard auth response."""
+def _auth_response(user_doc: dict, token_version: int, response: Response, request: Request) -> dict:
+    """Mint a fresh access/refresh pair, set httpOnly cookies, return safe body."""
     access, refresh = create_token_pair(
         user_id=str(user_doc["_id"]),
         email=user_doc["email"],
         token_version=token_version,
     )
+    _set_auth_cookies(response, request, access, refresh)
+    # Body intentionally omits raw tokens — they are in httpOnly cookies.
+    # The `token` field is kept for API clients that read it directly and have
+    # not yet migrated; browser sessions should rely on the cookie.
     return {
-        "token": access,                # back-compat (frontend reads `token`)
-        "access_token": access,
-        "refresh_token": refresh,
+        "token": access,                # API-client back-compat
         "token_type": "bearer",
         "user": {
             "id": str(user_doc["_id"]),
@@ -102,7 +164,8 @@ def _auth_response(user_doc: dict, token_version: int) -> dict:
 # ── Endpoints ──────────────────────────────────────────────────────────────
 
 @router.post("/register")
-async def register(user: UserRegister):
+@limiter.limit("5/minute")
+async def register(request: Request, response: Response, user: UserRegister):
     """
     Public self-registration endpoint.
 
@@ -144,7 +207,7 @@ async def register(user: UserRegister):
         result = await users_collection.insert_one(user_doc)
         user_doc["_id"] = result.inserted_id
         logger.info("New user registered via self-registration: %s", normalized_email)
-        return _auth_response(user_doc, token_version=0)
+        return _auth_response(user_doc, token_version=0, response=response, request=request)
 
     except HTTPException:
         raise
@@ -154,7 +217,8 @@ async def register(user: UserRegister):
 
 
 @router.post("/login")
-async def login(user: UserLogin):
+@limiter.limit("10/minute")
+async def login(request: Request, response: Response, user: UserLogin):
     try:
         users_collection = get_users_collection()
         normalized_email = _normalize_email(user.email)
@@ -174,7 +238,7 @@ async def login(user: UserLogin):
                 detail="Account is deactivated",
             )
 
-        return _auth_response(db_user, token_version=int(db_user.get("token_version", 0)))
+        return _auth_response(db_user, token_version=int(db_user.get("token_version", 0)), response=response, request=request)
 
     except HTTPException:
         raise
@@ -184,9 +248,13 @@ async def login(user: UserLogin):
 
 
 @router.post("/refresh")
-async def refresh(body: RefreshRequest):
+async def refresh(request: Request, response: Response, body: Optional[RefreshRequest] = None):
     """
     Exchange a refresh token for a new access token.
+
+    Token source (checked in order):
+      1. httpOnly `refresh_token` cookie  (browser sessions)
+      2. `refresh_token` field in the JSON body  (API clients / back-compat)
 
     Failure modes (all 401):
       - Token missing / invalid signature / expired
@@ -195,7 +263,17 @@ async def refresh(body: RefreshRequest):
       - token_version on user doc has been bumped (password change, email change,
         admin revoke) — old refresh token is dead
     """
-    payload = decode_jwt_token(body.refresh_token, expected_type=TOKEN_TYPE_REFRESH)
+    raw_refresh = (
+        request.cookies.get(COOKIE_REFRESH)
+        or (body.refresh_token if body else None)
+    )
+    if not raw_refresh:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Refresh token missing",
+        )
+
+    payload = decode_jwt_token(raw_refresh, expected_type=TOKEN_TYPE_REFRESH)
     if not payload:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -236,9 +314,28 @@ async def refresh(body: RefreshRequest):
         email=db_user["email"],
         token_version=expected_tv,
     )
+    secure = _is_secure(request)
+    response.set_cookie(
+        key=COOKIE_ACCESS,
+        value=new_access,
+        httponly=True,
+        samesite="strict",
+        secure=secure,
+        max_age=ACCESS_TOKEN_EXPIRE_SECONDS,
+        path="/",
+    )
+    # Refresh the session flag TTL so the browser keeps the indicator alive.
+    response.set_cookie(
+        key=COOKIE_SESSION_FLAG,
+        value="1",
+        httponly=False,
+        samesite="strict",
+        secure=secure,
+        max_age=REFRESH_TOKEN_EXPIRE_SECONDS,
+        path="/",
+    )
     return {
-        "token": new_access,
-        "access_token": new_access,
+        "token": new_access,      # API-client back-compat
         "token_type": "bearer",
     }
 
@@ -360,11 +457,10 @@ async def change_password(
 
 
 @router.post("/logout")
-async def logout(current_user: dict = Depends(get_current_user)):
+async def logout(response: Response, current_user: dict = Depends(get_current_user)):
     """
     Server-side logout: bump token_version so every issued token for this user
-    is rejected on the next request (defends against stolen-token reuse after
-    the client clears localStorage).
+    is rejected on the next request, and clear all auth cookies.
     """
     users_collection = get_users_collection()
     new_tv = int(current_user.get("token_version", 0)) + 1
@@ -372,6 +468,7 @@ async def logout(current_user: dict = Depends(get_current_user)):
         {"_id": ObjectId(current_user["_id"])},
         {"$set": {"token_version": new_tv, "updated_at": datetime.utcnow()}},
     )
+    _clear_auth_cookies(response)
     return {"message": "Logged out"}
 
 
@@ -388,7 +485,8 @@ async def logout(current_user: dict = Depends(get_current_user)):
 # ──────────────────────────────────────────────────────────────────────────
 
 @router.get("/admin-access")
-async def admin_access(token: str = Query(..., description="Admin access token issued by ZeniPost Dashboard")):
+@limiter.limit("5/minute")
+async def admin_access(request: Request, response: Response, token: str = Query(..., description="Admin access token issued by ZeniPost Dashboard")):
     """
     Verify a Dashboard-issued admin access token and create a super-admin session.
 
@@ -463,17 +561,39 @@ async def admin_access(token: str = Query(..., description="Admin access token i
         issued_by, token_domain, payload.get("license_id"),
     )
 
-    # Issue a short-lived access token for this admin session
-    access, refresh = create_token_pair(
+    # Issue a short-lived access-only token for this admin session.
+    # Deliberately omit the refresh token — admin-access sessions must expire
+    # naturally and cannot be silently extended via /auth/refresh.
+    access = create_access_token(
         user_id=str(admin_user["_id"]),
         email=admin_user["email"],
         token_version=int(admin_user.get("token_version", 0)),
     )
 
+    # Set the access cookie but NOT the refresh cookie so the session expires.
+    secure = _is_secure(request)
+    response.set_cookie(
+        key=COOKIE_ACCESS,
+        value=access,
+        httponly=True,
+        samesite="strict",
+        secure=secure,
+        max_age=ACCESS_TOKEN_EXPIRE_SECONDS,
+        path="/",
+    )
+    response.set_cookie(
+        key=COOKIE_SESSION_FLAG,
+        value="1",
+        httponly=False,
+        samesite="strict",
+        secure=secure,
+        max_age=ACCESS_TOKEN_EXPIRE_SECONDS,
+        path="/",
+    )
+
     return {
-        "token":         access,
-        "access_token":  access,
-        "refresh_token": refresh,
+        "token":         access,         # API-client back-compat
+        # refresh_token intentionally absent — admin sessions are short-lived
         "token_type":    "bearer",
         "admin_session": True,
         "issued_by":     issued_by,

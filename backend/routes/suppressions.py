@@ -529,56 +529,6 @@ async def check_suppression(email: str, target_lists: Optional[List[str]] = None
     result = await is_email_suppressed(email, target_lists)
     return result
 
-@router.post("/import")
-async def import_suppressions(
-    request: Request,
-    file: UploadFile = File(...)
-):
-    """Import suppressions from CSV with validation and audit logging"""
-    try:
-        content = await file.read()
-        df = pd.read_csv(io.BytesIO(content))
-        
-        # Validation
-        if 'email' not in df.columns:
-            raise HTTPException(status_code=400, detail="CSV must contain an 'email' column")
-            
-        collection = get_suppressions_collection()
-        operations = []
-        for _, row in df.iterrows():
-            email = str(row['email']).strip().lower()
-            if not email: continue
-            
-            suppression_doc = {
-                "email": email,
-                "reason": row.get('reason', 'import'),
-                "scope": row.get('scope', 'global'),
-                "target_lists": str(row.get('target_lists', '')).split(',') if row.get('target_lists') else [],
-                "notes": row.get('notes', 'Bulk import'),
-                "source": "bulk_import",
-                "is_active": True,
-                "created_at": datetime.utcnow(),
-                "updated_at": datetime.utcnow()
-            }
-            operations.append(UpdateOne({"email": email}, {"$set": suppression_doc}, upsert=True))
-            
-        if operations:
-            await collection.bulk_write(operations)
-        
-        # Log successful import
-        await log_suppression_activity(
-            action="import",
-            entity_id="bulk",
-            user_action=f"Imported {len(df)} suppressions from CSV",
-            request=request,
-            metadata={"filename": file.filename, "count": len(df)}
-        )
-        
-        return {"imported": len(df)}
-    except Exception as e:
-        logger.error(f"Import failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
 @router.post("/bulk-check", response_model=BulkSuppressionCheckResult)
 async def bulk_check_suppressions(check_request: BulkSuppressionCheck, request: Request):
     """Optimized bulk suppression check for your campaign system"""

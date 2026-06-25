@@ -3,10 +3,13 @@ from cryptography.fernet import Fernet
 import base64
 import hashlib
 import hmac
+import logging
 import time
 from typing import Optional, Dict, Tuple
 
 from core.config import settings
+
+logger = logging.getLogger(__name__)
 
 class SecureConfigManager:
     def __init__(self):
@@ -43,8 +46,13 @@ class SecureConfigManager:
                         decrypted_config[field_name] = self.cipher.decrypt(
                             config[field_name].encode()
                         ).decode()
-                    except:
-                        decrypted_config[field_name] = ""
+                    except Exception as e:
+                        logger.error(
+                            "Config field decryption failed for '%s': %s — "
+                            "check MASTER_ENCRYPTION_KEY and stored ciphertext",
+                            field_name, e,
+                        )
+                        raise
         
         return decrypted_config
 
@@ -64,8 +72,13 @@ def decrypt_password(encrypted_password: str) -> str:
     manager = SecureConfigManager()
     try:
         return manager.cipher.decrypt(encrypted_password.encode()).decode()
-    except:
-        return ""
+    except Exception as e:
+        logger.error(
+            "SMTP credential decryption failed: %s — "
+            "check MASTER_ENCRYPTION_KEY and stored ciphertext",
+            e,
+        )
+        raise
 
 
 # ─────────────────────────────────────────────────────────────────────────────

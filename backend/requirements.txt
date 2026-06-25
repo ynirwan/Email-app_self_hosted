@@ -34,6 +34,7 @@ python-jose[cryptography]==3.3.0
 bcrypt==4.1.2
 passlib[bcrypt]==1.7.4
 cryptography==41.0.7
+slowapi>=0.1.9             # IP-based rate limiting for FastAPI endpoints
 
 # Templating
 jinja2==3.1.2

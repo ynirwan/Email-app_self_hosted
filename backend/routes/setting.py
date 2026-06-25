@@ -1,14 +1,17 @@
 # routes/setting.py
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Depends
 from pydantic import BaseModel, EmailStr
-from typing import Optional
+from typing import Optional, List
 from datetime import datetime
 import smtplib
+import re as _re
+import uuid
 from email.mime.text import MIMEText
 from pydantic import BaseModel, EmailStr, validator
 
 
 from database import get_settings_collection, get_audit_collection
+from core.auth import get_current_user
 
 router = APIRouter()
 
@@ -607,3 +610,171 @@ async def update_tracking_settings(payload: TrackingSettings, request: Request):
 
     except Exception as e:
         raise HTTPException(500, detail=f"Failed to save tracking settings: {e}")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SNS WEBHOOK ARN MANAGEMENT
+# Stored in settings collection under {"type": "sns_webhooks"}
+# Each ARN entry: {id, arn, label, added_at, added_by}
+#
+# Security:
+#   - GET  — any authenticated user (needed for the admin UI to load)
+#   - POST / DELETE — admin role only
+#
+# ARN format enforced: arn:aws:sns:<region>:<12-digit-account-id>:<topic-name>
+# ═══════════════════════════════════════════════════════════════════════════════
+
+_SNS_ARN_RE = _re.compile(r"^arn:aws:sns:[a-z0-9-]+:[0-9]{12}:.+$")
+_SNS_DOC_TYPE = "sns_webhooks"
+
+
+class SnsArnAddRequest(BaseModel):
+    arn: str
+    label: Optional[str] = ""
+
+    @validator("arn")
+    def validate_arn_format(cls, v):
+        v = v.strip()
+        if not _SNS_ARN_RE.match(v):
+            raise ValueError(
+                "Invalid SNS ARN format. Expected: "
+                "arn:aws:sns:<region>:<12-digit-account-id>:<topic-name>"
+            )
+        return v
+
+
+async def _get_sns_doc() -> dict:
+    """Fetch the sns_webhooks settings doc, returning empty structure if absent."""
+    col = get_settings_collection()
+    doc = await col.find_one({"type": _SNS_DOC_TYPE})
+    return doc or {"type": _SNS_DOC_TYPE, "arns": []}
+
+
+async def _invalidate_sns_cache() -> None:
+    """Bust the Redis ARN cache so the webhook handler picks up the new list immediately."""
+    try:
+        from core.redis_client import get_async_redis
+        async with get_async_redis() as r:
+            await r.delete("sns:allowed_arns")
+    except Exception:
+        pass  # cache bust is best-effort; the TTL will expire it anyway
+
+
+@router.get("/sns-webhooks")
+async def list_sns_webhook_arns(current_user: dict = Depends(get_current_user)):
+    """Return all configured SNS topic ARNs."""
+    try:
+        doc = await _get_sns_doc()
+        return {"arns": doc.get("arns", []), "total": len(doc.get("arns", []))}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to load SNS ARNs: {e}")
+
+
+@router.post("/sns-webhooks", status_code=201)
+async def add_sns_webhook_arn(
+    payload: SnsArnAddRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """Add a new allowed SNS topic ARN. Admin only."""
+    if current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin role required")
+
+    try:
+        col = get_settings_collection()
+        doc = await _get_sns_doc()
+        existing_arns = [entry["arn"] for entry in doc.get("arns", [])]
+
+        if payload.arn in existing_arns:
+            raise HTTPException(status_code=409, detail="ARN already exists")
+
+        new_entry = {
+            "id": str(uuid.uuid4()),
+            "arn": payload.arn,
+            "label": (payload.label or "").strip(),
+            "added_at": datetime.utcnow().isoformat(),
+            "added_by": current_user.get("_id", "unknown"),
+        }
+
+        await col.update_one(
+            {"type": _SNS_DOC_TYPE},
+            {
+                "$push": {"arns": new_entry},
+                "$set": {"updated_at": datetime.utcnow()},
+                "$setOnInsert": {"type": _SNS_DOC_TYPE},
+            },
+            upsert=True,
+        )
+
+        await _invalidate_sns_cache()
+
+        # Audit
+        try:
+            audit_col = get_audit_collection()
+            await audit_col.insert_one({
+                "action": "sns_arn_added",
+                "arn": payload.arn,
+                "label": new_entry["label"],
+                "added_by": new_entry["added_by"],
+                "timestamp": datetime.utcnow(),
+            })
+        except Exception:
+            pass
+
+        return {"message": "ARN added successfully", "entry": new_entry}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to add ARN: {e}")
+
+
+@router.delete("/sns-webhooks/{arn_id}", status_code=200)
+async def delete_sns_webhook_arn(
+    arn_id: str,
+    current_user: dict = Depends(get_current_user),
+):
+    """Remove a configured SNS topic ARN by its entry ID. Admin only."""
+    if current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin role required")
+
+    try:
+        col = get_settings_collection()
+        doc = await _get_sns_doc()
+        entries = doc.get("arns", [])
+        target = next((e for e in entries if e["id"] == arn_id), None)
+
+        if not target:
+            raise HTTPException(status_code=404, detail="ARN entry not found")
+
+        result = await col.update_one(
+            {"type": _SNS_DOC_TYPE},
+            {
+                "$pull": {"arns": {"id": arn_id}},
+                "$set": {"updated_at": datetime.utcnow()},
+            },
+        )
+
+        if result.modified_count == 0:
+            raise HTTPException(status_code=404, detail="ARN entry not found")
+
+        await _invalidate_sns_cache()
+
+        # Audit
+        try:
+            audit_col = get_audit_collection()
+            await audit_col.insert_one({
+                "action": "sns_arn_deleted",
+                "arn": target["arn"],
+                "label": target.get("label", ""),
+                "deleted_by": current_user.get("_id", "unknown"),
+                "timestamp": datetime.utcnow(),
+            })
+        except Exception:
+            pass
+
+        return {"message": "ARN removed successfully", "removed": target}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to delete ARN: {e}")

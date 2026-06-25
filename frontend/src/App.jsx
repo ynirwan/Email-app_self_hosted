@@ -30,8 +30,10 @@ import AutomationCampaignAnalytics from "./pages/AutomationCampaignAnalytics";
 import OptInForm from "./pages/OptInForm";
 import TrackingSettings from "./pages/TrackingSettings";
 import LicenseSettings from "./pages/LicenseSettings";
+import SnsWebhooksSettings from "./pages/SnsWebhooksSettings";
 import DeliverabilityDashboard from "./pages/DeliverabilityDashboard";
 import FeatureGate from "./components/FeatureGate";
+import { isLoggedIn } from "./api";
 
 // Wrapper: gives each edit session a unique key so React fully remounts the
 // AutomationBuilder when navigating between different edit routes (or create → edit).
@@ -45,7 +47,8 @@ const AutomationEditRoute = () => {
 };
 
 const App = () => {
-  const isLoggedIn = !!localStorage.getItem("token");
+  // Reads the non-httpOnly `logged_in` flag cookie set by the server on login.
+  // The actual JWT lives in an httpOnly cookie — JS never touches it.
 
   return (
     <BrowserRouter>
@@ -56,7 +59,7 @@ const App = () => {
         <Route path="/subscribe/:listId" element={<OptInForm />} />
 
         {/* Protected Routes */}
-        {isLoggedIn ? (
+        {isLoggedIn() ? (
           <Route path="/" element={<Layout />}>
             {/* ── Always-available routes (all plans) ── */}
             <Route index element={<Dashboard />} />
@@ -130,6 +133,7 @@ const App = () => {
               <Route path="email" element={<EmailSettings />} />
               <Route path="domain" element={<DomainSettings />} />
               <Route path="tracking" element={<TrackingSettings />} />
+              <Route path="sns-webhooks" element={<SnsWebhooksSettings />} />
               <Route path="license" element={<LicenseSettings />} />
             </Route>
           </Route>

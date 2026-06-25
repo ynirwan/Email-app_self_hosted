@@ -762,13 +762,40 @@ async def _increment_analytics(campaign_id: str, field: str):
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+def _fire_and_log(coro, label: str) -> asyncio.Task:
+    """
+    Schedule *coro* as a background asyncio task and attach an error callback.
+
+    asyncio.create_task() is fire-and-forget: if the coroutine raises an
+    exception and no one awaits the Task, Python silently discards it (it logs
+    "Task exception was never retrieved" to stderr at shutdown, but that is
+    invisible in production).  Attaching a done_callback ensures every failure
+    surfaces as a structured ERROR log line with context, making tracking
+    failures observable without blocking the HTTP response.
+    """
+    task = asyncio.create_task(coro)
+
+    def _on_done(t: asyncio.Task) -> None:
+        exc = t.exception() if not t.cancelled() else None
+        if exc:
+            logger.error(
+                "[tracking] background task %s raised an exception: %s",
+                label,
+                exc,
+                exc_info=exc,
+            )
+
+    task.add_done_callback(_on_done)
+    return task
+
+
 @router.get("/t/o/{token_gif}", include_in_schema=False)
 async def open_pixel(token_gif: str, request: Request):
     token = token_gif.removesuffix(".gif")
     ip = request.client.host if request.client else "unknown"
     ua = request.headers.get("user-agent", "")
     logger.info(f"[tracking] open_pixel HIT token={token} ip={ip}")
-    asyncio.create_task(_record_open(token, ip, ua))
+    _fire_and_log(_record_open(token, ip, ua), label=f"_record_open token={token[:16]}")
     return _pixel_response()
 
 
@@ -781,7 +808,7 @@ async def click_redirect(token: str, u: str = "", request: Request = None):
     if token:
         ip = request.client.host if request and request.client else "unknown"
         ua = request.headers.get("user-agent", "") if request else ""
-        asyncio.create_task(_record_click(token, target, ip, ua))
+        _fire_and_log(_record_click(token, target, ip, ua), label=f"_record_click token={token[:16]}")
     return RedirectResponse(url=target, status_code=302)
 
 

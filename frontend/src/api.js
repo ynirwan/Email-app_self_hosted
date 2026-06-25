@@ -1,85 +1,67 @@
 // frontend/src/api.js
 //
-// Centralised axios client with:
-//   • access token attached on every request
-//   • single-flight refresh on 401  (one /auth/refresh call in flight at a time;
-//     all concurrent failing requests queue behind it and retry once it resolves)
-//   • hard logout if the refresh itself returns 401  (revoked / deleted user)
+// Centralised axios client.
 //
-// Token storage keys are intentionally namespaced (`auth.access`, `auth.refresh`)
-// so a future migration away from localStorage only touches this file.
+// Auth model (post BUG-11 fix):
+//   • The access token lives in an httpOnly SameSite=Strict cookie — JS never
+//     sees or stores the raw JWT, so XSS cannot exfiltrate it.
+//   • The refresh token lives in an httpOnly cookie scoped to /api/auth/refresh.
+//   • A non-httpOnly `logged_in=1` flag cookie is set alongside the JWTs so the
+//     frontend can cheaply detect an active session without a round-trip.
+//   • withCredentials: true tells axios to send cookies with every request.
+//   • The single-flight refresh mechanism is preserved — one concurrent /refresh
+//     call at most, all other concurrent 401s wait behind it.
+//
+// localStorage is NOT used for tokens. Callers that previously called
+// setTokens() / getAccessToken() should be updated; those functions now no-op
+// or read the flag cookie only.
+
 import axios from "axios";
 
-const ACCESS_KEY = "token";              // legacy key kept for back-compat
-const REFRESH_KEY = "refresh_token";
+// ── Session flag cookie ─────────────────────────────────────────────────────
+// The actual JWT is httpOnly — JS cannot read it. This non-httpOnly flag cookie
+// signals "an auth session exists" so App.jsx can gate routes without a fetch.
 
-// ── Token helpers — exported so Login/Register/Logout don't poke localStorage ──
-
-export function setTokens({ access, refresh }) {
-  if (access) localStorage.setItem(ACCESS_KEY, access);
-  if (refresh) localStorage.setItem(REFRESH_KEY, refresh);
+export function isLoggedIn() {
+  return document.cookie.split(";").some((c) => c.trim().startsWith("logged_in="));
 }
 
-export function clearTokens() {
-  localStorage.removeItem(ACCESS_KEY);
-  localStorage.removeItem(REFRESH_KEY);
-}
-
-export function getAccessToken() {
-  return localStorage.getItem(ACCESS_KEY);
-}
-
-export function getRefreshToken() {
-  return localStorage.getItem(REFRESH_KEY);
-}
+// Legacy no-ops kept so callers don't break during the migration.
+// Remove once all call-sites are updated.
+export function setTokens() {}
+export function clearTokens() {}
+export function getAccessToken() { return null; }
+export function getRefreshToken() { return null; }
 
 // ── Axios instance ──────────────────────────────────────────────────────────
 
-const API = axios.create({ baseURL: "/api" });
+const API = axios.create({
+  baseURL: "/api",
+  withCredentials: true,   // send auth cookies with every request
+});
 
-API.interceptors.request.use(
-  (config) => {
-    const token = getAccessToken();
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`;
-    }
-    return config;
-  },
-  (error) => Promise.reject(error),
-);
+// No request interceptor needed — cookies are attached by the browser automatically.
 
 // ── Refresh state (single-flight) ───────────────────────────────────────────
 //
-// When several requests fire concurrently and all 401 (e.g. after the access
-// token's 24h lifetime ticks over), we MUST NOT issue N parallel /auth/refresh
-// calls — that races, may rotate the token mid-flight, and exhausts the
-// refresh-token rate budget. Instead the first 401 starts a refresh; every
-// subsequent 401 waits on the same promise and retries with the new token.
+// When several requests fire concurrently and all 401 (access token expired),
+// only one /auth/refresh call is issued. The others queue behind it and retry
+// once the new access-token cookie has been set.
 
 let _refreshPromise = null;
 
 function _hardLogout() {
-  clearTokens();
-  // Avoid a redirect loop if we're already on /login.
+  // Clear the JS-readable session flag so the route gate flips immediately.
+  document.cookie = "logged_in=; path=/; max-age=0; SameSite=Strict";
   if (!window.location.pathname.startsWith("/login")) {
     window.location.assign("/login");
   }
 }
 
 async function _refreshAccessToken() {
-  const refresh = getRefreshToken();
-  if (!refresh) {
-    throw new Error("no_refresh_token");
-  }
-
-  // Use a bare axios call so we don't recurse through our own interceptors.
-  const res = await axios.post("/api/auth/refresh", { refresh_token: refresh });
-  const newAccess = res.data?.access_token || res.data?.token;
-  if (!newAccess) {
-    throw new Error("refresh_no_access_token");
-  }
-  localStorage.setItem(ACCESS_KEY, newAccess);
-  return newAccess;
+  // POST with no body — the refresh token cookie is sent automatically.
+  await axios.post("/api/auth/refresh", {}, { withCredentials: true });
+  // If the server returned 200 it has set a new access_token cookie already.
 }
 
 API.interceptors.response.use(
@@ -88,15 +70,17 @@ API.interceptors.response.use(
     const status = error.response?.status;
     const original = error.config;
 
-    // Pass through everything except 401s on a request we can retry.
     if (status !== 401 || !original || original._retried) {
       return Promise.reject(error);
     }
 
-    // Don't try to refresh the refresh endpoint itself, or login/register —
-    // those 401s mean "credentials are bad", not "access token expired".
+    // Don't attempt refresh for auth endpoints themselves.
     const url = original.url || "";
-    if (url.includes("/auth/refresh") || url.includes("/auth/login") || url.includes("/auth/register")) {
+    if (
+      url.includes("/auth/refresh") ||
+      url.includes("/auth/login") ||
+      url.includes("/auth/register")
+    ) {
       if (url.includes("/auth/refresh")) {
         _hardLogout();
       }
@@ -111,12 +95,11 @@ API.interceptors.response.use(
           _refreshPromise = null;
         });
       }
-      const newAccess = await _refreshPromise;
-      original.headers = { ...(original.headers || {}), Authorization: `Bearer ${newAccess}` };
+      await _refreshPromise;
+      // No need to update the Authorization header — the cookie was refreshed
+      // server-side and will be included in the retry automatically.
       return API(original);
     } catch (refreshErr) {
-      // Refresh failed → token_version bumped, refresh expired, user deleted,
-      // or no refresh token in storage. Give up cleanly.
       _hardLogout();
       return Promise.reject(refreshErr);
     }

@@ -239,16 +239,24 @@ async def create_campaign(campaign: CampaignCreate):
 
 
 @router.get("/campaigns")
-async def list_campaigns():
+async def list_campaigns(
+    page: int = Query(1, ge=1, description="1-based page number"),
+    limit: int = Query(50, ge=1, le=200, description="Items per page (max 200)"),
+):
     try:
         campaigns_collection = get_campaigns_collection()
+        skip = (page - 1) * limit
+
+        total = await campaigns_collection.count_documents({})
+
         campaigns = []
-        cursor = campaigns_collection.find().sort("created_at", -1)
+        cursor = campaigns_collection.find().sort("created_at", -1).skip(skip).limit(limit)
         async for doc in cursor:
-            doc["_id"] = str(doc["_id"])  # Convert ObjectId to string
+            doc["_id"] = str(doc["_id"])
             campaigns.append(doc)
-        logger.info(f"Retrieved {len(campaigns)} campaigns")
-        return {"campaigns": campaigns, "total": len(campaigns)}
+
+        logger.info(f"Retrieved {len(campaigns)} campaigns (page={page}, limit={limit}, total={total})")
+        return {"items": campaigns, "total": total, "page": page, "limit": limit}
     except Exception as e:
         logger.error(f"Failed to list campaigns: {e}")
         raise HTTPException(

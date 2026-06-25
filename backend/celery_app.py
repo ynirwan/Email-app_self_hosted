@@ -161,6 +161,15 @@ celery_app.conf.update(
             Exchange("ses_events", type="direct"),
             routing_key="ses_events",
         ),
+        # High-priority SES events (hard bounces, complaints) that must be
+        # processed before regular ses_events batches.  A dedicated queue lets
+        # us run a separate worker process (--queues=ses_critical) so critical
+        # deliverability signals are never delayed by batch work.
+        Queue(
+            "ses_critical",
+            Exchange("ses_critical", type="direct"),
+            routing_key="ses_critical",
+        ),
         Queue("webhooks", Exchange("webhooks", type="direct"), routing_key="webhooks"),
         Queue(
             "subscribers",
